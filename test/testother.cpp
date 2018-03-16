@@ -3874,6 +3874,51 @@ private:
               "    return ((x > y) ? (y + x) : (x + y));\n"
               "}");
         ASSERT_EQUALS("", errout.str());
+
+        check("int f1(int a) {return (a == 1) ? (int)1 : 1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+
+        check("int f2(int a) {return (a == 1) ? (int)1 : (int)1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        
+        check("int f3(int a) {return (a == 1) ? 1 : (int)1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        
+        check("int f4(int a) {return (a == 1) ? 1 : 1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        
+        check("int f5(int a) {return (a == (int)1) ? (int)1 : 1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        
+        check("int f6(int a) {return (a == (int)1) ? (int)1 : (int)1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        
+        check("int f7(int a) {return (a == (int)1) ? 1 : (int)1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        
+        check("int f8(int a) {return (a == (int)1) ? 1 : 1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+
+        check("int f1(int a) {return (a == 1) ? 1 : 2 -a; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        
+        check("int f2(int a) {return (a == 1) ? a : 2 -a; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        
+        check("int f3(int a) {return (a == 1) ? a : 2 -1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+
+        check("bool f4(bool a) {return (a) ? a : true; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+
+        check("bool f5(bool a) {return (a) ? true : a; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+
+        check("bool f6(bool a) {return (!a) ? false : a; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+
+        check("bool f7(bool a) {return (!a) ? a : false; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
     }
 
     void duplicateExpressionTemplate() { // #6930
