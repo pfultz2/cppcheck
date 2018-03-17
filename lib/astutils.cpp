@@ -132,6 +132,14 @@ const Token * astIsVariableComparison(const Token *tok, const std::string &comp,
     return ret;
 }
 
+const Token * ignoreCasts(const Token* tok)
+{
+    if (Token::Match(tok, "( %type% )")) {
+        return tok->link()->next();
+    }
+    return tok;
+}
+
 bool isSameExpression(bool cpp, bool macro, const Token *tok1, const Token *tok2, const Library& library, bool pure)
 {
     if (tok1 == nullptr && tok2 == nullptr)
@@ -168,6 +176,8 @@ bool isSameExpression(bool cpp, bool macro, const Token *tok1, const Token *tok2
         else if (tok1->function() && !tok1->function()->isConst() && !tok1->function()->isAttributeConst() && !tok1->function()->isAttributePure())
             return false;
     }
+    if (tok1->hasKnownIntValue() && tok2->hasKnownIntValue())
+        return tok1->values().front() == tok2->values().front();
     // templates/casts
     if ((Token::Match(tok1, "%name% <") && tok1->next()->link()) ||
         (Token::Match(tok2, "%name% <") && tok2->next()->link())) {

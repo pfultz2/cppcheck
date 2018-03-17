@@ -75,6 +75,31 @@ namespace ValueFlow {
                    valueKind == rhs.valueKind;
         }
 
+        bool equalValue(const Value &rhs) const {
+            switch (valueType) {
+            case INT:
+                if (intvalue != rhs.intvalue)
+                    return false;
+                break;
+            case TOK:
+                if (tokvalue != rhs.tokvalue)
+                    return false;
+                break;
+            case FLOAT:
+                // TODO: Write some better comparison
+                if (floatValue > rhs.floatValue || floatValue < rhs.floatValue)
+                    return false;
+                break;
+            case MOVED:
+                if (moveKind != rhs.moveKind)
+                    return false;
+                break;
+            case UNINIT:
+                break;
+            };
+            return true;  
+        }
+
         std::string infoString() const;
 
         enum ValueType { INT, TOK, FLOAT, MOVED, UNINIT } valueType;

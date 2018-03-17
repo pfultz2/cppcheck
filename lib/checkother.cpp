@@ -1973,7 +1973,9 @@ void CheckOther::checkDuplicateExpression()
                     }
                 }
             } else if (styleEnabled && tok->astOperand1() && tok->astOperand2() && tok->str() == ":" && tok->astParent() && tok->astParent()->str() == "?") {
-                if (isSameExpression(_tokenizer->isCPP(), true, tok->astOperand1(), tok->astOperand2(), _settings->library, false))
+                if(tok->astOperand1()->equalValue(tok->astOperand2()))
+                    duplicateExpressionTernaryError(tok);
+                if (isSameExpression(_tokenizer->isCPP(), true, ignoreCasts(tok->astOperand1()), ignoreCasts(tok->astOperand2()), _settings->library, false))
                     duplicateExpressionTernaryError(tok);
             }
         }

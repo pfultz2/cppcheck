@@ -1980,16 +1980,18 @@ static bool valueFlowForward(Token * const               startToken,
             }
 
             // skip if variable is conditionally used in ?: expression
-            if (const Token *parent = skipValueInConditionalExpression(tok2)) {
-                if (settings->debugwarnings)
-                    bailout(tokenlist,
-                            errorLogger,
-                            tok2,
-                            "no simplification of " + tok2->str() + " within " + (Token::Match(parent,"[?:]") ? "?:" : parent->str()) + " expression");
-                const Token *astTop = parent->astTop();
-                if (Token::simpleMatch(astTop->astOperand1(), "for ("))
-                    tok2 = const_cast<Token*>(astTop->link());
-                continue;
+            if(tok2->astParent() && tok2->astParent()->str() != ":") {
+                if (const Token *parent = skipValueInConditionalExpression(tok2)) {
+                    if (settings->debugwarnings)
+                        bailout(tokenlist,
+                                errorLogger,
+                                tok2,
+                                "no simplification of " + tok2->str() + " within " + (Token::Match(parent,"[?:]") ? "?:" : parent->str()) + " expression");
+                    const Token *astTop = parent->astTop();
+                    if (Token::simpleMatch(astTop->astOperand1(), "for ("))
+                        tok2 = const_cast<Token*>(astTop->link());
+                    continue;
+                }
             }
 
             {
@@ -2390,6 +2392,17 @@ static void valueFlowAfterCondition(TokenList *tokenlist, SymbolDatabase* symbol
                 }
             }
 
+            // TODO: else part of ternery
+            if (Token::Match(tok->astParent(), "?")) {
+                if(Token::Match(tok, "==|>=|<=|!")) {
+                    Token *startToken = Token::findsimplematch(tok, "?");
+                    if(startToken != tok->astParent())
+                        continue;
+                    if (!valueFlowForward(startToken->next(),tok->astParent()->previous(), var, varid, values, true, false, tokenlist, errorLogger, settings))
+                        continue;
+                    values.front().setPossible();
+                }
+            }
             const Token *top = tok->astTop();
             if (top && Token::Match(top->previous(), "if|while (") && !top->previous()->isExpandedMacro()) {
                 // does condition reassign variable?

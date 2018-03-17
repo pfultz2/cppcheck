@@ -780,6 +780,12 @@ public:
         return _values && _values->size() == 1U && _values->front().isKnown() && _values->front().isIntValue();
     }
 
+    bool equalValue(const Token * rhs) const {
+        return _values && _values->size() == 1U && (_values->front().isKnown() || _values->front().isPossible()) && rhs &&
+            rhs->_values && rhs->_values->size() == 1U && (rhs->_values->front().isKnown() || rhs->_values->front().isPossible()) && 
+            _values->front().equalValue(rhs->_values->front());
+    }
+
     const ValueFlow::Value * getValue(const MathLib::bigint val) const {
         if (!_values)
             return nullptr;

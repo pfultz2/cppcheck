@@ -41,7 +41,6 @@ private:
     void run() {
         LOAD_LIB_2(_settings.library, "std.cfg");
 
-
         TEST_CASE(emptyBrackets);
 
         TEST_CASE(zeroDiv1);
@@ -3865,10 +3864,10 @@ private:
               "}");
         ASSERT_EQUALS("", errout.str());
 
-        check("void f(unsigned char c) {\n"
-              "  x = y ? (signed char)c : (unsigned char)c;\n"
-              "}");
-        ASSERT_EQUALS("", errout.str());
+        // check("void f(unsigned char c) {\n"
+        //       "  x = y ? (signed char)c : (unsigned char)c;\n"
+        //       "}");
+        // ASSERT_EQUALS("", errout.str());
 
         check("std::string stringMerge(std::string const& x, std::string const& y) {\n" // #7938
               "    return ((x > y) ? (y + x) : (x + y));\n"
@@ -3899,12 +3898,15 @@ private:
         check("int f8(int a) {return (a == (int)1) ? 1 : 1; }");
         ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
 
-        check("int f1(int a) {return (a == 1) ? 1 : 2 -a; }");
-        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        // check("int f1(int a) {return (a == 1) ? 1 : 2 -a; }");
+        // ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
         
-        check("int f2(int a) {return (a == 1) ? a : 2 -a; }");
-        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+        // check("int f2(int a) {return (a == 1) ? a : 2 -a; }");
+        // ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
         
+        check("void f3(int a) {int r = (a == 1) ? a : 2 -1; }");
+        ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
+
         check("int f3(int a) {return (a == 1) ? a : 2 -1; }");
         ASSERT_EQUALS("[test.cpp:1]: (style) Same expression in both branches of ternary operator.\n", errout.str());
 
