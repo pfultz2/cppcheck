@@ -37,6 +37,8 @@ private:
     Settings settings1;
 
     void run() {
+        LOAD_LIB_2(settings0.library, "qt.cfg");
+
         settings0.addEnabled("style");
         settings0.addEnabled("warning");
 
@@ -1141,6 +1143,76 @@ private:
               "  if (!(i!=10) && !(i!=20)) {}\n"
               "}");
         ASSERT_EQUALS("[test.cpp:2]: (warning) Logical conjunction always evaluates to false: !(i != 10) && !(i != 20).\n", errout.str());
+
+        check("void f1(const std::string &s) { if(s.size() > 42) if(s.empty()) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f1(const std::string &s) { if(s.empty()) if(s.size() > 42) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("template<class T> void f1(const T &s) { if(s.size() > 42) if(s.empty()) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f2(const std::wstring &s) { if(s.empty()) if(s.size() > 42) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f1(QString s) { if(s.isEmpty()) if(s.length() > 42) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f1(const std::string &s) { if(s.empty()) if(s.size() == 0) {}} ");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f3(char c) { if(c=='x') if(c=='y') {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n"
+                      "[test.cpp:1] -> [test.cpp:1]: (style) Condition 'c=='y'' is always false\n", errout.str());
+
+        check("void f4(char *p) { if(*p=='x') if(*p=='y') {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f5(const char * const p) { if(*p=='x') if(*p=='y') {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f5(const char * const p) { if('x'==*p) if('y'==*p) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f6(char * const p) { if(*p=='x') if(*p=='y') {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f7(const char * p) { if(*p=='x') if(*p=='y') {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f8(int i) { if(i==4) if(i==2) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n"
+                      "[test.cpp:1] -> [test.cpp:1]: (style) Condition 'i==2' is always false\n", errout.str());
+
+        check("void f9(int *p) { if (*p==4) if(*p==2) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f10(int * const p) { if (*p==4) if(*p==2) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f11(const int *p) { if (*p==4) if(*p==2) {}} ");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("void f12(const int * const p) { if (*p==4) if(*p==2) {}}");
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:1]: (warning) Opposite inner 'if' condition leads to a dead code block.\n", errout.str());
+
+        check("struct foo {\n"
+              "    int a;\n"
+              "    int b;\n"
+              "};\n"
+              "void f(foo x) { if(x.a==4) if(x.b==2) {}} ");
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct foo {\n"
+              "    int a;\n"
+              "    int b;\n"
+              "};\n"
+              "void f(foo x) { if(x.a==4) if(x.b==4) {}} ");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f3(char a, char b) { if(a==b) if(a==0) {}} ");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void incorrectLogicOperator9() { //  #6069 "False positive incorrectLogicOperator due to dynamic_cast"
