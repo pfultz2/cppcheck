@@ -1770,18 +1770,42 @@ void CheckOther::checkDuplicateBranch()
             if (macro)
                 continue;
 
-            // save if branch code
-            std::string branch1 = scope->classStart->next()->stringifyList(scope->classEnd);
 
-            if (branch1.empty())
+            // save if branch code
+            const Token * branch1 = scope->classStart->next();
+            std::string branch1Str = branch1->stringifyList(scope->classEnd);
+
+            if (branch1Str.empty())
                 continue;
 
             // save else branch code
-            const std::string branch2 = scope->classEnd->tokAt(3)->stringifyList(scope->classEnd->linkAt(2));
+            const Token * branch2 = scope->classEnd->tokAt(3);
+            const std::string branch2Str = branch2->stringifyList(scope->classEnd->linkAt(2));
 
-            // check for duplicates
-            if (branch1 == branch2)
+            // check for duplicates by string
+            if (branch1Str == branch2Str) {
                 duplicateBranchError(scope->classDef, scope->classEnd->next());
+                continue;
+            }
+
+            if (branch1->str() != branch2->str() && branch1->str() != "return") 
+                continue;
+
+            const Token * branch1Exp = branch1->next();
+            const Token * branch2Exp = branch2->next();
+
+            // Check for equal string
+            if((Token::Match(branch1Exp, "\"\" ;") || Token::Match(branch1Exp, "std :: string ( ) ;")) &&
+                (Token::Match(branch2Exp, "\"\" ;") || Token::Match(branch2Exp, "std :: string ( ) ;"))) {
+                duplicateBranchError(scope->classDef, scope->classEnd->next());
+                continue;
+            }
+
+            // Check for equal value
+            if(Token::Match(branch1Exp, "%any% ;") && Token::Match(branch2Exp, "%any% ;") && isEqualKnownValue(branch1Exp, branch2Exp)) {
+                duplicateBranchError(scope->classDef, scope->classEnd->next());
+                continue;
+            }
         }
     }
 }
