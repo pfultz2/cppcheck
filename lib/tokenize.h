@@ -106,6 +106,8 @@ public:
      */
     bool IsScopeNoReturn(const Token *endScopeToken, bool *unknown = nullptr) const;
 
+    void insertExplicitThis();
+
     bool createTokens(std::istream &code, const std::string& FileName);
     void createTokens(const simplecpp::TokenList *tokenList);
 

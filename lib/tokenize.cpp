@@ -1726,6 +1726,27 @@ void Tokenizer::simplifyMulAndParens()
     }
 }
 
+void Tokenizer::insertExplicitThis()
+{
+    for (Token *tok = list.front(); tok; tok = tok->next()) {
+        if(!Token::Match(tok, "%name% ("))
+            continue;
+        Token * prevTok = tok->previous();
+        if(Token::simpleMatch(prevTok, "."))
+            continue;
+        const Function * fun = tok->function();
+        if(!fun)
+            continue;
+        const Scope * fscope = fun->nestedIn;
+        if(!fscope)
+            continue;
+        if(!Token::Match(fscope->classDef, "class|struct"))
+            continue;
+        prevTok->insertToken(".");
+        prevTok->insertToken("this");
+    }    
+}
+
 bool Tokenizer::createTokens(std::istream &code,
                              const std::string& FileName)
 {
@@ -1756,6 +1777,8 @@ bool Tokenizer::simplifyTokens1(const std::string &configuration)
     list.validateAst();
 
     createSymbolDatabase();
+
+    insertExplicitThis();
 
     // Use symbol database to identify rvalue references. Split && to & &. This is safe, since it doesn't delete any tokens (which might be referenced by symbol database)
     for (const Variable* var : mSymbolDatabase->variableList()) {
