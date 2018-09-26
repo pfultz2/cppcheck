@@ -3168,6 +3168,29 @@ static void valueFlowSwitchVariable(TokenList *tokenlist, SymbolDatabase* symbol
     }
 }
 
+static bool isPossibleValues(const Token * tok)
+{
+    return std::all_of(tok->values().begin(), tok->values().end(), std::mem_fn(&ValueFlow::Value::isPossible));
+}
+
+static void valueFlowUpgradeKnown(TokenList *tokenlist, const Settings *settings)
+{
+    for (Token *tok = tokenlist->front(); tok; tok = tok->next()) {
+        if(!Token::Match(tok, ">|<|<=|>="))
+            continue;
+        if(!tok->astOperand1() || !tok->astOperand2())
+            continue;
+        if(!(tok->values().size() == 1 && tok->values().front().isPossible()))
+            continue;
+        if(!((tok->astOperand1()->hasKnownIntValue() && isPossibleValues(tok->astOperand2())) || 
+            (tok->astOperand2()->hasKnownIntValue() && isPossibleValues(tok->astOperand1()))))
+            continue;
+        ValueFlow::Value val(tok->values().front());
+        val.setInconclusive();
+        setTokenValue(tok, val, settings);
+    }
+}
+
 static void setTokenValues(Token *tok, const std::list<ValueFlow::Value> &values, const Settings *settings)
 {
     for (std::list<ValueFlow::Value>::const_iterator it = values.begin(); it != values.end(); ++it) {
@@ -3711,6 +3734,7 @@ void ValueFlow::setValues(TokenList *tokenlist, SymbolDatabase* symboldatabase, 
     valueFlowAfterCondition(tokenlist, symboldatabase, errorLogger, settings);
     valueFlowSwitchVariable(tokenlist, symboldatabase, errorLogger, settings);
     valueFlowForLoop(tokenlist, symboldatabase, errorLogger, settings);
+    valueFlowUpgradeKnown(tokenlist, settings);
     valueFlowSubFunction(tokenlist, errorLogger, settings);
     valueFlowFunctionDefaultParameter(tokenlist, symboldatabase, errorLogger, settings);
     valueFlowUninit(tokenlist, symboldatabase, errorLogger, settings);

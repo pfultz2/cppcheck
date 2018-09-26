@@ -1213,7 +1213,12 @@ void CheckCondition::alwaysTrueFalse()
 
             if (tok->link()) // don't write false positives when templates are used
                 continue;
-            if (!tok->hasKnownIntValue())
+            if(!(tok->values().size() == 1))
+                continue;
+            const ValueFlow::Value& val = tok->values().front();
+            if (!val.isIntValue())
+                continue;
+            if (!val.isKnown() && !mSettings->inconclusive && !val.isInconclusive())
                 continue;
             if (Token::Match(tok, "%num%|%bool%|%char%"))
                 continue;
@@ -1297,7 +1302,7 @@ void CheckCondition::alwaysTrueFalse()
             if (tokens.empty() && hasSizeof)
                 continue;
 
-            alwaysTrueFalseError(tok, &tok->values().front());
+            alwaysTrueFalseError(tok, &val);
         }
     }
 }
