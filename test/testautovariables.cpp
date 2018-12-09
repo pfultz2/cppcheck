@@ -75,6 +75,7 @@ private:
         TEST_CASE(testautovar13); // ticket #5537 - crash
         TEST_CASE(testautovar14); // ticket #4776 - assignment of function parameter, goto
         TEST_CASE(testautovar15); // ticket #6538
+        TEST_CASE(testautovar16); // ticket #8114
         TEST_CASE(testautovar_array1);
         TEST_CASE(testautovar_array2);
         TEST_CASE(testautovar_ptrptr); // ticket #6956
@@ -436,6 +437,14 @@ private:
               "        return &darkOutline;\n"
               "    return 0;\n"
               "}", false, false);
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void testautovar16() { // Ticket #8114
+        check("void f(const void* ptr, bool* result) {\n"
+              "  int dummy;\n"
+              "  *result = (&dummy < ptr);\n"
+              "}");
         ASSERT_EQUALS("", errout.str());
     }
 
@@ -1412,6 +1421,19 @@ private:
             errout.str());
 
         check("struct A {\n"
+              "    std::vector<int*> m;\n"
+              "    void f() {\n"
+              "        int x;\n"
+              "        std::vector<int*> v;\n"
+              "        v.push_back(&x);\n"
+              "        m.insert(m.end(), v.begin(), v.end());\n"
+              "    }\n"
+              "};\n");
+        ASSERT_EQUALS(
+            "[test.cpp:6] -> [test.cpp:6] -> [test.cpp:6] -> [test.cpp:4] -> [test.cpp:7]: (error) Non-local variable 'm' will use object that points to local variable 'x'.\n",
+            errout.str());
+
+        check("struct A {\n"
               "    std::vector<std::string> v;\n"
               "    void f() {\n"
               "        char s[3];\n"
@@ -1474,6 +1496,27 @@ private:
               "    return g([&]() { return v.data(); });\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
+
+        check("std::vector<int> g();\n"
+              "struct A {\n"
+              "    std::vector<int> m;\n"
+              "    void f() {\n"
+              "        std::vector<int> v = g();\n"
+              "        m.insert(m.end(), v.begin(), v.end());\n"
+              "    }\n"
+              "};\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("class A {\n"
+              "    int f( P p ) {\n"
+              "        std::vector< S > maps;\n"
+              "        m2.insert( m1.begin(), m1.end() );\n"
+              "    }\n"
+              "    struct B {};\n"
+              "    std::map< S, B > m1;\n"
+              "    std::map< S, B > m2;\n"
+              "};\n");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void danglingLifetime() {
@@ -1501,6 +1544,21 @@ private:
               "}\n");
         ASSERT_EQUALS("", errout.str());
 
+        check("void f() {\n"
+              "    struct b {\n"
+              "        uint32_t f[6];\n"
+              "    } d;\n"
+              "    uint32_t *a = d.f;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // Dont decay std::array
+        check("std::array<char, 1> f() {\n"
+              "    std::array<char, 1> x;\n"
+              "    return x;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
         // Make sure we dont hang
         check("struct A;\n"
               "void f() {\n"
@@ -1515,6 +1573,37 @@ private:
               "    using T = A[3];\n"
               "    A &&a = T{1, 2, 3}[1]();\n"
               "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // Make sure we dont hang
+        check("struct A;\n"
+              "void f() {\n"
+              "    using T = A[3];\n"
+              "    A &&a = T{1, 2, 3}[1];\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // Make sure we dont hang
+        check("struct A;\n"
+              "void f() {\n"
+              "    using T = A[3];\n"
+              "    A &&a = T{1, 2, 3}[1]();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // Crash #8872
+        check("struct a {\n"
+              "  void operator()(b c) override {\n"
+              "    d(c, [&] { c->e });\n"
+              "  }\n"
+              "};\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct a {\n"
+              "  void operator()(b c) override {\n"
+              "    d(c, [=] { c->e });\n"
+              "  }\n"
+              "};\n");
         ASSERT_EQUALS("", errout.str());
     }
 

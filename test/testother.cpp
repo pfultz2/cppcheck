@@ -159,9 +159,12 @@ private:
         TEST_CASE(incompleteArrayFill);
 
         TEST_CASE(redundantVarAssignment);
+        TEST_CASE(redundantVarAssignment_struct);
         TEST_CASE(redundantVarAssignment_7133);
         TEST_CASE(redundantVarAssignment_stackoverflow);
         TEST_CASE(redundantVarAssignment_lambda);
+        TEST_CASE(redundantVarAssignment_for);
+        TEST_CASE(redundantVarAssignment_after_switch);
         TEST_CASE(redundantMemWrite);
 
         TEST_CASE(varFuncNullUB);
@@ -5603,7 +5606,7 @@ private:
               "    int i;\n"
               "    i = 1;\n"
               "    i = 1;\n"
-              "}", nullptr, false, false, false);
+              "}");
         ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (style) Variable 'i' is reassigned a value before the old one has been used.\n", errout.str());
 
         check("void f() {\n"
@@ -5617,7 +5620,7 @@ private:
               "    int i[10];\n"
               "    i[2] = 1;\n"
               "    i[2] = 1;\n"
-              "}", nullptr, false, false, false);
+              "}");
         ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (style) Variable 'i[2]' is reassigned a value before the old one has been used.\n", errout.str());
 
         check("void f(int x) {\n"
@@ -5625,14 +5628,14 @@ private:
               "    i[x] = 1;\n"
               "    x=1;\n"
               "    i[x] = 1;\n"
-              "}", nullptr, false, false, false);
+              "}");
         ASSERT_EQUALS("", errout.str());
 
         check("void f(const int x) {\n"
               "    int i[10];\n"
               "    i[x] = 1;\n"
               "    i[x] = 1;\n"
-              "}", nullptr, false, false, false);
+              "}");
         ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (style) Variable 'i[x]' is reassigned a value before the old one has been used.\n", errout.str());
 
         // Testing different types
@@ -5686,7 +5689,7 @@ private:
               "    i = 1;\n"
               "    bar();\n"
               "    i = 1;\n"
-              "}", nullptr, false, false, false);
+              "}");
         ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:5]: (style) Variable 'i' is reassigned a value before the old one has been used.\n", errout.str());
 
         check("void bar(int i) {}\n"
@@ -5694,7 +5697,7 @@ private:
               "    i = 1;\n"
               "    bar(i);\n" // Passed as argument
               "    i = 1;\n"
-              "}", nullptr, false, false, false);
+              "}");
         ASSERT_EQUALS("", errout.str());
 
         check("void f() {\n"
@@ -5749,7 +5752,7 @@ private:
 
         check("class C {\n"
               "    int x;\n"
-              "    void g() { return x*x; }\n"
+              "    void g() { return x * x; }\n"
               "    void f();\n"
               "};\n"
               "\n"
@@ -5777,7 +5780,7 @@ private:
               "    x = 1;\n"
               "    x = 1;\n"
               "    return x + 1;\n"
-              "}", nullptr, false, false, false);
+              "}");
         ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (style) Variable 'x' is reassigned a value before the old one has been used.\n", errout.str());
 
         // from #3103 (avoid a false positive)
@@ -5790,23 +5793,25 @@ private:
               "}");
         ASSERT_EQUALS("", errout.str());
 
+        // initialization, assignment with 0
         check("void f() {\n"  // Ticket #4356
-              "    int x = 0;\n"  // <- ignore assignment with 0
+              "    int x = 0;\n"  // <- ignore initialization with 0
               "    x = 3;\n"
-              "}", 0, false, false, false);
+              "}");
         ASSERT_EQUALS("", errout.str());
 
         check("void f() {\n"
-              "    int i = 54;\n"
-              "    i = 0;\n"
-              "}", 0, false, false, false);
-        ASSERT_EQUALS("[test.cpp:2] -> [test.cpp:3]: (style) Variable 'i' is reassigned a value before the old one has been used.\n", errout.str());
+              "  state_t *x = NULL;\n"
+              "  x = dostuff();\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
 
         check("void f() {\n"
-              "    int i = 54;\n"
-              "    i = 1;\n"
-              "}", 0, false, false, false);
-        ASSERT_EQUALS("[test.cpp:2] -> [test.cpp:3]: (style) Variable 'i' is reassigned a value before the old one has been used.\n", errout.str());
+              "  state_t *x;\n"
+              "  x = NULL;\n"
+              "  x = dostuff();\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
 
         check("int foo() {\n" // #4420
               "    int x;\n"
@@ -5965,6 +5970,19 @@ private:
         ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (style) Variable 'memptr' is reassigned a value before the old one has been used.\n", errout.str());
     }
 
+    void redundantVarAssignment_struct() {
+        check("struct foo {\n"
+              "  int a,b;\n"
+              "};\n"
+              "\n"
+              "int main() {\n"
+              "  struct foo x;\n"
+              "  x.a = _mm_set1_ps(1.0);\n"
+              "  x.a = _mm_set1_ps(2.0);\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:8]: (style) Variable 'x.a' is reassigned a value before the old one has been used.\n", errout.str());
+    }
+
     void redundantVarAssignment_7133() {
         // #7133
         check("sal_Int32 impl_Export() {\n"
@@ -6040,6 +6058,30 @@ private:
               "    return y;\n"
               "}");
         ASSERT_EQUALS("", errout.str());
+    }
+
+    void redundantVarAssignment_for() {
+        check("void f() {\n"
+              "    char buf[10];\n"
+              "    int i;\n"
+              "    for (i = 0; i < 4; i++)\n"
+              "        buf[i] = 131;\n"
+              "    buf[i] = 0;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void redundantVarAssignment_after_switch() {
+        check("void f(int x) {\n" // #7907
+              "    int ret;\n"
+              "    switch (x) {\n"
+              "    case 123:\n"
+              "        ret = 1;\n" // redundant assignment
+              "        break;\n"
+              "    }\n"
+              "    ret = 3;\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:5] -> [test.cpp:8]: (style) Variable 'ret' is reassigned a value before the old one has been used.\n", errout.str());
     }
 
     void redundantMemWrite() {

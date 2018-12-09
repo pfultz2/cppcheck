@@ -109,6 +109,8 @@ private:
         TEST_CASE(simplifyCasts16); // #6278
         TEST_CASE(simplifyCasts17); // #6110 - don't remove any parentheses in 'a(b)(c)'
 
+        TEST_CASE(simplifyAt);
+
         TEST_CASE(inlineasm);
         TEST_CASE(simplifyAsm2);  // #4725 (writing asm() around "^{}")
 
@@ -1063,6 +1065,14 @@ private:
     void simplifyCasts17() { // #6110 - don't remove any parentheses in 'a(b)(c)'
         ASSERT_EQUALS("if ( a ( b ) ( c ) >= 3 )",
                       tokenizeAndStringify("if (a(b)(c) >= 3)", true));
+    }
+
+    void simplifyAt() {
+        ASSERT_EQUALS("int x ;", tokenizeAndStringify("int x@123;"));
+        ASSERT_EQUALS("bool x ;", tokenizeAndStringify("bool x@123:1;"));
+        ASSERT_EQUALS("char PORTB ; bool PB3 ;", tokenizeAndStringify("char PORTB @ 0x10; bool PB3 @ PORTB:3;\n"));
+
+        ASSERT_EQUALS("interrupt@ f ( ) { }", tokenizeAndStringify("@interrupt f() {}"));
     }
 
     void inlineasm() {
@@ -8662,6 +8672,7 @@ private:
         ASSERT_EQUALS("sizeof ( a . b ) + 3 ;", tokenizeAndStringify("sizeof a.b+3;"));
         ASSERT_EQUALS("sizeof ( a [ 2 ] . b ) + 3 ;", tokenizeAndStringify("sizeof a[2].b+3;"));
         ASSERT_EQUALS("f ( 0 , sizeof ( ptr . bar ) ) ;", tokenizeAndStringify("f(0, sizeof ptr->bar );"));
+        ASSERT_EQUALS("sizeof ( a ) > sizeof ( & main ) ;", tokenizeAndStringify("sizeof a > sizeof &main;"));
     }
 
     void findGarbageCode() { // Make sure the Tokenizer::findGarbageCode() does not have FPs

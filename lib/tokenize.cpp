@@ -3093,8 +3093,13 @@ void Tokenizer::setVarIdPass2()
                     if (tok2->strAt(-1) == ")" || tok2->strAt(-2) == ")")
                         setVarIdClassFunction(scopeName2 + classname, tok2, tok2->link(), thisClassVars, structMembers, &mVarId);
                     tok2 = tok2->link();
-                } else if (tok2->str() == "(" && tok2->link()->strAt(1) != "(")
+                } else if (tok2->str() == "(" && tok2->link()->strAt(1) != "(") {
                     tok2 = tok2->link();
+
+                    // Skip initialization list
+                    while (Token::Match(tok2, ") [:,] %name% ("))
+                        tok2 = tok2->linkAt(3);
+                }
             }
 
             // Found a member variable..
@@ -3340,7 +3345,7 @@ void Tokenizer::sizeofAddParentheses()
     for (Token *tok = list.front(); tok; tok = tok->next()) {
         if (!Token::Match(tok, "sizeof !!("))
             continue;
-        if (tok->next()->isLiteral() || Token::Match(tok->next(), "%name%|*|~|!")) {
+        if (tok->next()->isLiteral() || Token::Match(tok->next(), "%name%|*|~|!|&")) {
             Token *endToken = tok->next();
             while (Token::simpleMatch(endToken, "* *"))
                 endToken = endToken->next();
@@ -3801,6 +3806,20 @@ bool Tokenizer::simplifyTokenList1(const char FileName[])
 
     // Put ^{} statements in asm()
     simplifyAsm2();
+
+    // @..
+    simplifyAt();
+
+    // When the assembly code has been cleaned up, no @ is allowed
+    for (const Token *tok = list.front(); tok; tok = tok->next()) {
+        if (tok->str() == "(") {
+            tok = tok->link();
+            if (!tok)
+                syntaxError(nullptr);
+        } else if (tok->str() == "@") {
+            syntaxError(nullptr);
+        }
+    }
 
     // Order keywords "static" and "const"
     simplifyStaticConst();
@@ -8533,6 +8552,8 @@ void Tokenizer::findGarbageCode() const
             syntaxError(tok);
         if (Token::Match(tok, "%cop%|= ]") && !(isCPP() && Token::Match(tok->previous(), "[|, &|= ]")))
             syntaxError(tok);
+        if (Token::Match(tok, "[+-] [;,)]}]"))
+            syntaxError(tok);
     }
 
     // ternary operator without :
@@ -9360,15 +9381,34 @@ void Tokenizer::simplifyAsm2()
             }
         }
     }
+}
 
-    // When the assembly code has been cleaned up, no @ is allowed
-    for (const Token *tok = list.front(); tok; tok = tok->next()) {
-        if (tok->str() == "(") {
-            tok = tok->link();
-            if (!tok)
-                syntaxError(nullptr);
-        } else if (tok->str()[0] == '@') {
-            syntaxError(nullptr);
+void Tokenizer::simplifyAt()
+{
+    std::set<std::string> var;
+
+    for (Token *tok = list.front(); tok; tok = tok->next()) {
+        if (Token::Match(tok, "%name% @ %num% ;")) {
+            var.insert(tok->str());
+            tok->isAtAddress(true);
+            Token::eraseTokens(tok,tok->tokAt(3));
+        }
+        if (Token::Match(tok, "%name% @ %num% : %num% ;")) {
+            var.insert(tok->str());
+            tok->isAtAddress(true);
+            Token::eraseTokens(tok,tok->tokAt(5));
+        }
+        if (Token::Match(tok, "%name% @ %name% : %num% ;") && var.find(tok->strAt(2)) != var.end()) {
+            var.insert(tok->str());
+            tok->isAtAddress(true);
+            Token::eraseTokens(tok,tok->tokAt(5));
+        }
+
+        // keywords in compiler from cosmic software for STM8
+        // TODO: Should use platform configuration.
+        if (Token::Match(tok, "@ builtin|eeprom|far|inline|interrupt|near|noprd|nostack|nosvf|packed|stack|svlreg|tiny|vector")) {
+            tok->str(tok->next()->str() + "@");
+            tok->deleteNext();
         }
     }
 }

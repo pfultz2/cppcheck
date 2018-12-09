@@ -2,8 +2,9 @@
 #
 # A script a user can run to donate CPU to cppcheck project
 #
-# Syntax: donate-cpu.py [-jN] [--stop-time=HH:MM] [--work-path=path]
+# Syntax: donate-cpu.py [-jN] [--package=url] [--stop-time=HH:MM] [--work-path=path]
 #  -jN                  Use N threads in compilation/analysis. Default is 1.
+#  --package=url        Check a specific package and then stop. Can be useful if you want to reproduce some warning/crash/exception/etc..
 #  --stop-time=HH:MM    Stop analysis when time has passed. Default is that you must terminate the script.
 #  --work-path=path     Work folder path. Default path is cppcheck-donate-cpu-workfolder in your home folder.
 #
@@ -19,7 +20,6 @@
 # Quick start: just run this script without any arguments
 
 import shutil
-import glob
 import os
 import subprocess
 import sys
@@ -85,6 +85,20 @@ def compile(cppcheckPath, jobs):
     except OSError:
         return False
     return True
+
+
+def getCppcheckVersions():
+    print('Connecting to server to get Cppcheck versions..')
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_address = ('cppcheck.osuosl.org', 8000)
+    try:
+        sock.connect(server_address)
+        sock.send(b'GetCppcheckVersions\n')
+        versions = sock.recv(256)
+    except socket.error:
+        return None
+    sock.close()
+    return versions.decode('utf-8').split()
 
 
 def getPackage():
@@ -175,10 +189,36 @@ def unpackPackage(workPath, tgz):
     os.chdir(workPath)
 
 
+def hasInclude(path, inc):
+    for root, _, files in os.walk(path):
+        for name in files:
+            filename = os.path.join(root, name)
+            try:
+                f = open(filename, 'rt')
+                filedata = f.read()
+                try:
+                    # Python2 needs to decode the data first
+                    filedata = filedata.decode(encoding='utf-8', errors='ignore')
+                except AttributeError:
+                    # Python3 directly reads the data into a string object that has no decode()
+                    pass
+                f.close()
+                if filedata.find('\n#include ' + inc) >= 0:
+                    return True
+            except IOError:
+                pass
+    return False
+
+
 def scanPackage(workPath, cppcheck, jobs):
     print('Analyze..')
     os.chdir(workPath)
-    cmd = 'nice ' + cppcheck + ' ' + jobs + ' -D__GCC__ --inconclusive --enable=style --library=posix --platform=unix64 --template=daca2 -rp=temp temp'
+    libraries = ' --library=posix'
+    if hasInclude('temp', '<wx/string.h>'):
+        libraries += ' --library=wxwidgets'
+    if hasInclude('temp', '<QString>'):
+        libraries += ' --library=qt'
+    cmd = 'nice ' + cppcheck + ' ' + jobs + libraries + ' -D__GCC__ --inconclusive --enable=style --platform=unix64 --template=daca2 -rp=temp temp'
     print(cmd)
     startTime = time.time()
     p = subprocess.Popen(cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -187,6 +227,10 @@ def scanPackage(workPath, cppcheck, jobs):
     stdout = comm[0].decode(encoding='utf-8', errors='ignore')
     stderr = comm[1].decode(encoding='utf-8', errors='ignore')
     if p.returncode != 0 and 'cppcheck: error: could not find or open any of the paths given.' not in stdout:
+        # Crash!
+        print('Crash!')
+        return -1, '', -1
+    if stderr.find('Internal error: Child process crashed with signal 11 [cppcheckError]') > 0:
         # Crash!
         print('Crash!')
         return -1, '', -1
@@ -208,7 +252,7 @@ def splitResults(results):
                 ret.append(w.strip())
             w = ''
         if w is not None:
-            w += line + '\n'
+            w += ' ' * 5 + line + '\n'
     if w is not None:
         ret.append(w.strip())
     return ret
@@ -241,7 +285,7 @@ def diffResults(workPath, ver1, results1, ver2, results2):
 
 
 def sendAll(connection, data):
-    bytes = data.encode()
+    bytes = data.encode('ascii', 'ignore')
     while bytes:
         num = connection.send(bytes)
         if num < len(bytes):
@@ -252,15 +296,19 @@ def sendAll(connection, data):
 
 def uploadResults(package, results):
     print('Uploading results..')
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_address = ('cppcheck.osuosl.org', 8000)
-    sock.connect(server_address)
-    try:
-        sendAll(sock, 'write\n' + package + '\n' + results + '\nDONE')
-        sock.close()
-    except socket.error:
-        pass
-    return package
+    for retry in range(4):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_address = ('cppcheck.osuosl.org', 8000)
+            sock.connect(server_address)
+            sendAll(sock, 'write\n' + package + '\n' + results + '\nDONE')
+            sock.close()
+            return True
+        except socket.error:
+            print('Upload failed, retry in 60 seconds')
+            time.sleep(30)
+            pass
+    return False
 
 jobs = '-j1'
 stopTime = None
@@ -312,12 +360,18 @@ while True:
     if not getCppcheck(cppcheckPath):
         print('Failed to clone Cppcheck, retry later')
         sys.exit(1)
-    if compile_version(workpath, jobs, '1.85') == False:
-        print('Failed to compile Cppcheck-1.85, retry later')
+    cppcheckVersions = getCppcheckVersions()
+    if cppcheckVersions is None:
+        print('Failed to communicate with server, retry later')
         sys.exit(1)
-    if compile(cppcheckPath, jobs) == False:
-        print('Failed to compile Cppcheck, retry later')
-        sys.exit(1)
+    for ver in cppcheckVersions:
+        if ver == 'head':
+            if compile(cppcheckPath, jobs) == False:
+                print('Failed to compile Cppcheck, retry later')
+                sys.exit(1)
+        elif compile_version(workpath, jobs, ver) == False:
+            print('Failed to compile Cppcheck-{}, retry later'.format(ver))
+            sys.exit(1)
     if packageUrl:
         package = packageUrl
     else:
@@ -332,7 +386,11 @@ while True:
     count = ''
     elapsedTime = ''
     resultsToDiff = []
-    for cppcheck in ['cppcheck/cppcheck', '1.85/cppcheck']:
+    for ver in cppcheckVersions:
+        if ver == 'head':
+            cppcheck = 'cppcheck/cppcheck'
+        else:
+            cppcheck = ver + '/cppcheck'
         c,errout,t = scanPackage(workpath, cppcheck, jobs)
         if c < 0:
             crash = True
@@ -344,11 +402,13 @@ while True:
     if not crash and len(resultsToDiff[0]) + len(resultsToDiff[1]) == 0:
         print('No results')
         continue
-    output = 'cppcheck: head 1.85\n'
+    output = 'cppcheck: ' + ' '.join(cppcheckVersions) + '\n'
     output += 'count:' + count + '\n'
     output += 'elapsed-time:' + elapsedTime + '\n'
+    if 'head' in cppcheckVersions:
+        output += 'head results:\n' + resultsToDiff[cppcheckVersions.index('head')]
     if not crash:
-        output += 'diff:\n' + diffResults(workpath, 'head', resultsToDiff[0], '1.85', resultsToDiff[1]) + '\n'
+        output += 'diff:\n' + diffResults(workpath, cppcheckVersions[0], resultsToDiff[0], cppcheckVersions[1], resultsToDiff[1]) + '\n'
     if packageUrl:
         print('=========================================================')
         print(output)

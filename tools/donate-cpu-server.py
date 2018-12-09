@@ -11,6 +11,8 @@ from threading import Thread
 import subprocess
 import sys
 
+OLD_VERSION = '1.86'
+
 def strDateTime():
     d = datetime.date.strftime(datetime.datetime.now().date(), '%Y-%m-%d')
     t = datetime.time.strftime(datetime.datetime.now().time(), '%H:%M')
@@ -51,7 +53,7 @@ def fmt(a,b,c,d,e):
 def latestReport(latestResults):
     html = '<html><head><title>Latest daca@home results</title></head><body>\n'
     html += '<h1>Latest daca@home results</h1>'
-    html += '<pre>\n<b>' + fmt('Package','Date       Time ','1.85','Head','Diff') + '</b>\n'
+    html += '<pre>\n<b>' + fmt('Package','Date       Time ',OLD_VERSION,'Head','Diff') + '</b>\n'
 
     # Write report for latest results
     for filename in latestResults:
@@ -73,7 +75,7 @@ def latestReport(latestResults):
                 count = line.split(' ')[1:]
             elif line.startswith('head '):
                 added += 1
-            elif line.startswith('1.85 '):
+            elif line.startswith(OLD_VERSION + ' '):
                 lost += 1
         diff = ''
         if lost > 0:
@@ -90,7 +92,7 @@ def crashReport():
     html = '<html><head><title>Crash report</title></head><body>\n'
     html += '<h1>Crash report</h1>\n'
     html += '<pre>\n'
-    html += '<b>Package                                 1.85  Head</b>\n'
+    html += '<b>Package                                 ' + OLD_VERSION + '  Head</b>\n'
     for filename in sorted(glob.glob(os.path.expanduser('~/daca@home/donated-results/*'))):
         if not os.path.isfile(filename):
             continue
@@ -114,13 +116,14 @@ def crashReport():
             html += out + '\n'
             break
     html += '</pre>\n'
+
     html += '</body></html>\n'
     return html
 
 
 def diffReportFromDict(out, today):
     html = '<pre>\n'
-    html += '<b>MessageID                           1.85    Head</b>\n'
+    html += '<b>MessageID                           ' + OLD_VERSION + '    Head</b>\n'
     sum0 = 0
     sum1 = 0
     for messageId in sorted(out.keys()):
@@ -176,7 +179,7 @@ def diffReport(resultsPath):
             if not line.endswith(']'):
                 continue
             index = None
-            if line.startswith('1.85 '):
+            if line.startswith(OLD_VERSION + ' '):
                 index = 0
             elif line.startswith('head '):
                 index = 1
@@ -252,7 +255,7 @@ def diffMessageIdTodayReport(resultPath, messageId):
 
 def timeReport(resultPath):
     text = 'Time report\n\n'
-    text += 'Package 1.85 Head\n'
+    text += 'Package ' + OLD_VERSION + ' Head\n'
 
     totalTime184 = 0.0
     totalTimeHead = 0.0
@@ -304,7 +307,7 @@ class HttpClientThread(Thread):
         try:
             cmd = self.cmd
             print('[' + strDateTime() + '] ' + cmd)
-            res = re.match(r'GET /([a-zA-Z0-9_\-\.]*) HTTP', cmd)
+            res = re.match(r'GET /([a-zA-Z0-9_\-\.\+]*) HTTP', cmd)
             if res is None:
                 self.connection.close()
                 return
@@ -347,40 +350,6 @@ class HttpClientThread(Thread):
             self.connection.close()
 
 
-def getCrashUrls():
-    ret = []
-    for filename in sorted(glob.glob(os.path.expanduser('~/daca@home/donated-results/*'))):
-        if not os.path.isfile(filename):
-            continue
-        url = None
-        for line in open(filename, 'rt'):
-            if line.startswith('ftp://'):
-                url = line.strip()
-            if not line.startswith('count:'):
-                continue
-            if url and line.find('Crash') > 0:
-                ret.append(url)
-            break
-    return ret
-
-
-def writeCrashUrls(crashUrls):
-    f = open(os.path.expanduser('crash-urls.txt'), 'wt')
-    for url in crashUrls:
-        f.write(url + '\n')
-    f.close()
-
-def readCrashUrls():
-    ret = []
-    filename = 'crash-urls.txt'
-    if os.path.isfile(filename):
-        f = open(filename, 'rt')
-        for url in f.read().split():
-            if len(url) > 10:
-                ret.append(url.strip())
-        f.close()
-    return ret
-
 def server(server_address_port, packages, packageIndex, resultPath):
     socket.setdefaulttimeout(30)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -389,8 +358,6 @@ def server(server_address_port, packages, packageIndex, resultPath):
     sock.bind(server_address)
 
     sock.listen(1)
-
-    crashUrls = readCrashUrls()
 
     latestResults = []
     if os.path.isfile('latest.txt'):
@@ -415,25 +382,22 @@ def server(server_address_port, packages, packageIndex, resultPath):
         if cmd.startswith('GET /'):
             newThread = HttpClientThread(connection, cmd, resultPath, latestResults)
             newThread.start()
+        elif cmd=='GetCppcheckVersions\n':
+            reply = 'head ' + OLD_VERSION
+            print('[' + strDateTime() + '] GetCppcheckVersions: ' + reply)
+            connection.send(reply)
+            connection.close()
         elif cmd=='get\n':
-            # Get crash package urls..
-            if (packageIndex % 500) == 0:
-                crashUrls = getCrashUrls()
-                writeCrashUrls(crashUrls)
-            if (packageIndex % 500) == 1 and len(crashUrls) > 0:
-                pkg = crashUrls[0]
-                crashUrls = crashUrls[1:]
-                writeCrashUrls(crashUrls)
-                print('[' + strDateTime() + '] CRASH: ' + pkg)
-            else:
-                pkg = packages[packageIndex].strip()
-                packages[packageIndex] = pkg
-                packageIndex += 1
-                if packageIndex >= len(packages):
-                    packageIndex = 0
-                f = open('package-index.txt', 'wt')
-                f.write(str(packageIndex) + '\n')
-                f.close()
+            pkg = packages[packageIndex].strip()
+            packages[packageIndex] = pkg
+            packageIndex += 1
+            if packageIndex >= len(packages):
+                packageIndex = 0
+
+            f = open('package-index.txt', 'wt')
+            f.write(str(packageIndex) + '\n')
+            f.close()
+
             print('[' + strDateTime() + '] get:' + pkg)
             connection.send(pkg)
             connection.close()

@@ -412,133 +412,10 @@ void CheckOther::checkPipeParameterSizeError(const Token *tok, const std::string
 // Detect redundant assignments: x = 0; x = 4;
 //---------------------------------------------------------------------------
 
-static bool nonLocal(const Variable* var)
-{
-    return !var || (!var->isLocal() && !var->isArgument()) || var->isStatic() || var->isReference();
-}
-
-static void eraseMemberAssignments(const unsigned int varId, const std::map<unsigned int, std::set<unsigned int> > &membervars, std::map<unsigned int, const Token*> &varAssignments)
-{
-    const std::map<unsigned int, std::set<unsigned int> >::const_iterator it = membervars.find(varId);
-    if (it != membervars.end()) {
-        const std::set<unsigned int>& vars = it->second;
-        for (unsigned int var : vars) {
-            varAssignments.erase(var);
-            if (var != varId)
-                eraseMemberAssignments(var, membervars, varAssignments);
-        }
-    }
-}
-
-static bool hasFunctionCall(const Token *tok)
-{
-    if (!tok)
-        return false;
-    if (Token::Match(tok, "%name% ("))
-        // todo, const/pure function?
-        return true;
-    return hasFunctionCall(tok->astOperand1()) || hasFunctionCall(tok->astOperand2());
-}
-
-static bool hasOperand(const Token *tok, const Token *lhs, bool cpp, const Library &library)
-{
-    if (!tok)
-        return false;
-    if (isSameExpression(cpp, false, tok, lhs, library, false, false, nullptr))
-        return true;
-    return hasOperand(tok->astOperand1(), lhs, cpp, library) || hasOperand(tok->astOperand2(), lhs, cpp, library);
-}
-
-const Token *CheckOther::checkRedundantAssignmentRecursive(const Token *assign1, const Token *startToken, const Token *endToken, bool *read) const
-{
-    // all variable ids in assign1 LHS.
-    std::set<unsigned int> assign1LhsVarIds;
-    bool local = true;
-    visitAstNodes(assign1->astOperand1(),
-    [&](const Token *tok) {
-        if (tok->varId() > 0) {
-            assign1LhsVarIds.insert(tok->varId());
-            local &= !nonLocal(tok->variable());
-        }
-        return ChildrenToVisit::op1_and_op2;
-    });
-
-    // Parse the given tokens
-    for (const Token *tok = startToken; tok != endToken; tok = tok->next()) {
-        if (Token::simpleMatch(tok, "try {")) {
-            // TODO: handle try
-            *read = true;
-            return nullptr;
-        }
-
-        if (Token::Match(tok, "break|continue|return|throw|goto")) {
-            // TODO: handle these better
-            *read = true;
-            return nullptr;
-        }
-
-        if (Token::simpleMatch(tok, "else {"))
-            tok = tok->linkAt(1);
-
-        if (Token::simpleMatch(tok, "asm (")) {
-            *read = true;
-            return nullptr;
-        }
-
-        if (!local && Token::Match(tok, "%name% (") && !Token::simpleMatch(tok->linkAt(1), ") {")) {
-            // TODO: this is a quick bailout
-            *read = true;
-            return nullptr;
-        }
-
-        if (assign1LhsVarIds.find(tok->varId()) != assign1LhsVarIds.end()) {
-            const Token *parent = tok;
-            while (Token::Match(parent->astParent(), ".|::|["))
-                parent = parent->astParent();
-            if (Token::simpleMatch(parent->astParent(), "=") && parent == parent->astParent()->astOperand1()) {
-                if (!local && hasFunctionCall(parent->astParent()->astOperand2())) {
-                    // TODO: this is a quick bailout
-                    *read = true;
-                    return nullptr;
-                }
-                if (hasOperand(parent->astParent()->astOperand2(), assign1->astOperand1(), mTokenizer->isCPP(), mSettings->library)) {
-                    *read = true;
-                    return nullptr;
-                }
-                const bool reassign = isSameExpression(mTokenizer->isCPP(), false, assign1->astOperand1(), parent, mSettings->library, false, false, nullptr);
-                if (reassign)
-                    return parent->astParent();
-                *read = true;
-                return nullptr;
-            } else {
-                // TODO: this is a quick bailout
-                *read = true;
-                return nullptr;
-            }
-        }
-
-        if (Token::Match(tok, ") {")) {
-            const Token *a1 = checkRedundantAssignmentRecursive(assign1, tok->tokAt(2), tok->linkAt(1), read);
-            if (*read)
-                return nullptr;
-            if (Token::simpleMatch(tok->linkAt(1), "} else {")) {
-                const Token *elseStart = tok->linkAt(1)->tokAt(2);
-                const Token *a2 = checkRedundantAssignmentRecursive(assign1, elseStart, elseStart->link(), read);
-                if (*read)
-                    return nullptr;
-                if (a1 && a2)
-                    return a1;
-                tok = elseStart->link();
-            } else {
-                tok = tok->linkAt(1);
-            }
-        }
-    }
-    return nullptr;
-}
-
 void CheckOther::checkRedundantAssignment()
 {
+    if (!mSettings->isEnabled(Settings::STYLE))
+        return;
     const SymbolDatabase* symbolDatabase = mTokenizer->getSymbolDatabase();
     for (const Scope *scope : symbolDatabase->functionScopes) {
         if (!scope->bodyStart)
@@ -553,17 +430,37 @@ void CheckOther::checkRedundantAssignment()
             if ((tok->isAssignmentOp() || Token::Match(tok, "++|--")) && tok->astOperand1()) {
                 if (tok->astParent())
                     continue;
-                if (Token::simpleMatch(tok->astOperand2(), "0"))
+
+                // Do not warn about redundant initialization when rhs is trivial
+                // TODO : do not simplify the variable declarations
+                if (Token::Match(tok->tokAt(-3), "%var% ; %var% =") && tok->previous()->variable() && tok->previous()->variable()->nameToken() == tok->tokAt(-3) && tok->tokAt(-3)->linenr() == tok->previous()->linenr()) {
+                    bool trivial = true;
+                    visitAstNodes(tok->astOperand2(),
+                    [&](const Token *rhs) {
+                        if (Token::Match(rhs, "%str%|%num%|%name%"))
+                            return ChildrenToVisit::op1_and_op2;
+                        if (rhs->str() == "(" && !rhs->previous()->isName())
+                            return ChildrenToVisit::op1_and_op2;
+                        trivial = false;
+                        return ChildrenToVisit::done;
+                    });
+                    if (trivial)
+                        continue;
+                }
+
+                // Do not warn about assignment with 0 / NULL
+                if (Token::Match(tok->astOperand2(), "0|NULL|nullptr"))
                     continue;
+
                 if (tok->astOperand1()->variable() && tok->astOperand1()->variable()->isReference())
                     // todo: check references
                     continue;
+
                 if (tok->astOperand1()->variable() && tok->astOperand1()->variable()->isStatic())
                     // todo: check static variables
                     continue;
-                if (hasOperand(tok->astOperand2(), tok->astOperand1(), mTokenizer->isCPP(), mSettings->library))
-                    continue;
 
+                // If there is a custom assignment operator => this is inconclusive
                 bool inconclusive = false;
                 if (mTokenizer->isCPP() && tok->astOperand1()->valueType() && tok->astOperand1()->valueType()->typeScope) {
                     const std::string op = "operator" + tok->str();
@@ -577,16 +474,24 @@ void CheckOther::checkRedundantAssignment()
                 if (inconclusive && !mSettings->inconclusive)
                     continue;
 
-                bool read = false;
+                FwdAnalysis fwdAnalysis(mTokenizer->isCPP(), mSettings->library);
+                if (fwdAnalysis.hasOperand(tok->astOperand2(), tok->astOperand1()))
+                    continue;
+
+                // Is there a redundant assignment?
                 const Token *start;
                 if (tok->isAssignmentOp())
                     start = tok->next();
                 else
                     start = tok->findExpressionStartEndTokens().second->next();
-                const Token *nextAssign = checkRedundantAssignmentRecursive(tok, start, scope->bodyEnd, &read);
-                if (read || !nextAssign)
+
+                // Get next assignment..
+                const Token *nextAssign = fwdAnalysis.reassign(tok->astOperand1(), start, scope->bodyEnd);
+
+                if (!nextAssign)
                     continue;
 
+                // there is redundant assignment. Is there a case between the assignments?
                 bool hasCase = false;
                 for (const Token *tok2 = tok; tok2 != nextAssign; tok2 = tok2->next()) {
                     if (tok2->str() == "case") {
@@ -595,6 +500,7 @@ void CheckOther::checkRedundantAssignment()
                     }
                 }
 
+                // warn
                 if (hasCase)
                     redundantAssignmentInSwitchError(tok, nextAssign, tok->astOperand1()->expressionString());
                 else

@@ -1047,6 +1047,14 @@ void TemplateSimplifier::expandTemplate(
                 start = templateDeclarationToken->next();
                 end = templateDeclarationNameToken->linkAt(1)->next();
             }
+            unsigned int typeindentlevel = 0;
+            while (!(typeindentlevel == 0 && Token::Match(end, ";|{|:"))) {
+                if (Token::Match(end, "<|(|{"))
+                    ++typeindentlevel;
+                else if (Token::Match(end, ">|)|}"))
+                    --typeindentlevel;
+                end = end->next();
+            }
 
             std::map<const Token *, Token *> links;
             while (start && start != end) {
@@ -1055,13 +1063,57 @@ void TemplateSimplifier::expandTemplate(
                     ++itype;
 
                 if (itype < typeParametersInDeclaration.size()) {
-                    dst->insertToken(mTypesUsedInTemplateInstantiation[itype]->str(), "", true);
-                    dst->previous()->isTemplateArg(true);
+                    typeindentlevel = 0;
+                    for (const Token *typetok = mTypesUsedInTemplateInstantiation[itype];
+                         typetok && (typeindentlevel > 0 || !Token::Match(typetok, ",|>"));
+                         typetok = typetok->next()) {
+                        if (Token::simpleMatch(typetok, ". . .")) {
+                            typetok = typetok->tokAt(2);
+                            continue;
+                        }
+                        if (Token::Match(typetok, "%name% <") && templateParameters(typetok->next()) > 0)
+                            ++typeindentlevel;
+                        else if (typeindentlevel > 0 && typetok->str() == ">")
+                            --typeindentlevel;
+                        dst->insertToken(typetok->str(), typetok->originalName(), true);
+                        dst->previous()->isTemplateArg(true);
+                        dst->previous()->isSigned(typetok->isSigned());
+                        dst->previous()->isUnsigned(typetok->isUnsigned());
+                        dst->previous()->isLong(typetok->isLong());
+                    }
                 } else {
-                    if (start->str() == templateDeclarationNameToken->str())
+                    if (start->str() == templateDeclarationNameToken->str()) {
                         dst->insertToken(newName, "", true);
-                    else
-                        dst->insertToken(start->str(), "", true);
+                        if (start->strAt(1) == "<")
+                            start = start->next()->findClosingBracket();
+                    } else {
+                        // check if type is a template
+                        if (start->strAt(1) == "<") {
+                            // get the instantiated name
+                            Token * closing = start->next()->findClosingBracket();
+                            std::string name;
+                            const Token * type = start;
+                            while (type && type != closing->next()) {
+                                if (!name.empty())
+                                    name += " ";
+                                name += type->str();
+                                type = type->next();
+                            }
+                            // check if type is instantiated
+                            for (const auto & inst : mTemplateInstantiations) {
+                                if (Token::simpleMatch(inst.nameToken, name.c_str())) {
+                                    // use the instantiated name
+                                    dst->insertToken(name, "", true);
+                                    start = closing;
+                                    break;
+                                }
+                            }
+                            // just copy the token if it wasn't instantiated
+                            if (start != closing)
+                                dst->insertToken(start->str(), "", true);
+                        } else
+                            dst->insertToken(start->str(), "", true);
+                    }
                     if (start->link()) {
                         if (Token::Match(start, "[|{|(")) {
                             links[start->link()] = dst->previous();

@@ -495,6 +495,20 @@ private:
                "    return h(std::move(x));\n"
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 5U, ValueFlow::Value::MovedVariable));
+
+        code = "struct X {\n"
+               "};\n"
+               "struct Data {\n"
+               "  template<typename Fun>\n"
+               "  void foo(Fun f) {}\n"
+               "};\n"
+               "Data g(X value) { return Data(); }\n"
+               "void f() {\n"
+               "   X x;\n"
+               "   g(std::move(x)).foo([=](int value) mutable {;});\n"
+               "   X y=x;\n"
+               "}";
+        TODO_ASSERT_EQUALS(true, false, testValueOfX(code, 11U, ValueFlow::Value::MovedVariable));
     }
 
     void valueFlowCalculations() {
@@ -1417,6 +1431,25 @@ private:
                "}\n";
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
 
+        code = "void f() {\n"
+               "    int x = 0;\n"
+               "    dostuff([&]() {\n"
+               "        if (x > 0) {}\n"
+               "        x++;\n"
+               "    });\n"
+               "    dosomething(q);\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
+
+        code = "int f() {\n"
+               "    int x = 1;\n"
+               "    dostuff([&]() {\n"
+               "        x = y;\n"
+               "    });\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 6U, 1));
+
         // ?:
         code = "void f() {\n"
                "    int x = 8;\n"
@@ -2239,6 +2272,15 @@ private:
                "  return x;\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 8U, 1));
+
+        code = "int f(int *);\n"
+               "int g() {\n"
+               "  const int a = 1;\n"
+               "  int x = 11;\n"
+               "  c = (a && f(&x));\n"
+               "  if (x == 42) {}\n"
+               "}";
+        ASSERT_EQUALS(false, testValueOfX(code, 6U, 11));
     }
 
     void valueFlowForwardTernary() {

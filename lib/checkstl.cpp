@@ -111,18 +111,15 @@ void CheckStl::outOfBoundsError(const Token *tok, const ValueFlow::Value *contai
         errmsg = "Out of bounds access of item in container '$symbol'";
     else if (containerSize->intvalue == 0) {
         if (containerSize->condition)
-            errmsg = "Accessing an item in container '$symbol'. " + ValueFlow::eitherTheConditionIsRedundant(containerSize->condition) + " or '$symbol' can be empty.";
+            errmsg = ValueFlow::eitherTheConditionIsRedundant(containerSize->condition) + " or $symbol is accessed out of bounds when $symbol is empty.";
         else
-            errmsg = "Accessing an item in container '$symbol' that is empty.";
+            errmsg = "Out of bounds access in $symbol because $symbol is empty.";
     } else if (index) {
-        if (containerSize->condition || index->condition)
-            errmsg = "Possible access out of bounds";
-        else
-            errmsg = "Access out of bounds";
-
-        errmsg += " of container '$symbol'; size=" +
-                  MathLib::toString(containerSize->intvalue) + ", index=" +
-                  MathLib::toString(index->intvalue);
+        errmsg = "Accessing $symbol[" + MathLib::toString(index->intvalue) + "] is out of bounds when $symbol size is " + MathLib::toString(containerSize->intvalue) + ".";
+        if (containerSize->condition)
+            errmsg = ValueFlow::eitherTheConditionIsRedundant(containerSize->condition) + " or $symbol size can be " + MathLib::toString(containerSize->intvalue) + ". " + errmsg;
+        else if (index->condition)
+            errmsg = ValueFlow::eitherTheConditionIsRedundant(index->condition) + " or $symbol item " + MathLib::toString(index->intvalue) + " can be accessed. " + errmsg;
     } else {
         // should not happen
         return;
@@ -151,6 +148,81 @@ void CheckStl::outOfBoundsError(const Token *tok, const ValueFlow::Value *contai
                 CWE398,
                 (containerSize && containerSize->isInconclusive()) || (index && index->isInconclusive()));
 }
+
+bool CheckStl::isContainerSize(const Token *containerToken, const Token *expr) const
+{
+    if (!Token::simpleMatch(expr, "( )"))
+        return false;
+    if (!Token::Match(expr->astOperand1(), ". %name% ("))
+        return false;
+    if (!isSameExpression(mTokenizer->isCPP(), false, containerToken, expr->astOperand1()->astOperand1(), mSettings->library, false, false))
+        return false;
+    return containerToken->valueType()->container->getYield(expr->previous()->str()) == Library::Container::Yield::SIZE;
+}
+
+bool CheckStl::isContainerSizeGE(const Token * containerToken, const Token *expr) const
+{
+    if (!expr)
+        return false;
+    if (isContainerSize(containerToken, expr))
+        return true;
+    if (expr->str() == "*") {
+        const Token *mul;
+        if (isContainerSize(containerToken, expr->astOperand1()))
+            mul = expr->astOperand2();
+        else if (isContainerSize(containerToken, expr->astOperand2()))
+            mul = expr->astOperand1();
+        else
+            return false;
+        return mul && (!mul->hasKnownIntValue() || mul->values().front().intvalue != 0);
+    }
+    if (expr->str() == "+") {
+        const Token *op;
+        if (isContainerSize(containerToken, expr->astOperand1()))
+            op = expr->astOperand2();
+        else if (isContainerSize(containerToken, expr->astOperand2()))
+            op = expr->astOperand1();
+        else
+            return false;
+        return op && op->getValueGE(0, mSettings);
+    }
+    return false;
+}
+
+void CheckStl::outOfBoundsIndexExpression()
+{
+    for (const Scope *function : mTokenizer->getSymbolDatabase()->functionScopes) {
+        for (const Token *tok = function->bodyStart; tok != function->bodyEnd; tok = tok->next()) {
+            if (!tok->isName() || !tok->valueType())
+                continue;
+            const Library::Container *container = tok->valueType()->container;
+            if (!container)
+                continue;
+            if (!container->arrayLike_indexOp && !container->stdStringLike)
+                continue;
+            if (!Token::Match(tok, "%name% ["))
+                continue;
+            if (isContainerSizeGE(tok, tok->next()->astOperand2()))
+                outOfBoundsIndexExpressionError(tok, tok->next()->astOperand2());
+        }
+    }
+}
+
+void CheckStl::outOfBoundsIndexExpressionError(const Token *tok, const Token *index)
+{
+    const std::string varname = tok ? tok->str() : std::string("var");
+    const std::string i = index ? index->expressionString() : std::string(varname + ".size()");
+
+    std::string errmsg = "Out of bounds access of $symbol, index '" + i + "' is out of bounds.";
+
+    reportError(tok,
+                Severity::error,
+                "containerOutOfBoundsIndexExpression",
+                "$symbol:" + varname +"\n" + errmsg,
+                CWE398,
+                false);
+}
+
 
 
 // Error message for bad iterator usage..
@@ -694,50 +766,66 @@ void CheckStl::stlOutOfBounds()
         if ((scope.type != Scope::eFor && scope.type != Scope::eWhile && scope.type != Scope::eIf && scope.type != Scope::eDo) || !tok)
             continue;
 
-        if (scope.type == Scope::eFor)
-            tok = Token::findsimplematch(tok->tokAt(2), ";");
-        else if (scope.type == Scope::eDo) {
-            tok = tok->linkAt(1)->tokAt(2);
-        } else
-            tok = tok->next();
+        const Token *condition = nullptr;
+        if (scope.type == Scope::eFor) {
+            if (Token::simpleMatch(tok->next()->astOperand2(), ";") && Token::simpleMatch(tok->next()->astOperand2()->astOperand2(), ";"))
+                condition = tok->next()->astOperand2()->astOperand2()->astOperand1();
+        } else if (Token::simpleMatch(tok, "do {") && Token::simpleMatch(tok->linkAt(1), "} while ("))
+            condition = tok->linkAt(1)->tokAt(2)->astOperand2();
+        else
+            condition = tok->next()->astOperand2();
 
-        if (!tok)
-            continue;
-        tok = tok->next();
-
-        // check if the for loop condition is wrong
-        if (!Token::Match(tok, "%var% <= %var% . %name% ( ) ;|)|%oror%"))
-            continue;
-        // Is it a vector?
-        const Variable *var = tok->tokAt(2)->variable();
-        if (!var)
+        if (!condition)
             continue;
 
-        const Library::Container* container = mSettings->library.detectContainer(var->typeStartToken());
-        if (!container)
-            continue;
+        std::vector<const Token *> conds;
 
-        if (container->getYield(tok->strAt(4)) != Library::Container::SIZE)
-            continue;
+        visitAstNodes(condition,
+        [&](const Token *cond) {
+            if (Token::Match(cond, "%oror%|&&"))
+                return ChildrenToVisit::op1_and_op2;
+            if (cond->isComparisonOp())
+                conds.emplace_back(cond);
+            return ChildrenToVisit::none;
+        });
 
-        // variable id for loop variable.
-        const unsigned int numId = tok->varId();
+        for (const Token *cond : conds) {
+            const Token *vartok;
+            const Token *containerToken;
+            if (Token::Match(cond, "<= %var% . %name% ( )") && Token::Match(cond->astOperand1(), "%var%")) {
+                vartok = cond->astOperand1();
+                containerToken = cond->next();
+            } else {
+                continue;
+            }
 
-        // variable id for the container variable
-        const unsigned int declarationId = var->declarationId();
+            // Is it a array like container?
+            const Library::Container* container = containerToken->valueType() ? containerToken->valueType()->container : nullptr;
+            if (!container)
+                continue;
+            if (container->getYield(containerToken->strAt(2)) != Library::Container::SIZE)
+                continue;
 
-        for (const Token *tok3 = scope.bodyStart; tok3 && tok3 != scope.bodyEnd; tok3 = tok3->next()) {
-            if (tok3->varId() == declarationId) {
-                tok3 = tok3->next();
-                if (Token::Match(tok3, ". %name% ( )")) {
-                    if (container->getYield(tok3->strAt(1)) == Library::Container::SIZE)
-                        break;
-                } else if (container->arrayLike_indexOp && Token::Match(tok3, "[ %varid% ]", numId))
-                    stlOutOfBoundsError(tok3, tok3->strAt(1), var->name(), false);
-                else if (Token::Match(tok3, ". %name% ( %varid% )", numId)) {
-                    const Library::Container::Yield yield = container->getYield(tok3->strAt(1));
-                    if (yield == Library::Container::AT_INDEX)
-                        stlOutOfBoundsError(tok3, tok3->strAt(3), var->name(), true);
+            // variable id for loop variable.
+            const unsigned int numId = vartok->varId();
+
+            // variable id for the container variable
+            const unsigned int declarationId = containerToken->varId();
+            const std::string &containerName = containerToken->str();
+
+            for (const Token *tok3 = scope.bodyStart; tok3 && tok3 != scope.bodyEnd; tok3 = tok3->next()) {
+                if (tok3->varId() == declarationId) {
+                    tok3 = tok3->next();
+                    if (Token::Match(tok3, ". %name% ( )")) {
+                        if (container->getYield(tok3->strAt(1)) == Library::Container::SIZE)
+                            break;
+                    } else if (container->arrayLike_indexOp && Token::Match(tok3, "[ %varid% ]", numId))
+                        stlOutOfBoundsError(tok3, tok3->strAt(1), containerName, false);
+                    else if (Token::Match(tok3, ". %name% ( %varid% )", numId)) {
+                        const Library::Container::Yield yield = container->getYield(tok3->strAt(1));
+                        if (yield == Library::Container::AT_INDEX)
+                            stlOutOfBoundsError(tok3, tok3->strAt(3), containerName, true);
+                    }
                 }
             }
         }

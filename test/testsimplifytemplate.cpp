@@ -117,6 +117,11 @@ private:
         TEST_CASE(template77);
         TEST_CASE(template78);
         TEST_CASE(template79); // #5133
+        TEST_CASE(template80);
+        TEST_CASE(template81);
+        TEST_CASE(template82); // 8603
+        TEST_CASE(template83);
+        TEST_CASE(template84); // #8880
         TEST_CASE(template_specialization_1);  // #7868 - template specialization template <typename T> struct S<C<T>> {..};
         TEST_CASE(template_specialization_2);  // #7868 - template specialization template <typename T> struct S<C<T>> {..};
         TEST_CASE(template_enum);  // #6299 Syntax error in complex enum declaration (including template)
@@ -1514,6 +1519,105 @@ private:
                            "} "
                            "void Foo :: foo<int> ( ) { bar<int> ( ) ; } "
                            "void Foo :: bar<int> ( ) { bazz ( ) ; }";
+        ASSERT_EQUALS(exp, tok(code));
+    }
+
+    void template80() {
+        const char code[] = "class Fred {\n"
+                            "    template <typename T> T foo(T t) const { return t; }\n"
+                            "};\n"
+                            "const void * p = Fred::foo<const void *>(nullptr);";
+        const char exp[] = "class Fred { "
+                           "const void * foo<constvoid*> ( const void * t ) const ; "
+                           "} ; "
+                           "const void * p ; p = Fred :: foo<constvoid*> ( nullptr ) ; "
+                           "const void * Fred :: foo<constvoid*> ( const void * t ) const { return t ; }";
+        ASSERT_EQUALS(exp, tok(code));
+    }
+
+    void template81() {
+        const char code[] = "template <typename Type>\n"
+                            "struct SortWith {\n"
+                            "    SortWith(Type);\n"
+                            "};\n"
+                            "template <typename Type>\n"
+                            "SortWith<Type>::SortWith(Type) {}\n"
+                            "int main() {\n"
+                            "    SortWith<int>(0);\n"
+                            "}";
+        const char exp[] = "template < typename Type > "
+                           "struct SortWith { "
+                           "SortWith ( Type ) ; "
+                           "} ; "
+                           "SortWith<int> :: SortWith<int> ( int ) ; "
+                           "int main ( ) { "
+                           "SortWith<int> ( 0 ) ; "
+                           "} "
+                           "SortWith<int> :: SortWith<int> ( int ) { }";
+        ASSERT_EQUALS(exp, tok(code));
+    }
+
+    void template82() { // 8603
+        const char code[] = "typedef int comp;\n"
+                            "const int f16=16;\n"
+                            "template<int x>\n"
+                            "class tvec2 {};\n"
+                            "template<int x>\n"
+                            "class tvec3 {};\n"
+                            "namespace swizzle {\n"
+                            "template <comp> void swizzle(tvec2<f16> v) { }\n"
+                            "template <comp x, comp y> void swizzle(tvec3<f16> v) { }\n"
+                            "}\n"
+                            "void foo() {\n"
+                            "  using namespace swizzle;\n"
+                            "  tvec2<f16> tt2;\n"
+                            "  swizzle<1>(tt2);\n"
+                            "  tvec3<f16> tt3;\n"
+                            "  swizzle<2,3>(tt3);\n"
+                            "}";
+        const char exp[] = "class tvec2<f16> ; "
+                           "class tvec3<f16> ; "
+                           "namespace swizzle { "
+                           "void swizzle<1> ( tvec2<f16> v ) ; "
+                           "void swizzle<2,3> ( tvec3<f16> v ) ; "
+                           "} "
+                           "void foo ( ) { "
+                           "using namespace swizzle ; "
+                           "tvec2<f16> tt2 ; "
+                           "swizzle<1> ( tt2 ) ; "
+                           "tvec3<f16> tt3 ; "
+                           "swizzle<2,3> ( tt3 ) ; "
+                           "} "
+                           "void swizzle :: swizzle<2,3> ( tvec3<f16> v ) { } "
+                           "void swizzle :: swizzle<1> ( tvec2<f16> v ) { } "
+                           "class tvec3<f16> { } ; "
+                           "class tvec2<f16> { } ;";
+        ASSERT_EQUALS(exp, tok(code));
+    }
+
+    void template83() {
+        const char code[] = "template<typename Task>\n"
+                            "MultiConsumer<Task>::MultiConsumer() : sizeBuffer(0) {}\n"
+                            "MultiReads::MultiReads() {\n"
+                            "    mc = new MultiConsumer<reads_packet>();\n"
+                            "}";
+        const char exp[] = "MultiConsumer<reads_packet> :: MultiConsumer<reads_packet> ( ) ; "
+                           "MultiReads :: MultiReads ( ) { "
+                           "mc = new MultiConsumer<reads_packet> ( ) ; "
+                           "} "
+                           "MultiConsumer<reads_packet> :: MultiConsumer<reads_packet> ( ) : sizeBuffer ( 0 ) { }";
+        ASSERT_EQUALS(exp, tok(code));
+    }
+
+    void template84() { // #8880
+        const char code[] = "template <class b, int c, class>\n"
+                            "auto d() -> typename a<decltype(b{})>::e {\n"
+                            "  d<int, c, int>();\n"
+                            "}";
+        const char exp[] = "auto d<int,c,int> ( ) . a < decltype ( int { } ) > :: e ; "
+                           "auto d<int,c,int> ( ) . a < decltype ( int { } ) > :: e { "
+                           "d<int,c,int> ( ) ; "
+                           "}";
         ASSERT_EQUALS(exp, tok(code));
     }
 

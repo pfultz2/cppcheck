@@ -160,4 +160,37 @@ const Token *findLambdaEndToken(const Token *first);
  */
 bool isLikelyStreamRead(bool cpp, const Token *op);
 
+class FwdAnalysis {
+public:
+    FwdAnalysis(bool cpp, const Library &library) : mCpp(cpp), mLibrary(library), mReassign(false) {}
+
+    bool hasOperand(const Token *tok, const Token *lhs) const;
+
+    /**
+     * Check if "expr" is reassigned. The "expr" can be a tree (x.y[12]).
+     * @param expr Symbolic expression to perform forward analysis for
+     * @param startToken First token in forward analysis
+     * @param endToken Last token in forward analysis
+     * @return Token where expr is reassigned. If it's not reassigned then nullptr is returned.
+     */
+    const Token *reassign(const Token *expr, const Token *startToken, const Token *endToken);
+
+private:
+    /** Result of forward analysis */
+    struct Result {
+        enum class Type { NONE, READ, WRITE, BREAK, RETURN, BAILOUT } type;
+        explicit Result(Type type) : type(type), token(nullptr) {}
+        Result(Type type, const Token *token) : type(type), token(token) {}
+        const Token *token;
+    };
+
+    struct Result check(const Token *expr, const Token *startToken, const Token *endToken);
+    struct Result checkRecursive(const Token *expr, const Token *startToken, const Token *endToken, const std::set<unsigned int> &exprVarIds, bool local);
+
+    const bool mCpp;
+    const Library &mLibrary;
+    bool mReassign;
+    std::vector<const Token *> mReads;
+};
+
 #endif // astutilsH
