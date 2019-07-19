@@ -193,7 +193,7 @@ Token *TokenList::copyTokens(Token *dest, const Token *first, const Token *last,
         tok2->linenr(linenr);
         tok2->tokType(tok->tokType());
         tok2->flags(tok->flags());
-        tok2->varId(tok->varId());
+        tok2->varId(tok->varId(), false);
 
         // Check for links and fix them up
         if (Token::Match(tok2, "(|[|{"))
@@ -204,8 +204,8 @@ Token *TokenList::copyTokens(Token *dest, const Token *first, const Token *last,
 
             Token * link = links.top();
 
-            tok2->link(link);
-            link->link(tok2);
+            tok2->link(link, false);
+            link->link(tok2, false);
 
             links.pop();
         }

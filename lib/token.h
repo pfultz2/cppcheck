@@ -168,11 +168,11 @@ public:
     ~Token();
 
     template<typename T>
-    void str(T&& s) {
+    void str(T&& s, bool update=true) {
         mStr = s;
         mImpl->mVarId = 0;
-
-        update_property_info();
+        if (update)
+            update_property_info();
     }
 
     /**
@@ -671,12 +671,12 @@ public:
     nonneg int varId() const {
         return mImpl->mVarId;
     }
-    void varId(nonneg int id) {
+    void varId(nonneg int id, bool update=true) {
         mImpl->mVarId = id;
         if (id != 0) {
             tokType(eVariable);
             isStandardType(false);
-        } else {
+        } else if (update) {
             update_property_info();
         }
     }
@@ -747,9 +747,9 @@ public:
      * @param linkToToken The token where this token should link
      * to.
      */
-    void link(Token *linkToToken) {
+    void link(Token *linkToToken, bool update=true) {
         mLink = linkToToken;
-        if (mStr == "<" || mStr == ">")
+        if (update && (mStr == "<" || mStr == ">"))
             update_property_info();
     }
 

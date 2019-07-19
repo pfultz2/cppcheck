@@ -68,23 +68,31 @@ Token::~Token()
     delete mImpl;
 }
 
-static const std::set<std::string> controlFlowKeywords = {
-    "goto",
+template<class Range>
+bool sortedContains(const Range& r, const char * s)
+{
+    return std::binary_search(r.begin(), r.end(), s, [](const char * x, const char * y) {
+        return std::strcmp(x, y);
+    });
+}
+
+static const std::vector<const char *> controlFlowKeywords = {
+    "break",
+    "case",
+    "continue",
     "do",
-    "if",
     "else",
     "for",
-    "while",
+    "goto",
+    "if",
+    "return",
     "switch",
-    "case",
-    "break",
-    "continue",
-    "return"
+    "while",
 };
 
 void Token::update_property_info()
 {
-    setFlag(fIsControlFlowKeyword, controlFlowKeywords.find(mStr) != controlFlowKeywords.end());
+    setFlag(fIsControlFlowKeyword, sortedContains(controlFlowKeywords, mStr.c_str()));
 
     if (!mStr.empty()) {
         if (mStr == "true" || mStr == "false")
@@ -138,18 +146,19 @@ void Token::update_property_info()
     update_property_isStandardType();
 }
 
-static const std::set<std::string> stdTypes = { "bool"
-                                                , "_Bool"
-                                                , "char"
-                                                , "double"
-                                                , "float"
-                                                , "int"
-                                                , "long"
-                                                , "short"
-                                                , "size_t"
-                                                , "void"
-                                                , "wchar_t"
-                                              };
+static const std::vector<const char *> stdTypes = { 
+    "_Bool",
+    "bool",
+    "char",
+    "double",
+    "float",
+    "int",
+    "long",
+    "short",
+    "size_t",
+    "void",
+    "wchar_t",
+};
 
 void Token::update_property_isStandardType()
 {
@@ -158,7 +167,7 @@ void Token::update_property_isStandardType()
     if (mStr.size() < 3)
         return;
 
-    if (stdTypes.find(mStr)!=stdTypes.end()) {
+    if (sortedContains(stdTypes, mStr.c_str())) {
         isStandardType(true);
         tokType(eType);
     }
