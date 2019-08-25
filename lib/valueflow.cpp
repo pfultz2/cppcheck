@@ -2024,6 +2024,50 @@ static bool evalAssignment(ValueFlow::Value &lhsValue, const std::string &assign
     return true;
 }
 
+static bool isPossibleFalse(const Token* tok);
+
+static bool isPossibleTrue(const Token* tok)
+{
+    if (!tok)
+        return false;
+    if (tok->str() == "||") {
+        return isPossibleTrue(tok->astOperand1()) || isPossibleTrue(tok->astOperand2());
+    }
+    if (tok->str() == "!") {
+        return !isPossibleFalse(tok->astOperand1());
+    }
+    for(const ValueFlow::Value& v:tok->values()) {
+        if (!v.isIntValue())
+            continue;
+        if (v.isInconclusive())
+            continue;
+        if (v.intvalue != 0)
+            return true;
+    }
+    return false;
+}
+
+static bool isPossibleFalse(const Token* tok)
+{
+    if (!tok)
+        return false;
+    if (tok->str() == "&&") {
+        return isPossibleFalse(tok->astOperand1()) || isPossibleFalse(tok->astOperand2());
+    }
+    if (tok->str() == "!") {
+        return !isPossibleTrue(tok->astOperand1());
+    }
+    for(const ValueFlow::Value& v:tok->values()) {
+        if (!v.isIntValue())
+            continue;
+        if (v.isInconclusive())
+            continue;
+        if (v.intvalue == 0)
+            return true;
+    }
+    return false;
+}
+
 static bool valueFlowForward(Token * const               startToken,
                              const Token * const         endToken,
                              const Variable * const      var,
@@ -2214,6 +2258,20 @@ static bool valueFlowForward(Token * const               startToken,
                     falsevalues.push_back(v);
 
             }
+            const bool inconclusive = truevalues.empty() && falsevalues.empty();
+            if (inconclusive) {
+                if (isPossibleTrue(condTok)) {
+                    truevalues = values;
+                    for (ValueFlow::Value &v : truevalues)
+                        v.setInconclusive();
+                }
+                if (isPossibleFalse(condTok)) {
+                    falsevalues = values;
+                    for (ValueFlow::Value &v : falsevalues)
+                        v.setInconclusive();
+                }
+            }
+
             if (!truevalues.empty() || !falsevalues.empty()) {
                 // '{'
                 const Token * const startToken1 = tok2->linkAt(1)->next();
@@ -4087,20 +4145,23 @@ static void valueFlowAfterCondition(TokenList *tokenlist,
             return cond;
         }
 
+        long long trueIntValue = 0LL;
         long long falseIntValue = 0LL;
         if (tok->str() == "!") {
             vartok = tok->astOperand1();
-            if (astIsPointer(vartok))
+            if (astIsPointer(vartok) || astIsBool(vartok))
                 falseIntValue = 1LL;
 
         } else if (tok->isName() && (Token::Match(tok->astParent(), "%oror%|&&") ||
                                      Token::Match(tok->tokAt(-2), "if|while ( %var% [)=]"))) {
             vartok = tok;
+            if (astIsPointer(vartok) || astIsBool(vartok))
+                trueIntValue = 1LL;
         }
 
         if (!vartok || !vartok->isName())
             return cond;
-        cond.true_values.emplace_back(tok, 0LL);
+        cond.true_values.emplace_back(tok, trueIntValue);
         cond.false_values.emplace_back(tok, falseIntValue);
         cond.vartok = vartok;
 
