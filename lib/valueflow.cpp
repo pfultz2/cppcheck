@@ -1966,11 +1966,23 @@ static void valueFlowBeforeCondition(TokenList *tokenlist, SymbolDatabase *symbo
                     const Token * const start = tok2->link()->next();
                     const Token * const end   = start->link();
 
-                    if (isVariableChanged(start,end,varid,var->isGlobal(),settings, tokenlist->isCPP())) {
-                        varid = 0U;
-                        if (settings->debugwarnings)
-                            bailout(tokenlist, errorLogger, tok, "variable " + var->name() + " used in loop");
+                    const Token* changed = findVariableChanged(start, end, 0, varid, var->isGlobal(), settings, tokenlist->isCPP());
+                    if (changed) {
+                        const Token* read = Token::findmatch(start, "%var%", changed->previous(), varid);
+                        if (!read && Token::Match(changed->astParent(), "%assign%"))
+                            read = Token::findmatch(changed->astParent(), "%var%", nextAfterAstRightmostLeaf(changed->astParent()), varid);
+                        if (!read) {
+                            varid = 0U;
+                            if (settings->debugwarnings)
+                                bailout(tokenlist, errorLogger, tok, "variable " + var->name() + " used in loop");
+                        }
                     }
+
+                    // if (isVariableChanged(start,end,varid,var->isGlobal(),settings, tokenlist->isCPP())) {
+                    //     varid = 0U;
+                    //     if (settings->debugwarnings)
+                    //         bailout(tokenlist, errorLogger, tok, "variable " + var->name() + " used in loop");
+                    // }
                 }
 
                 // if,macro => bailout
