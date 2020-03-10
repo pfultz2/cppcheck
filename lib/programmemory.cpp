@@ -169,6 +169,24 @@ static void fillProgramMemoryFromConditions(ProgramMemory& pm, const Scope* scop
 static void fillProgramMemoryFromConditions(ProgramMemory& pm, const Token* tok, const Settings* settings)
 {
     fillProgramMemoryFromConditions(pm, tok->scope(), tok, settings);
+    const Token* sibling = nullptr;
+    bool then = false;
+    if (Token::Match(tok->astParent(), ":|&&|%oror%")) {
+        bool isAnd = Token::Match(tok, "&&");
+        bool isOr = Token::Match(tok, "%oror%");
+        if (astIsRHS(tok) && !isOr) {
+            sibling = tok->astOperand1();
+            then = isAnd;
+        } else if (astIsLHS(tok) && !isAnd) {
+            sibling = tok->astOperand2();
+            then = isOr;
+        }
+        if (sibling) {
+            programMemoryParseCondition(pm, sibling, tok, settings, then);
+        }
+
+    }
+
 }
 
 static void fillProgramMemoryFromAssignments(ProgramMemory& pm, const Token* tok, const ProgramMemory& state, ProgramMemory::Map vars)

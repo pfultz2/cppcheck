@@ -708,13 +708,22 @@ void CheckStl::mismatchingContainers()
     }
 }
 
+static bool hasUnstableReferences(const Token* tok)
+{
+    if (!tok)
+        return false;
+    const Variable *var = tok->variable();
+    const Token *decltok = var ? var->typeStartToken() : nullptr;
+    return Token::Match(decltok, "std :: vector|string|basic_string|unordered_map|unordered_set");
+}
+
 static bool isInvalidMethod(const Token * tok)
 {
-    if (Token::Match(tok->next(), ". assign|clear"))
+    if (Token::Match(tok->next(), ". assign|clear|swap"))
         return true;
     if (Token::Match(tok->next(), "%assign%"))
         return true;
-    if (isVector(tok) && Token::Match(tok->next(), ". insert|emplace|emplace_back|push_back|erase|pop_back|reserve ("))
+    if (hasUnstableReferences(tok) && Token::Match(tok->next(), ". insert|emplace|emplace_back|push_back|erase|pop_back|reserve|resize|shrink_to_fit ("))
         return true;
     return false;
 }
