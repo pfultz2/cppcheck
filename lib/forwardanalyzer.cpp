@@ -2,16 +2,23 @@
 #include "astutils.h"
 #include "settings.h"
 #include "symboldatabase.h"
+#include "token.h"
 
 #include <functional>
+
+#include <unordered_map>
+#include <vector>
 
 struct ForwardTraversal {
     enum class Progress { Continue, Break, Skip };
     ValuePtr<ForwardAnalyzer> analyzer;
     const Settings* settings;
+    std::unordered_map<const Token*, std::vector<int>> evalCache;
 
     std::pair<bool, bool> evalCond(const Token* tok) {
-        std::vector<int> result = analyzer->evaluate(tok);
+        if (evalCache.count(tok) == 0)
+            evalCache[tok] = analyzer->evaluate(tok);
+        std::vector<int> result = evalCache[tok];
         bool checkThen = std::any_of(result.begin(), result.end(), [](int x) {
             return x;
         });
