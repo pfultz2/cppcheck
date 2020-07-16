@@ -34,6 +34,7 @@
 #include <climits>
 #include <iomanip>
 #include <iostream>
+#include <string>
 //---------------------------------------------------------------------------
 
 SymbolDatabase::SymbolDatabase(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
@@ -5553,17 +5554,23 @@ void SymbolDatabase::setValueType(Token *tok, const ValueType &valuetype)
     }
 
     if (ternary || parent->isArithmeticalOp() || parent->tokType() == Token::eIncDecOp) {
-        if (vt1->pointer != 0U && vt2 && vt2->pointer == 0U) {
+        if (ternary && vt2 && vt1->pointer == vt2->pointer && vt1->type == vt2->type && vt1->sign == vt2->sign){
+            setValueType(parent, *vt2);
+            return;
+        }
+        if (!ternary && vt1->pointer != 0U && vt2 && vt2->pointer == 0U) {
             setValueType(parent, *vt1);
             return;
         }
 
-        if (vt1->pointer == 0U && vt2 && vt2->pointer != 0U) {
+        if (!ternary && vt1->pointer == 0U && vt2 && vt2->pointer != 0U) {
             setValueType(parent, *vt2);
             return;
         }
 
         if (vt1->pointer != 0U) {
+            if (ternary && vt1->pointer != vt2->pointer)
+                return;
             if (ternary || parent->tokType() == Token::eIncDecOp) // result is pointer
                 setValueType(parent, *vt1);
             else // result is pointer diff
@@ -5661,7 +5668,7 @@ static const Token * parsedecl(const Token *type, ValueType * const valuetype, V
     } else
         valuetype->type = ValueType::Type::RECORD;
     bool par = false;
-    while (Token::Match(type, "%name%|*|&|::|(") && !Token::Match(type, "typename|template") &&
+    while (Token::Match(type, "%name%|*|&|::|(") && !Token::Match(type, "typename|template") && type->varId() == 0 &&
            !type->variable() && !type->function()) {
         if (type->str() == "(") {
             if (Token::Match(type->link(), ") const| {"))
@@ -5776,8 +5783,8 @@ static const Token * parsedecl(const Token *type, ValueType * const valuetype, V
             valuetype->pointer++;
         else if (type->isStandardType())
             valuetype->fromLibraryType(type->str(), settings);
-        else if (Token::Match(type->previous(), "!!:: %name% !!::"))
-            valuetype->fromLibraryType(type->str(), settings);
+        // else if (Token::Match(type->previous(), "!!:: %name% !!::"))
+            // valuetype->fromLibraryType(type->str(), settings);
         if (!type->originalName().empty())
             valuetype->originalTypeName = type->originalName();
         type = type->next();
@@ -6012,9 +6019,15 @@ void SymbolDatabase::setValueTypeInTokenList(bool reportDebugWarnings, Token *to
                 const std::string& typestr(mSettings->library.returnValueType(tok->previous()));
                 if (!typestr.empty()) {
                     ValueType valuetype;
-                    if (valuetype.fromLibraryType(typestr, mSettings)) {
+                    TokenList tokenList(nullptr);
+                    std::istringstream istr(typestr);
+                    tokenList.createTokens(istr);
+                    if (parsedecl(tokenList.front(), &valuetype, mDefaultSignedness, mSettings))
                         setValueType(tok, valuetype);
-                    }
+                        
+                    // if (valuetype.fromLibraryType(typestr, mSettings)) {
+                        // setValueType(tok, valuetype);
+                    // }
                 }
 
                 if (typestr.empty() || typestr == "iterator") {
@@ -6154,9 +6167,45 @@ ValueType::Type ValueType::typeFromString(const std::string &typestr, bool longT
     return ValueType::Type::UNKNOWN_TYPE;
 }
 
+int countMatches(const std::string& s, const std::string& sub)
+{
+    int count = 0;
+    std::string::size_type pos = s.find(sub);
+    while(pos != std::string::npos) {
+        count++;
+        pos += sub.length();
+        pos = s.find(sub, pos);
+    }
+    return count;
+}
+
+static std::string trim(const std::string& s)
+{
+    const std::string::size_type beg = s.find_first_not_of(" \t");
+    if (beg == std::string::npos)
+        return "";
+    const std::string::size_type end = s.find_last_not_of(" \t");
+    return s.substr(beg, end - beg + 1);
+}
+
+std::string ValueType::parseCVPointer(std::string typestr)
+{
+    constness = countMatches(typestr, "const");
+    pointer = countMatches(typestr, "*");
+    typestr = replaceStr(std::move(typestr), "const", "");
+    typestr = replaceStr(std::move(typestr), "volatile", "");
+    typestr = replaceStr(std::move(typestr), "*", "");
+    typestr = replaceStr(std::move(typestr), "&", "");
+    typestr = replaceStr(std::move(typestr), "  ", " ");
+    typestr = replaceStr(std::move(typestr), "  ", " ");
+    return trim(typestr);
+}
+
 bool ValueType::fromLibraryType(const std::string &typestr, const Settings *settings)
 {
-    const Library::PodType* podtype = settings->library.podtype(typestr);
+    // std::string str = parseCVPointer(typestr);
+    std::string str = typestr;
+    const Library::PodType* podtype = settings->library.podtype(str);
     if (podtype && (podtype->sign == 's' || podtype->sign == 'u')) {
         if (podtype->size == 1)
             type = ValueType::Type::CHAR;
@@ -6186,7 +6235,7 @@ bool ValueType::fromLibraryType(const std::string &typestr, const Settings *sett
         return true;
     }
 
-    const Library::PlatformType *platformType = settings->library.platform_type(typestr, settings->platformString());
+    const Library::PlatformType *platformType = settings->library.platform_type(str, settings->platformString());
     if (platformType) {
         if (platformType->mType == "char")
             type = ValueType::Type::CHAR;
@@ -6209,7 +6258,7 @@ bool ValueType::fromLibraryType(const std::string &typestr, const Settings *sett
         if (platformType->mConstPtr)
             constness = 1;
         return true;
-    } else if (!podtype && (typestr == "size_t" || typestr == "std::size_t")) {
+    } else if (!podtype && (str == "size_t" || str == "std::size_t")) {
         originalTypeName = "size_t";
         sign = ValueType::UNSIGNED;
         if (settings->sizeof_size_t == settings->sizeof_long)
@@ -6221,6 +6270,11 @@ bool ValueType::fromLibraryType(const std::string &typestr, const Settings *sett
         else
             type = ValueType::Type::UNKNOWN_INT;
         return true;
+    // } else if (!podtype) {
+    //     ValueType::Type t = typeFromString(str, false);
+    //     if (type == ValueType::Type::UNKNOWN_TYPE)
+    //         type = t;
+    //     return true;
     }
 
     return false;

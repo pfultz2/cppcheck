@@ -2956,8 +2956,15 @@ static bool isNotLifetimeValue(const ValueFlow::Value& val)
 
 static bool isLifetimeOwned(const ValueType *vt, const ValueType *vtParent)
 {
-    if (!vtParent)
+    if (!vtParent) {
+        if (vt) {
+            if (vt->pointer > 0) 
+                return true;   
+            if (vt->type == ValueType::ITERATOR) 
+                return true;   
+        }
         return false;
+    }
     if (!vt) {
         if (vtParent->type == ValueType::CONTAINER)
             return true;
@@ -2979,7 +2986,7 @@ static bool isLifetimeOwned(const ValueType *vt, const ValueType *vtParent)
 
 static bool isLifetimeBorrowed(const ValueType *vt, const ValueType *vtParent)
 {
-    if (!vtParent)
+    if (!vtParent) 
         return false;
     if (!vt)
         return false;

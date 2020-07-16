@@ -1225,6 +1225,8 @@ public:
         return (type >= ValueType::Type::FLOAT && type <= ValueType::Type::LONGDOUBLE);
     }
 
+    std::string parseCVPointer(std::string typestr);
+
     bool fromLibraryType(const std::string &typestr, const Settings *settings);
 
     bool isEnum() const {
