@@ -1696,23 +1696,28 @@ static void valueFlowReverse(TokenList *tokenlist,
             if (tok2->hasKnownValue())
                 break;
             // bailout: assignment
-            if (Token::Match(tok2->previous(), "!!* %name% =")) {
-                Token* assignTok = const_cast<Token*>(tok2->next()->astOperand2());
-                if (!assignTok->hasKnownValue()) {
-                    setTokenValue(assignTok, val, settings);
-                    const std::string info = "Assignment from '" + assignTok->expressionString() + "'";
-                    val.errorPath.emplace_back(assignTok, info);
+            if (Token::Match(tok2, "%var% =")) {
+                if (settings->debugwarnings)
+                    bailout(tokenlist, errorLogger, tok2, "assignment of " + tok2->str());
+                break;
+            }
+            if (Token::simpleMatch(tok2->astParent(), "=") && astIsRHS(tok2)) {
+                const Token* vartok = tok2->astParent()->astOperand1();
+                if (!vartok->hasKnownValue()) {
+                    setTokenValue(tok2, val, settings);
+                    const std::string info = "Assignment from '" + tok2->expressionString() + "'";
+                    val.errorPath.emplace_back(tok2, info);
                     std::list<ValueFlow::Value> values = {val};
                     if (val2.condition) {
-                        val2.errorPath.emplace_back(assignTok, info);
-                        setTokenValue(assignTok, val2, settings);
+                        val2.errorPath.emplace_back(tok2, info);
+                        setTokenValue(tok2, val2, settings);
                         values.push_back(val2);
                     }
-                    const Token* startForwardToken = nextAfterAstRightmostLeaf(tok2->next());
+                    const Token* startForwardToken = nextAfterAstRightmostLeaf(tok2->astParent());
                     const Token* endForwardToken = tok->scope() ? tok->scope()->bodyEnd : tok;
                     valueFlowForward(const_cast<Token*>(startForwardToken),
                                      endForwardToken,
-                                     assignTok,
+                                     vartok,
                                      values,
                                      false,
                                      false,
@@ -1720,12 +1725,9 @@ static void valueFlowReverse(TokenList *tokenlist,
                                      errorLogger,
                                      settings);
                     // Only reverse analysis supported with variables
-                    if (assignTok->varId() > 0)
-                        valueFlowReverse(tokenlist, tok2->previous(), assignTok, val, val2, errorLogger, settings);
+                    if (vartok->varId() > 0)
+                        valueFlowReverse(tokenlist, vartok->previous(), vartok, val, val2, errorLogger, settings);
                 }
-                if (settings->debugwarnings)
-                    bailout(tokenlist, errorLogger, tok2, "assignment of " + tok2->str());
-                break;
             }
 
             // increment/decrement
@@ -1977,6 +1979,9 @@ static void valueFlowBeforeCondition(TokenList *tokenlist, SymbolDatabase *symbo
             } else if (Token::Match(tok, "[!?]") && Token::Match(tok->astOperand1(), "%name%")) {
                 vartok = tok->astOperand1();
                 num = 0;
+            } else if (Token::Match(tok, "%var%")) {
+                vartok = tok;
+                num = 1;
             } else {
                 continue;
             }
