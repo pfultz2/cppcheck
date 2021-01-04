@@ -350,6 +350,8 @@ unsigned int CppCheck::check(const std::string &path)
         if (!mSettings.buildDir.empty()) {
             std::ofstream fout(clangcmd);
             fout << exe << " " << args2 << " " << redirect2 << std::endl;
+        } else if (mSettings.verbose && !mSettings.quiet) {
+            mErrorLogger.reportOut(exe + " " + args2);
         }
 
         std::string output2;
@@ -417,10 +419,12 @@ unsigned int CppCheck::check(const ImportProject::FileSettings &fs)
         temp.mSettings.platform(fs.platformType);
     if (mSettings.clang) {
         temp.mSettings.includePaths.insert(temp.mSettings.includePaths.end(), fs.systemIncludePaths.cbegin(), fs.systemIncludePaths.cend());
-        temp.check(Path::simplifyPath(fs.filename));
+        return temp.check(Path::simplifyPath(fs.filename));
     }
     std::ifstream fin(fs.filename);
-    return temp.checkFile(Path::simplifyPath(fs.filename), fs.cfg, fin);
+    unsigned int returnValue = temp.checkFile(Path::simplifyPath(fs.filename), fs.cfg, fin);
+    mSettings.nomsg.addSuppressions(temp.mSettings.nomsg.getSuppressions());
+    return returnValue;
 }
 
 unsigned int CppCheck::checkFile(const std::string& filename, const std::string &cfgname, std::istream& fileStream)
@@ -514,7 +518,8 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
                 filename2 = filename.substr(filename.rfind('/') + 1);
             else
                 filename2 = filename;
-            filename2 = mSettings.plistOutput + filename2.substr(0, filename2.find('.')) + ".plist";
+            std::size_t fileNameHash = std::hash<std::string> {}(filename);
+            filename2 = mSettings.plistOutput + filename2.substr(0, filename2.find('.')) + "_" + std::to_string(fileNameHash) + ".plist";
             plistFile.open(filename2);
             plistFile << ErrorLogger::plistHeader(version(), files);
         }
@@ -638,7 +643,7 @@ unsigned int CppCheck::checkFile(const std::string& filename, const std::string 
         }
 
         std::set<unsigned long long> checksums;
-        unsigned int checkCount = 0;
+        int checkCount = 0;
         bool hasValidConfig = false;
         std::list<std::string> configurationError;
         for (const std::string &currCfg : configurations) {
@@ -931,6 +936,7 @@ void CppCheck::checkRawTokens(const Tokenizer &tokenizer)
 
 void CppCheck::checkNormalTokens(const Tokenizer &tokenizer)
 {
+    mSettings.library.bugHunting = mSettings.bugHunting;
     if (mSettings.bugHunting)
         ExprEngine::runChecks(this, &tokenizer, &mSettings);
     else {
@@ -1140,6 +1146,10 @@ void CppCheck::executeRules(const std::string &tokenlist, const Tokenizer &token
         if (rule.pattern.empty() || rule.id.empty() || rule.severity == Severity::none || rule.tokenlist != tokenlist)
             continue;
 
+        if (!mSettings.quiet) {
+            reportOut("Processing rule: " + rule.pattern);
+        }
+
         const char *pcreCompileErrorStr = nullptr;
         int erroffset = 0;
         pcre * const re = pcre_compile(rule.pattern.c_str(),0,&pcreCompileErrorStr,&erroffset,nullptr);
@@ -1252,7 +1262,7 @@ Settings &CppCheck::settings()
     return mSettings;
 }
 
-void CppCheck::tooManyConfigsError(const std::string &file, const std::size_t numberOfConfigurations)
+void CppCheck::tooManyConfigsError(const std::string &file, const int numberOfConfigurations)
 {
     if (!mSettings.isEnabled(Settings::INFORMATION) && !mTooManyConfigs)
         return;

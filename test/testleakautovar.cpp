@@ -41,6 +41,9 @@ private:
         settings.library.setalloc("malloc", id, -1);
         settings.library.setrealloc("realloc", id, -1);
         settings.library.setdealloc("free", id, 1);
+        while (!Library::ismemory(++id));
+        settings.library.setalloc("socket", id, -1);
+        settings.library.setdealloc("close", id, 1);
         while (!Library::isresource(++id));
         settings.library.setalloc("fopen", id, -1);
         settings.library.setrealloc("freopen", id, -1, 3);
@@ -135,6 +138,7 @@ private:
         TEST_CASE(ifelse14); // #9130 - if (x == (char*)NULL)
         TEST_CASE(ifelse15); // #9206 - if (global_ptr = malloc(1))
         TEST_CASE(ifelse16); // #9635 - if (p = malloc(4), p == NULL)
+        TEST_CASE(ifelse17); //  if (!!(!p))
 
         // switch
         TEST_CASE(switch1);
@@ -1392,10 +1396,19 @@ private:
     }
 
     void ifelse8() { // #5747
-        check("void f() {\n"
+        check("int f() {\n"
               "    int fd = socket(AF_INET, SOCK_PACKET, 0 );\n"
               "    if (fd == -1)\n"
-              "        return;\n"
+              "        return -1;\n"
+              "    return fd;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int f() {\n"
+              "    int fd = socket(AF_INET, SOCK_PACKET, 0 );\n"
+              "    if (fd != -1)\n"
+              "        return fd;\n"
+              "    return -1;\n"
               "}");
         ASSERT_EQUALS("", errout.str());
     }
@@ -1501,6 +1514,24 @@ private:
               "        return;\n"
               "    free(p);\n"
               "    return;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void ifelse17() {
+        check("int *f() {\n"
+              "    int *p = realloc(nullptr, 10);\n"
+              "    if (!p)\n"
+              "        return NULL;\n"
+              "    return p;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int *f() {\n"
+              "    int *p = realloc(nullptr, 10);\n"
+              "    if (!!(!p))\n"
+              "        return NULL;\n"
+              "    return p;\n"
               "}");
         ASSERT_EQUALS("", errout.str());
     }
