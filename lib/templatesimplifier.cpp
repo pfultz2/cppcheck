@@ -497,7 +497,7 @@ unsigned int TemplateSimplifier::templateParameters(const Token *tok)
         }
 
         // skip std::
-        if (tok && tok->str() == "::")
+        if (tok->str() == "::")
             tok = tok->next();
         while (Token::Match(tok, "%name% ::")) {
             tok = tok->tokAt(2);
