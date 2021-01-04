@@ -454,7 +454,7 @@ struct ForwardTraversal {
                         else if (thenBranch.check) {
                             return Progress::Break;
                         } else {
-                            if (!thenBranch.isDead() && analyzer->isConditional() && stopUpdates())
+                            if (analyzer->isConditional() && stopUpdates())
                                 return Progress::Break;
                             analyzer->assume(condTok, false);
                         }
