@@ -94,7 +94,8 @@ PathAnalysis::Progress PathAnalysis::forwardRange(const Token* startToken, const
                     // Traverse condition
                     if (forwardRecursive(condTok, info, f) == Progress::Break)
                         return Progress::Break;
-                    // TODO: Should we traverse the body: forwardRange(tok->link(), tok, info, f)?
+                    // TODO: Should we traverse the body?
+                    forwardRange(tok->link(), tok, info, f);
                 }
             }
             if (Token::simpleMatch(tok, "} else {")) {
@@ -149,12 +150,14 @@ PathAnalysis::Progress PathAnalysis::forwardRange(const Token* startToken, const
     return Progress::Continue;
 }
 
-void PathAnalysis::forward(const std::function<Progress(const Info&)>& f) const
+void PathAnalysis::forward(const std::function<Progress(const Info&)>& f, const Token* endToken) const
 {
-    const Scope * endScope = findOuterScope(start->scope());
-    if (!endScope)
-        return;
-    const Token * endToken = endScope->bodyEnd;
+    if (endToken) {
+        const Scope * endScope = findOuterScope(start->scope());
+        if (!endScope)
+            return;
+        endToken = endScope->bodyEnd;
+    }
     Info info{start, ErrorPath{}, true};
     forwardRange(start, endToken, info, f);
 }

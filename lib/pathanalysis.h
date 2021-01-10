@@ -2,6 +2,7 @@
 #define GUARD_PATHANALYSIS_H
 
 #include "errortypes.h"
+#include "settings.h"
 
 #include <functional>
 
@@ -17,6 +18,9 @@ struct PathAnalysis {
     PathAnalysis(const Token* start, const Library& library)
         : start(start), library(&library)
     {}
+    PathAnalysis(const Token* start)
+        : start(start), library(nullptr)
+    {}
     const Token * start;
     const Library * library;
 
@@ -26,9 +30,9 @@ struct PathAnalysis {
         bool known;
     };
 
-    void forward(const std::function<Progress(const Info&)>& f) const;
+    void forward(const std::function<Progress(const Info&)>& f, const Token* endToken = nullptr) const;
 
-    Info forwardFind(std::function<bool(const Info&)> pred) {
+    Info forwardFind(std::function<bool(const Info&)> pred, const Token* endToken = nullptr) {
         Info result{};
         forward([&](const Info& info) {
             if (pred(info)) {
@@ -36,7 +40,7 @@ struct PathAnalysis {
                 return Progress::Break;
             }
             return Progress::Continue;
-        });
+        }, endToken);
         return result;
     }
 private:

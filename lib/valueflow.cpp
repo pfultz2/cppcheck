@@ -85,6 +85,7 @@
 #include "library.h"
 #include "mathlib.h"
 #include "path.h"
+#include "pathanalysis.h"
 #include "platform.h"
 #include "programmemory.h"
 #include "reverseanalyzer.h"

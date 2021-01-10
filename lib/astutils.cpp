@@ -23,6 +23,7 @@
 #include "config.h"
 #include "library.h"
 #include "mathlib.h"
+#include "pathanalysis.h"
 #include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
@@ -1726,17 +1727,18 @@ Token* findVariableChanged(Token *start, const Token *end, int indirect, const n
     if (depth < 0)
         return start;
     auto getExprTok = memoize([&] { return findExpression(start, exprid); });
-    for (Token *tok = start; tok != end; tok = tok->next()) {
+    PathAnalysis::Info info = PathAnalysis{start} .forwardFind([&](const PathAnalysis::Info& info) {
+        const Token* tok = info.tok;
         if (tok->exprId() != exprid) {
             if (globalvar && Token::Match(tok, "%name% ("))
                 // TODO: Is global variable really changed by function call?
-                return tok;
+                return true;
             // Is aliased function call
             if (Token::Match(tok, "%var% (") && std::any_of(tok->values().begin(), tok->values().end(), std::mem_fn(&ValueFlow::Value::isLifetimeValue))) {
                 bool aliased = false;
                 // If we can't find the expression then assume it was modified
                 if (!getExprTok())
-                    return tok;
+                    return true;
                 visitAstNodes(getExprTok(), [&](const Token* childTok) {
                     if (childTok->varId() > 0 && isAliasOf(tok, childTok->varId())) {
                         aliased = true;
@@ -1746,14 +1748,15 @@ Token* findVariableChanged(Token *start, const Token *end, int indirect, const n
                 });
                 // TODO: Try to traverse the lambda function
                 if (aliased)
-                    return tok;
+                    return true;
             }
-            continue;
+            return false;
         }
         if (isVariableChanged(tok, indirect, settings, cpp, depth))
-            return tok;
-    }
-    return nullptr;
+            return true;
+        return false;
+    }, end);
+    return const_cast<Token*>(info.tok);
 }
 
 const Token* findVariableChanged(const Token *start, const Token *end, int indirect, const nonneg int exprid, bool globalvar, const Settings *settings, bool cpp, int depth)
