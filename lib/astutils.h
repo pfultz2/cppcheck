@@ -220,7 +220,7 @@ bool isExpressionChanged(const Token* expr,
                          int depth = 20);
 
 /// If token is an alias if another variable
-bool isAliasOf(const Token *tok, nonneg int varid, bool* inconclusive = nullptr);
+bool isAliasOf(const Token *tok, nonneg int exprid, bool* inconclusive = nullptr);
 
 bool isAliased(const Variable *var);
 

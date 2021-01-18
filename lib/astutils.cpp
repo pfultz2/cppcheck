@@ -576,14 +576,14 @@ bool precedes(const Token * tok1, const Token * tok2)
     return tok1->index() < tok2->index();
 }
 
-bool isAliasOf(const Token *tok, nonneg int varid, bool* inconclusive)
+bool isAliasOf(const Token *tok, nonneg int exprid, bool* inconclusive)
 {
-    if (tok->varId() == varid)
+    if (tok->exprId() == exprid)
         return false;
     for (const ValueFlow::Value &val : tok->values()) {
         if (!val.isLocalLifetimeValue())
             continue;
-        if (val.tokvalue->varId() == varid) {
+        if (val.tokvalue->exprId() == exprid) {
             if (val.isInconclusive()) {
                 if (inconclusive)
                     *inconclusive = true;
@@ -1734,22 +1734,39 @@ Token* findVariableChanged(Token *start, const Token *end, int indirect, const n
             if (globalvar && Token::Match(tok, "%name% ("))
                 // TODO: Is global variable really changed by function call?
                 return tok;
-            // Is aliased function call
-            if (Token::Match(tok, "%var% (") && std::any_of(tok->values().begin(), tok->values().end(), std::mem_fn(&ValueFlow::Value::isLifetimeValue))) {
-                bool aliased = false;
+            bool hasLifetimeValues = std::any_of(tok->values().begin(), tok->values().end(), std::mem_fn(&ValueFlow::Value::isLifetimeValue));
+            if (hasLifetimeValues) {
                 // If we can't find the expression then assume it was modified
                 if (!getExprTok())
                     return tok;
-                visitAstNodes(getExprTok(), [&](const Token* childTok) {
-                    if (childTok->varId() > 0 && isAliasOf(tok, childTok->varId())) {
-                        aliased = true;
-                        return ChildrenToVisit::done;
-                    }
-                    return ChildrenToVisit::op1_and_op2;
-                });
-                // TODO: Try to traverse the lambda function
-                if (aliased)
-                    return tok;
+                // Is aliased function call
+                if (Token::Match(tok, "%var% (")) {
+                    bool aliased = false;
+                    visitAstNodes(getExprTok(), [&](const Token* childTok) {
+                        if (childTok->varId() > 0 && isAliasOf(tok, childTok->varId())) {
+                            aliased = true;
+                            return ChildrenToVisit::done;
+                        }
+                        return ChildrenToVisit::op1_and_op2;
+                    });
+                    // TODO: Try to traverse the lambda function
+                    if (aliased)
+                        return tok;
+                } else {
+                    bool aliased = false;
+                    visitAstNodes(getExprTok(), [&](const Token* childTok) {
+                        if (childTok->exprId() > 0 && isAliasOf(tok, childTok->exprId())) {
+                            aliased = true;
+                            return ChildrenToVisit::done;
+                        }
+                        return ChildrenToVisit::op1_and_op2;
+                    });
+                    bool aliasIndirect = 0;
+                    if (tok->valueType())
+                        aliasIndirect = tok->valueType()->pointer;
+                    if (aliased && isVariableChanged(tok, aliasIndirect, settings, cpp, depth))
+                        return tok;
+                }
             }
             continue;
         }

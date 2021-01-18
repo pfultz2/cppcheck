@@ -4008,6 +4008,17 @@ static std::vector<const Variable*> getExprVariables(const Token* expr,
     return result;
 }
 
+static std::set<nonneg int> getExprVarIds(const Token* expr)
+{
+    std::set<nonneg int> result;
+    visitAstNodes(expr, [&](const Token* tok) {
+        if (tok->varId() > 0)
+            result.insert(tok->varId());
+        return ChildrenToVisit::op1_and_op2;
+    });
+    return result;
+}
+
 struct ConditionHandler {
     struct Condition {
         const Token *vartok;
@@ -4039,7 +4050,7 @@ struct ConditionHandler {
         ErrorLogger* errorLogger,
         const Settings* settings,
         const std::function<
-        void(const Condition& cond, Token* tok, const Scope* scope, const std::vector<const Variable*>& vars)>& f) const {
+        void(const Condition& cond, Token* tok, const Scope* scope)>& f) const {
         for (const Scope *scope : symboldatabase->functionScopes) {
             std::set<unsigned> aliased;
             for (Token *tok = const_cast<Token *>(scope->bodyStart); tok != scope->bodyEnd; tok = tok->next()) {
@@ -4065,14 +4076,15 @@ struct ConditionHandler {
 
                 if (exprDependsOnThis(cond.vartok))
                     continue;
-                std::vector<const Variable*> vars = getExprVariables(cond.vartok, tokenlist, symboldatabase, settings);
-                if (std::any_of(vars.begin(), vars.end(), [](const Variable* var) {
-                return !var;
-            }))
-                continue;
-                if (!vars.empty() && (vars.front()))
-                    if (std::any_of(vars.begin(), vars.end(), [&](const Variable* var) {
-                    return var && aliased.find(var->declarationId()) != aliased.end();
+                std::set<nonneg int> varids = getExprVarIds(cond.vartok);
+            //     std::vector<const Variable*> vars = getExprVariables(cond.vartok, tokenlist, symboldatabase, settings);
+            //     if (std::any_of(vars.begin(), vars.end(), [](const Variable* var) {
+            //     return !var;
+            // }))
+            //     continue;
+                // if (!vars.empty() && (vars.front()))
+                    if (std::any_of(varids.begin(), varids.end(), [&](nonneg int varid) {
+                    return varid > 0 && aliased.find(varid) != aliased.end();
                     })) {
                     if (settings->debugwarnings)
                         bailout(tokenlist,
@@ -4081,7 +4093,7 @@ struct ConditionHandler {
                                 "variable is aliased so we just skip all valueflow after condition");
                     continue;
                 }
-                f(cond, tok, scope, vars);
+                f(cond, tok, scope);
             }
         }
     }
@@ -4095,7 +4107,7 @@ struct ConditionHandler {
             symboldatabase,
             errorLogger,
             settings,
-        [&](const Condition& cond, Token* tok, const Scope*, const std::vector<const Variable*>&) {
+        [&](const Condition& cond, Token* tok, const Scope*) {
             if (cond.vartok->exprId() == 0)
                 return;
 
@@ -4191,7 +4203,7 @@ struct ConditionHandler {
             symboldatabase,
             errorLogger,
             settings,
-        [&](const Condition& cond, Token* tok, const Scope* scope, const std::vector<const Variable*>& vars) {
+        [&](const Condition& cond, Token* tok, const Scope* scope) {
             if (Token::simpleMatch(tok->astParent(), "?"))
                 return;
             const Token* top = tok->astTop();
@@ -4286,7 +4298,8 @@ struct ConditionHandler {
             if (top && Token::Match(top->previous(), "if|while (") && !top->previous()->isExpandedMacro()) {
                 // does condition reassign variable?
                 if (tok != top->astOperand2() && Token::Match(top->astOperand2(), "%oror%|&&") &&
-                    isVariablesChanged(top, top->link(), 0, vars, settings, tokenlist->isCPP())) {
+                    isExpressionChanged(cond.vartok, top, top->link(), settings, tokenlist->isCPP())) {
+                    // isVariablesChanged(top, top->link(), 0, vars, settings, tokenlist->isCPP())) {
                     if (settings->debugwarnings)
                         bailout(tokenlist, errorLogger, tok, "assignment in condition");
                     return;
