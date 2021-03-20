@@ -1685,6 +1685,10 @@ void TokenList::validateAst() const
                 continue;
             if (!tok->astOperand1() || !tok->astOperand2())
                 throw InternalError(tok, "Syntax Error: AST broken, binary operator '" + tok->str() + "' doesn't have two operands.", InternalError::AST);
+            if (tok->index() > 0 && 
+                (tok->astOperand1()->index() >= tok->astOperand2()->index() || tok->astOperand1()->index() >= tok->index() || tok->astOperand2()->index() <= tok->index()))
+                throw InternalError(tok, "Syntax Error: AST broken, binary operator '" + tok->str() + "' doesn't have operands that occur in the correct order.", InternalError::AST);
+
         }
 
         // Check control blocks
