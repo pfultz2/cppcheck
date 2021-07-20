@@ -1337,7 +1337,7 @@ static bool isVariableMutableInInitializer(const Token* start, const Token * end
                     //TODO: check if the called constructor could live with a const variable
                     // pending that, assume the worst (that it can't)
                     return true;
-                if (!memberVar->isReference())
+                if (!memberVar->isReference() && !memberVar->isPointer())
                     continue;
                 if (memberVar->isConst())
                     continue;
