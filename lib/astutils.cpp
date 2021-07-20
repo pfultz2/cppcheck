@@ -2138,7 +2138,7 @@ const Token* findVariableChanged(const Token *start, const Token *end, int indir
     return findVariableChanged(const_cast<Token*>(start), end, indirect, exprid, globalvar, settings, cpp, depth);
 }
 
-bool isVariableChanged(const Variable * var, const Settings *settings, bool cpp, int depth)
+bool isVariableChanged(const Variable * var, int indirect, const Settings *settings, bool cpp, int depth)
 {
     if (!var)
         return false;
@@ -2149,7 +2149,11 @@ bool isVariableChanged(const Variable * var, const Settings *settings, bool cpp,
         return false;
     if (Token::Match(start, "; %varid% =", var->declarationId()))
         start = start->tokAt(2);
-    return isVariableChanged(start->next(), var->scope()->bodyEnd, var->declarationId(), var->isGlobal(), settings, cpp, depth);
+    return isVariableChanged(start->next(), var->scope()->bodyEnd, indirect, var->declarationId(), var->isGlobal(), settings, cpp, depth);
+}
+bool isVariableChanged(const Variable * var, const Settings *settings, bool cpp, int depth)
+{
+    return isVariableChanged(var, 0, settings, cpp, depth);
 }
 
 bool isVariablesChanged(const Token* start,

@@ -95,7 +95,7 @@ public:
         checkOther.clarifyCalculation();
         checkOther.checkPassByReference();
         checkOther.checkConstVariable();
-        checkOther.checkConstPointer();
+        // checkOther.checkConstPointer();
         checkOther.checkComparisonFunctionIsAlwaysTrueOrFalse();
         checkOther.checkInvalidFree();
         checkOther.clarifyStatement();

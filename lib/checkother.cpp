@@ -1360,11 +1360,9 @@ void CheckOther::checkConstVariable()
     for (const Variable *var : symbolDatabase->variableList()) {
         if (!var)
             continue;
-        if (!var->isReference())
+        if (!var->isReference() && !var->isPointer())
             continue;
         if (var->isRValueReference())
-            continue;
-        if (var->isPointer())
             continue;
         if (var->isConst())
             continue;
@@ -1394,7 +1392,10 @@ void CheckOther::checkConstVariable()
             continue;
         if (isAliased(var))
             continue;
-        if (isVariableChanged(var, mSettings, mTokenizer->isCPP()))
+        int indirect = 0;
+        if (var->isPointer())
+            indirect = 1;
+        if (isVariableChanged(var, indirect, mSettings, mTokenizer->isCPP()))
             continue;
         if (Function::returnsReference(function) && !Function::returnsConst(function)) {
             std::vector<const Token*> returns = Function::findReturns(function);

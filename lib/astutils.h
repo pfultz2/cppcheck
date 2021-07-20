@@ -219,6 +219,7 @@ bool isVariableChanged(const Token *start, const Token *end, int indirect, const
 
 bool isVariableChanged(const Token *tok, int indirect, const Settings *settings, bool cpp, int depth = 20);
 
+bool isVariableChanged(const Variable * var, int indirect, const Settings *settings, bool cpp, int depth = 20);
 bool isVariableChanged(const Variable * var, const Settings *settings, bool cpp, int depth = 20);
 
 bool isVariablesChanged(const Token* start,
