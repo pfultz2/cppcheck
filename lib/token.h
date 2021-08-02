@@ -124,6 +124,8 @@ struct TokenImpl {
     /** Bitfield bit count. */
     unsigned char mBits;
 
+    unsigned char mChanged;
+
     void setCppcheckAttribute(CppcheckAttributes::Type type, MathLib::bigint value);
     bool getCppcheckAttribute(CppcheckAttributes::Type type, MathLib::bigint *value) const;
 
@@ -148,6 +150,7 @@ struct TokenImpl {
         , mCppcheckAttributes(nullptr)
         , mCpp11init(Cpp11init::UNKNOWN)
         , mBits(0)
+        , mChanged(0)
     {}
 
     ~TokenImpl();
