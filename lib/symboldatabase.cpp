@@ -6157,8 +6157,12 @@ static const Token * parsedecl(const Token *type, ValueType * const valuetype, V
     } else
         valuetype->type = ValueType::Type::RECORD;
     bool par = false;
-    while (Token::Match(type, "%name%|*|&|&&|::|(") && !Token::Match(type, "typename|template") && type->varId() == 0 &&
-           !type->variable() && !type->function()) {
+    bool hasAuto = false;
+    auto isTypeDecl = [](const Token* tok) {
+        return Token::Match(tok, "%name%|*|&|&&|::|(") && !Token::Match(tok, "typename|template") && tok->varId() == 0 &&
+           !tok->variable() && !tok->function();
+    };
+    while (isTypeDecl(type)) {
         if (type->str() == "(") {
             if (Token::Match(type->link(), ") const| {"))
                 break;
@@ -6260,6 +6264,7 @@ static const Token * parsedecl(const Token *type, ValueType * const valuetype, V
                     valuetype->type = ValueType::Type::LONGDOUBLE;
             }
         } else if (type->str() == "auto") {
+            hasAuto = true;
             const ValueType *vt = type->valueType();
             if (!vt)
                 return nullptr;
@@ -6301,7 +6306,8 @@ static const Token * parsedecl(const Token *type, ValueType * const valuetype, V
             valuetype->fromLibraryType(type->str(), settings);
         if (!type->originalName().empty())
             valuetype->originalTypeName = type->originalName();
-        type = type->next();
+        if (isTypeDecl(type))
+            type = type->next();
     }
 
     // Set signedness for integral types..
@@ -6311,6 +6317,8 @@ static const Token * parsedecl(const Token *type, ValueType * const valuetype, V
         else if (valuetype->type >= ValueType::Type::SHORT)
             valuetype->sign = ValueType::Sign::SIGNED;
     }
+    if (!hasAuto)
+        valuetype->originalTypeName = previousType->stringifyList(type);
 
     return (type && (valuetype->type != ValueType::Type::UNKNOWN_TYPE || valuetype->pointer > 0 || valuetype->reference != Reference::None)) ? type : nullptr;
 }
