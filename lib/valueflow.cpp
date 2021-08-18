@@ -7260,6 +7260,18 @@ static std::vector<ValueFlow::Value> isOutOfBoundsImpl(const ValueFlow::Value& s
     ValueFlow::Value inBoundsValue = inferCondition("<", indexTok, size.intvalue);
     if (inBoundsValue.isKnown() && inBoundsValue.intvalue != 0)
         return {};
+    if (std::any_of(indexTok->values().begin(), indexTok->values().end(), [&](const ValueFlow::Value& v) {
+        if (!v.isIntValue())
+            return false;
+        if (!v.isPossible())
+            return false;
+        if (v.bound == ValueFlow::Value::Bound::Upper)
+            return false;
+        if (v.intvalue > size.intvalue)
+            return false;
+        return true;
+    }))
+        return {};
     ValueFlow::Value value = inferCondition(">=", indexTok, indexValue->intvalue);
     if (!value.isKnown())
         return {};
