@@ -88,8 +88,11 @@ struct ForwardTraversal {
         return evalCond(tok, ctx).second;
     }
 
+    template<class T>
+    using TraverseFunction = std::function<Progress(T*, Analyzer::Action*)>;
+
     template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-    Progress traverseTok(T* tok, std::function<Progress(T*)> f, TraverseUnknown traverseUnknown, T** out = nullptr) {
+    Progress traverseTok(T* tok, const TraverseFunction<T>& f, TraverseUnknown traverseUnknown, T** out = nullptr) {
         if (Token::Match(tok, "asm|goto|continue|setjmp|longjmp"))
             return Break();
         else if (Token::Match(tok, "return|throw") || isEscapeFunction(tok, &settings->library)) {
@@ -117,14 +120,14 @@ struct ForwardTraversal {
             if (out)
                 *out = tok->link();
         } else {
-            if (f(tok) == Progress::Break)
+            if (f(tok, nullptr) == Progress::Break)
                 return Break();
         }
         return Progress::Continue;
     }
 
     template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-    Progress traverseRecursive(T* tok, std::function<Progress(T*)> f, TraverseUnknown traverseUnknown, unsigned int recursion=0) {
+    Progress traverseRecursive(T* tok, const TraverseFunction<T>& f, TraverseUnknown traverseUnknown, unsigned int recursion=0) {
         if (!tok)
             return Progress::Continue;
         if (recursion > 10000)
@@ -148,8 +151,8 @@ struct ForwardTraversal {
         return Progress::Continue;
     }
 
-    template<class T, class F, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-    Progress traverseConditional(T* tok, F f, TraverseUnknown traverseUnknown) {
+    template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
+    Progress traverseConditional(T* tok, const TraverseFunction<T>& f, TraverseUnknown traverseUnknown) {
         if (Token::Match(tok, "?|&&|%oror%") && tok->astOperand1() && tok->astOperand2()) {
             T* condTok = tok->astOperand1();
             T* childTok = tok->astOperand2();
@@ -182,8 +185,10 @@ struct ForwardTraversal {
         return Progress::Continue;
     }
 
-    Progress update(Token* tok) {
+    Progress update(Token* tok, Analyzer::Action* actionOut = nullptr) {
         Analyzer::Action action = analyzer->analyze(tok, Analyzer::Direction::Forward);
+        if (actionOut)
+            *actionOut = action;
         actions |= action;
         if (!action.isNone() && !analyzeOnly)
             analyzer->update(tok, action, Analyzer::Direction::Forward);
@@ -197,19 +202,19 @@ struct ForwardTraversal {
         return Progress::Continue;
     }
 
-    Progress updateTok(Token* tok, Token** out = nullptr) {
-        std::function<Progress(Token*)> f = [this](Token* tok2) {
-            return update(tok2);
+    TraverseFunction<Token> updateFunction() {
+        return [this](Token* tok, Analyzer::Action* action) {
+            return update(tok, action);
         };
-        return traverseTok(tok, f, TraverseUnknown::Conditional, out);
+    }
+
+    Progress updateTok(Token* tok, Token** out = nullptr) {
+        return traverseTok(tok, updateFunction(), TraverseUnknown::Conditional, out);
     }
 
     Progress updateRecursive(Token* tok) {
         forked = false;
-        std::function<Progress(Token*)> f = [this](Token* tok2) {
-            return update(tok2);
-        };
-        return traverseRecursive(tok, f, TraverseUnknown::Conditional);
+        return traverseRecursive(tok, updateFunction(), TraverseUnknown::Conditional);
     }
 
     template<class T>
@@ -224,8 +229,10 @@ struct ForwardTraversal {
 
     Analyzer::Action analyzeRecursive(const Token* start) {
         Analyzer::Action result = Analyzer::Action::None;
-        std::function<Progress(const Token*)> f = [&](const Token* tok) {
+        TraverseFunction<const Token> f = [&](const Token* tok, Analyzer::Action* action) {
             result = analyzer->analyze(tok, Analyzer::Direction::Forward);
+            if (action)
+                *action = result;
             if (result.isModified() || result.isInconclusive())
                 return Break();
             return Progress::Continue;
