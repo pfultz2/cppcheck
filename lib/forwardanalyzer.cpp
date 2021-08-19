@@ -31,6 +31,11 @@ struct ForwardTraversal {
             terminate = t;
         return Progress::Break;
     }
+    enum class TraverseUnknown {
+        Conditional,
+        Always,
+        Never
+    };
 
     struct Branch {
         Branch(Token* tok = nullptr) : endBlock(tok) {}
@@ -84,7 +89,7 @@ struct ForwardTraversal {
     }
 
     template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-    Progress traverseTok(T* tok, std::function<Progress(T*)> f, bool traverseUnknown, T** out = nullptr) {
+    Progress traverseTok(T* tok, std::function<Progress(T*)> f, TraverseUnknown traverseUnknown, T** out = nullptr) {
         if (Token::Match(tok, "asm|goto|continue|setjmp|longjmp"))
             return Break();
         else if (Token::Match(tok, "return|throw") || isEscapeFunction(tok, &settings->library)) {
@@ -119,7 +124,7 @@ struct ForwardTraversal {
     }
 
     template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-    Progress traverseRecursive(T* tok, std::function<Progress(T*)> f, bool traverseUnknown, unsigned int recursion=0) {
+    Progress traverseRecursive(T* tok, std::function<Progress(T*)> f, TraverseUnknown traverseUnknown, unsigned int recursion=0) {
         if (!tok)
             return Progress::Continue;
         if (recursion > 10000)
@@ -144,15 +149,17 @@ struct ForwardTraversal {
     }
 
     template<class T, class F, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-    Progress traverseConditional(T* tok, F f, bool traverseUnknown) {
+    Progress traverseConditional(T* tok, F f, TraverseUnknown traverseUnknown) {
         if (Token::Match(tok, "?|&&|%oror%") && tok->astOperand1() && tok->astOperand2()) {
             T* condTok = tok->astOperand1();
             T* childTok = tok->astOperand2();
             bool checkThen, checkElse;
             std::tie(checkThen, checkElse) = evalCond(condTok);
             if (!checkThen && !checkElse) {
+                if (traverseUnknown == TraverseUnknown::Never)
+                    return Progress::Continue;
                 // Stop if the value is conditional
-                if (!traverseUnknown && analyzer->isConditional() && stopUpdates()) {
+                if (traverseUnknown == TraverseUnknown::Conditional && analyzer->isConditional() && stopUpdates()) {
                     return Break(Analyzer::Terminate::Conditional);
                 }
                 checkThen = true;
@@ -194,7 +201,7 @@ struct ForwardTraversal {
         std::function<Progress(Token*)> f = [this](Token* tok2) {
             return update(tok2);
         };
-        return traverseTok(tok, f, false, out);
+        return traverseTok(tok, f, TraverseUnknown::Conditional, out);
     }
 
     Progress updateRecursive(Token* tok) {
@@ -202,7 +209,7 @@ struct ForwardTraversal {
         std::function<Progress(Token*)> f = [this](Token* tok2) {
             return update(tok2);
         };
-        return traverseRecursive(tok, f, false);
+        return traverseRecursive(tok, f, TraverseUnknown::Conditional);
     }
 
     template<class T>
@@ -223,7 +230,7 @@ struct ForwardTraversal {
                 return Break();
             return Progress::Continue;
         };
-        traverseRecursive(start, f, true);
+        traverseRecursive(start, f, TraverseUnknown::Always);
         return result;
     }
 
