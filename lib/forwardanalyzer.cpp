@@ -184,10 +184,8 @@ struct ForwardTraversal {
             if (!checkThen && !checkElse) {
                 if (traverseUnknown == TraverseUnknown::Never)
                     return Progress::Continue;
-                // Stop if the value is conditional
-                if (traverseUnknown == TraverseUnknown::Conditional && analyzer->isConditional() && stopUpdates()) {
-                    return Break(Analyzer::Terminate::Conditional);
-                }
+                if (traverseUnknown == TraverseUnknown::Conditional && analyzer->isConditional())
+                    return Progress::Continue;
                 checkThen = true;
                 checkElse = true;
             }
