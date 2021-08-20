@@ -139,8 +139,31 @@ struct ForwardTraversal {
         //     2. Unary op before operand
         if (tok->isAssignmentOp() || !secondOp)
             std::swap(firstOp, secondOp);
-        if (firstOp && traverseRecursive(firstOp, f, traverseUnknown, recursion+1) == Progress::Break)
+        
+        // If this is a conditional token then inpsect the LHS to see if it does a read.
+        // Then use that information to decide how we will traverse unknown conditions
+        Analyzer::Action action = Analyzer::Action::None;
+        TraverseFunction<T> inspect;
+        // For now only skip reads when there is a function call
+        bool isFunctionCall = false;
+        if (firstOp && traverseUnknown != TraverseUnknown::Always && Token::Match(tok, "?|&&|%oror%")) {
+            inspect = [&](T* tok2, Analyzer::Action* out) {
+                Analyzer::Action a;
+                Progress p = f(tok2, &a);
+                action |= a;
+                if (out)
+                    *out = a;
+                if (Token::Match(tok2->previous(), "%name%|> ("))
+                    isFunctionCall = true;
+                return p;
+            };
+        }
+
+        if (firstOp && traverseRecursive(firstOp, inspect ? inspect : f, traverseUnknown, recursion+1) == Progress::Break)
             return Break();
+        // If there was a read then dont traverse unknown conditions
+        if (action.isRead() && isFunctionCall)
+            traverseUnknown = TraverseUnknown::Never;
         Progress p = tok->isAssignmentOp() ? Progress::Continue : traverseTok(tok, f, traverseUnknown);
         if (p == Progress::Break)
             return Break();
