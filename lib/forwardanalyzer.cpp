@@ -91,6 +91,35 @@ struct ForwardTraversal {
     template<class T>
     using TraverseFunction = std::function<Progress(T*, Analyzer::Action*)>;
 
+    struct Inspector {
+        Analyzer::Action action = Analyzer::Action::None;
+        bool hasFunctionCall = false;
+
+        void operator()(const Token* tok, Analyzer::Action a) {
+            action |= a;
+            if (Token::Match(tok->previous(), "%name%|> ("))
+                hasFunctionCall = true;
+        }
+
+        // Dont assume an expression if it has a read and there is a function call
+        bool unassume() const {
+            return action.isRead() && hasFunctionCall;
+        }
+    };
+
+    template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*>)>
+    static TraverseFunction<T> inspect(TraverseFunction<T> f, Inspector* inspector)
+    {
+        return [=](T* tok, Analyzer::Action* action) {
+            Analyzer::Action a;
+            Progress p = f(tok, &a);
+            (*inspector)(tok, a);
+            if (action)
+                *action = a;
+            return p;
+        };
+    }
+
     template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
     Progress traverseTok(T* tok, const TraverseFunction<T>& f, TraverseUnknown traverseUnknown, T** out = nullptr) {
         if (Token::Match(tok, "asm|goto|continue|setjmp|longjmp"))
@@ -140,29 +169,17 @@ struct ForwardTraversal {
         if (tok->isAssignmentOp() || !secondOp)
             std::swap(firstOp, secondOp);
         
-        // If this is a conditional token then inpsect the LHS to see if it does a read.
-        // Then use that information to decide how we will traverse unknown conditions
-        Analyzer::Action action = Analyzer::Action::None;
-        TraverseFunction<T> inspect;
-        // For now only skip reads when there is a function call
-        bool isFunctionCall = false;
+        // If this is a conditional token then inpsect the LHS to see if it can be assumed
+        Inspector inspector{};
+        TraverseFunction<T> inspectf;
         if (firstOp && traverseUnknown != TraverseUnknown::Always && Token::Match(tok, "?|&&|%oror%")) {
-            inspect = [&](T* tok2, Analyzer::Action* out) {
-                Analyzer::Action a;
-                Progress p = f(tok2, &a);
-                action |= a;
-                if (out)
-                    *out = a;
-                if (Token::Match(tok2->previous(), "%name%|> ("))
-                    isFunctionCall = true;
-                return p;
-            };
+            inspectf = inspect(f, &inspector);
         }
 
-        if (firstOp && traverseRecursive(firstOp, inspect ? inspect : f, traverseUnknown, recursion+1) == Progress::Break)
+        if (firstOp && traverseRecursive(firstOp, inspectf ? inspectf : f, traverseUnknown, recursion+1) == Progress::Break)
             return Break();
-        // If there was a read then dont traverse unknown conditions
-        if (action.isRead() && isFunctionCall)
+        // If LHS cannot be assumed then dont traverse unknown conditions
+        if (inspector.unassume())
             traverseUnknown = TraverseUnknown::Never;
         Progress p = tok->isAssignmentOp() ? Progress::Continue : traverseTok(tok, f, traverseUnknown);
         if (p == Progress::Break)
@@ -223,19 +240,22 @@ struct ForwardTraversal {
         return Progress::Continue;
     }
 
-    TraverseFunction<Token> updateFunction() {
-        return [this](Token* tok, Analyzer::Action* action) {
+    TraverseFunction<Token> updateFunction(Inspector* inspector = nullptr) {
+        TraverseFunction<Token> f = [this](Token* tok, Analyzer::Action* action) {
             return update(tok, action);
         };
+        if (inspector)
+            return inspect(std::move(f), inspector);
+        return f;
     }
 
     Progress updateTok(Token* tok, Token** out = nullptr) {
         return traverseTok(tok, updateFunction(), TraverseUnknown::Conditional, out);
     }
 
-    Progress updateRecursive(Token* tok) {
+    Progress updateRecursive(Token* tok, Inspector* inspector = nullptr) {
         forked = false;
-        return traverseRecursive(tok, updateFunction(), TraverseUnknown::Conditional);
+        return traverseRecursive(tok, updateFunction(inspector), TraverseUnknown::Conditional);
     }
 
     template<class T>
@@ -621,13 +641,17 @@ struct ForwardTraversal {
                     }
                     tok = endBlock;
                 } else {
+                    Inspector condInspector{};
                     // Traverse condition
-                    if (updateRecursive(condTok) == Progress::Break)
+                    if (updateRecursive(condTok, &condInspector) == Progress::Break)
                         return Break();
                     Branch thenBranch{endBlock};
                     Branch elseBranch{endBlock->tokAt(2) ? endBlock->linkAt(2) : nullptr};
                     // Check if condition is true or false
                     std::tie(thenBranch.check, elseBranch.check) = evalCond(condTok);
+                    // Bail if the condition cannot be assumed
+                    if (!thenBranch.check && !elseBranch.check && condInspector.unassume())
+                        return Break(Analyzer::Terminate::Bail);
                     bool hasElse = Token::simpleMatch(endBlock, "} else {");
                     bool bail = false;
 

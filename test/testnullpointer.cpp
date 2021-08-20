@@ -2386,6 +2386,14 @@ private:
               "    if (h(i) && *i == 1) {}\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
+
+        check("bool h(int*);\n"
+              "void f(int* i) {\n"
+              "    int* i = nullptr;\n"
+              "    if (h(i))\n"
+              "        if (*i == 1) {}\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void nullpointer_addressOf() { // address of
