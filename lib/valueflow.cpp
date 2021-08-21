@@ -2517,7 +2517,7 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
             return false;
         if (value.isImpossible())
             return false;
-        if (isConditional() && !value.isKnown() && !value.isImpossible())
+        if (isConditional())
             return true;
         ConditionState cs = analyzeCondition(condTok);
         return cs.isUnknownDependent();

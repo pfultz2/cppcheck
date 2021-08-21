@@ -3721,7 +3721,7 @@ private:
         // conditional code in loop
         code = "void f(int mask) {\n" // #6000
                "  for (int x = 10; x < 14; x++) {\n"
-               "    int bit = mask & (1 << i);\n"
+               "    int bit = mask & (1 << x);\n"
                "    if (bit) {\n"
                "      if (bit == (1 << 10)) {}\n"
                "      else { a = x; }\n" // <- x is not 10
@@ -4799,6 +4799,17 @@ private:
         ASSERT_EQUALS(true, testValueOfXKnown(code, 6U, 0));
     }
 
+    static bool hasContainerValue(const std::list<ValueFlow::Value>& values, MathLib::bigint i, ValueFlow::Value::ValueKind kind)
+    {
+        return std::any_of(values.begin(), values.end(), [&](const ValueFlow::Value& value) {
+            if (!value.isContainerSizeValue())
+                return false;
+            if (value.valueKind != kind)
+                return false;
+            return value.intvalue == i;
+        });
+    }
+
     static std::string isPossibleContainerSizeValue(std::list<ValueFlow::Value> values,
                                                     MathLib::bigint i,
                                                     bool unique = true) {
@@ -5092,7 +5103,8 @@ private:
                "    while (!links.empty() || indentlevel)\n"
                "        links.push(tok);\n"
                "}";
-        ASSERT_EQUALS("", isPossibleContainerSizeValue(tokenValues(code, "links . empty"), 0));
+        ASSERT_EQUALS(true, hasContainerValue(tokenValues(code, "links . empty"), 0, ValueFlow::Value::ValueKind::Possible));
+        ASSERT_EQUALS(true, hasContainerValue(tokenValues(code, "links . empty"), 1, ValueFlow::Value::ValueKind::Possible));
 
         // valueFlowContainerForward, function call
         code = "void f() {\n"
