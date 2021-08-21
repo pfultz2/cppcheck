@@ -2513,11 +2513,11 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
 
     virtual bool stopOnCondition(const Token* condTok) const OVERRIDE
     {
-        if (value.isNonValue())
+        if (value.isLifetimeValue())
             return false;
         if (value.isImpossible())
             return false;
-        if (isConditional())
+        if (isConditional() && !value.isNonValue())
             return true;
         ConditionState cs = analyzeCondition(condTok);
         return cs.isUnknownDependent();

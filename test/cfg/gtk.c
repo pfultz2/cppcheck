@@ -408,6 +408,7 @@ void g_once_init_enter_leave_test()
     gsize * init_val4;
     // cppcheck-suppress uninitvar
     if (g_once_init_enter(init_val4)) {
+        gsize * init_val41;
         // cppcheck-suppress uninitvar
         g_once_init_leave(init_val4, 1);
     }
