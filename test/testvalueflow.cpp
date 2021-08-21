@@ -1902,7 +1902,7 @@ private:
         ASSERT_EQUALS(false, testValueOfX(code, 8U, "\"\"", ValueFlow::Value::ValueType::TOK));
         ASSERT_EQUALS(false, testValueOfX(code, 9U, "\"\"", ValueFlow::Value::ValueType::TOK));
 
-        code = "void f() {\n" // #7599
+        code = "void f(bool a) {\n" // #7599
                "  t *x = 0;\n"
                "  y = (a ? 1 : x\n" // <- x is 0
                "       && x->y ? 1 : 2);" // <- x is not 0
@@ -1910,7 +1910,7 @@ private:
         ASSERT_EQUALS(true, testValueOfX(code, 3U, 0));
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
 
-        code = "void f() {\n" // #7599
+        code = "void f(bool a) {\n" // #7599
                "  t *x = 0;\n"
                "  y = (a ? 1 : !x\n" // <- x is 0
                "       || x->y ? 1 : 2);" // <- x is not 0
@@ -3176,9 +3176,9 @@ private:
     void valueFlowForwardTernary() {
         const char *code;
 
-        code = "int f() {\n"
+        code = "int f(bool b) {\n"
                "  int x=5;\n"
-               "  a = b ? init1(&x) : init2(&x);\n"
+               "  int a = b ? init1(&x) : init2(&x);\n"
                "  return 1 + x;\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 3U, 5));
@@ -5087,7 +5087,7 @@ private:
         ASSERT(tokenValues(code, "s . size").empty());
 
         // valueFlowContainerForward, loop
-        code = "void f() {\n"
+        code = "void f(int indentlevel) {\n"
                "    std::stack<Token *> links;\n"
                "    while (!links.empty() || indentlevel)\n"
                "        links.push(tok);\n"

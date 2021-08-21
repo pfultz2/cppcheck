@@ -1167,7 +1167,7 @@ private:
                   "    if (!p || *p) { }\n"
                   "}", true);
             ASSERT_EQUALS("", errout.str());
-            check("void f() {\n"
+            check("void f(bool x) {\n"
                   "    int *p = NULL;\n"
                   "    if (x)\n"
                   "        p = q;\n"
@@ -1227,7 +1227,7 @@ private:
 
         // #2231 - error if assignment in loop is not used
         // extracttests.start: int y[20];
-        check("void f() {\n"
+        check("void f(int* y) {\n"
               "    char *p = 0;\n"
               "\n"
               "    for (int x = 0; x < 3; ++x) {\n"
@@ -3137,7 +3137,7 @@ private:
                       "[test.cpp:5]: (error) Null pointer dereference\n"
                       , errout.str());
 
-        check("void f(std::string s1, const std::string& s2, const std::string* s3) {\n"
+        check("void f(std::string s1, const std::string& s2, const std::string* s3, bool x) {\n"
               "    void* p = 0;\n"
               "    if (x) { return; }\n"
               "    foo(s1 == p);\n"

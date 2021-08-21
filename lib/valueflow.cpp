@@ -2041,7 +2041,7 @@ struct ValueFlowAnalyzer : Analyzer {
             result.dependent = false;
             result.unknown = false;
             return result;
-        } else if (Token::Match(tok, "%cop%")) {
+        } else if (Token::Match(tok, "[|%cop%")) {
             if (isLikelyStream(isCPP(), tok->astOperand1())) {
                 result.dependent = false;
                 return result;
@@ -2072,6 +2072,8 @@ struct ValueFlowAnalyzer : Analyzer {
                 if (!evaluate(Evaluate::Integral, tok).empty()) 
                     result.unknown = false;
             }
+            return result;
+        } else if (tok->isIncompleteVar()) {
             return result;
         } else {
             std::unordered_map<nonneg int, const Token*> symbols = getSymbols(tok);
@@ -2526,16 +2528,7 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
             return value.isLifetimeValue();
         } else if (scope->type == Scope::eIf || scope->type == Scope::eElse || scope->type == Scope::eWhile ||
                    scope->type == Scope::eFor) {
-            if (value.isKnown() || value.isImpossible())
-                return true;
-            if (value.isLifetimeValue())
-                return true;
-            if (isConditional())
-                return false;
-            const Token* condTok = getCondTokFromEnd(endBlock);
-            std::set<nonneg int> varids2;
-            std::transform(getVars().begin(), getVars().end(), std::inserter(varids2, varids2.begin()), SelectMapKeys{});
-            return bifurcate(condTok, varids2, getSettings());
+            return true;
         }
 
         return false;
