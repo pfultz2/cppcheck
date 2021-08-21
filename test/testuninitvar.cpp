@@ -4895,6 +4895,13 @@ private:
                         "  return a;\n" // <- a has been initialized
                         "}");
         ASSERT_EQUALS("[test.cpp:3]: (error) Uninitialized variable: x\n", errout.str());
+
+        valueFlowUninit("static void f(bool something) {\n"
+                       "    int a=0, b;\n"
+                       "    if (something) { a = dostuff(&b); }\n"
+                       "    if (!a || b) { }\n"
+                       "}");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void uninitvar_ipa() {
