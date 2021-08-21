@@ -2006,7 +2006,8 @@ struct ValueFlowAnalyzer : Analyzer {
         }
     };
 
-    std::unordered_map<nonneg int, const Token*> getSymbols(const Token* tok) const {
+    std::unordered_map<nonneg int, const Token*> getSymbols(const Token* tok) const
+    {
         std::unordered_map<nonneg int, const Token*> result;
         if (!tok)
             return result;
@@ -2026,7 +2027,8 @@ struct ValueFlowAnalyzer : Analyzer {
         return result;
     }
 
-    ConditionState analyzeCondition(const Token* tok, int depth = 20) const {
+    ConditionState analyzeCondition(const Token* tok, int depth = 20) const
+    {
         ConditionState result;
         if (!tok)
             return result;
@@ -2069,7 +2071,7 @@ struct ValueFlowAnalyzer : Analyzer {
             });
             if (result.dependent) {
                 // Check if we can evaluate the function
-                if (!evaluate(Evaluate::Integral, tok).empty()) 
+                if (!evaluate(Evaluate::Integral, tok).empty())
                     result.unknown = false;
             }
             return result;
@@ -2078,7 +2080,7 @@ struct ValueFlowAnalyzer : Analyzer {
         } else {
             std::unordered_map<nonneg int, const Token*> symbols = getSymbols(tok);
             result.dependent = false;
-            for(auto&& p:symbols) {
+            for (auto&& p : symbols) {
                 const Token* arg = p.second;
                 ConditionState cs = analyzeCondition(arg, depth - 1);
                 result.dependent = cs.dependent;
@@ -2087,7 +2089,7 @@ struct ValueFlowAnalyzer : Analyzer {
             }
             if (result.dependent) {
                 // Check if we can evaluate the token
-                if (!evaluate(Evaluate::Integral, tok).empty()) 
+                if (!evaluate(Evaluate::Integral, tok).empty())
                     result.unknown = false;
             }
             return result;
@@ -2509,8 +2511,9 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
         return false;
     }
 
-    virtual bool stopOnCondition(const Token* condTok) const OVERRIDE {
-        if (value.isLifetimeValue())
+    virtual bool stopOnCondition(const Token* condTok) const OVERRIDE
+    {
+        if (value.isNonValue())
             return false;
         if (value.isImpossible())
             return false;
@@ -5907,7 +5910,7 @@ struct MultiValueFlowAnalyzer : ValueFlowAnalyzer {
         return false;
     }
 
-    virtual bool stopOnCondition(const Token* condTok) const OVERRIDE {
+    virtual bool stopOnCondition(const Token*) const OVERRIDE {
         return isConditional();
     }
 
