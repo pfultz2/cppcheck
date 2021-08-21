@@ -2683,7 +2683,7 @@ private:
                        "}");
         ASSERT_EQUALS("", errout.str());
 
-        checkUninitVar("static void f() {\n"
+        checkUninitVar("static void f(bool something) {\n"
                        "    int a=0, b;\n"
                        "    if (something) { a = dostuff(&b); }\n"
                        "    if (!a || b) { }\n"

@@ -1919,14 +1919,14 @@ private:
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
 
         // if/else
-        code = "void f() {\n"
+        code = "void f(bool condition) {\n"
                "    int x = 123;\n"
                "    if (condition) return;\n"
                "    a = 2 + x;\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 123));
 
-        code = "void f() {\n"
+        code = "void f(bool condition) {\n"
                "    int x = 1;\n"
                "    if (condition) x = 2;\n"
                "    a = 2 + x;\n"
@@ -1934,7 +1934,7 @@ private:
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 1));
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 2));
 
-        code = "void f() {\n"
+        code = "void f(bool condition1, bool condition2) {\n"
                "    int x = 123;\n"
                "    if (condition1) x = 456;\n"
                "    if (condition2) x = 789;\n"
@@ -2006,7 +2006,7 @@ private:
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 33));
 
-        code = "void f() {\n"
+        code = "void f(int a) {\n"
                "    int x = 32;\n"
                "    if (a==1) { z=x+12; }\n"
                "    if (a==2) { z=x+32; }\n"
