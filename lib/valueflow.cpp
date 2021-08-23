@@ -5922,8 +5922,18 @@ struct MultiValueFlowAnalyzer : ValueFlowAnalyzer {
         return false;
     }
 
-    virtual bool stopOnCondition(const Token*) const OVERRIDE {
-        return isConditional();
+    virtual bool stopOnCondition(const Token* condTok) const OVERRIDE {
+        auto pred = [](const ValueFlow::Value& value) {
+            if (value.isLifetimeValue())
+                return true;
+            return false;
+        };
+        if (std::all_of(values.begin(), values.end(), std::bind(pred, std::bind(SelectMapValues{}, std::placeholders::_1))))
+            return false;
+        if (isConditional())
+            return true;
+        ConditionState cs = analyzeCondition(condTok);
+        return cs.isUnknownDependent();
     }
 
     virtual bool updateScope(const Token* endBlock, bool) const OVERRIDE {
@@ -5938,23 +5948,7 @@ struct MultiValueFlowAnalyzer : ValueFlowAnalyzer {
             return true;
         } else if (scope->type == Scope::eIf || scope->type == Scope::eElse || scope->type == Scope::eWhile ||
                    scope->type == Scope::eFor) {
-            auto pred = [](const ValueFlow::Value& value) {
-                if (value.isKnown())
-                    return true;
-                if (value.isImpossible())
-                    return true;
-                if (value.isLifetimeValue())
-                    return true;
-                return false;
-            };
-            if (std::all_of(values.begin(), values.end(), std::bind(pred, std::bind(SelectMapValues{}, std::placeholders::_1))))
-                return true;
-            if (isConditional())
-                return false;
-            const Token* condTok = getCondTokFromEnd(endBlock);
-            std::set<nonneg int> varids;
-            std::transform(getVars().begin(), getVars().end(), std::inserter(varids, varids.begin()), SelectMapKeys{});
-            return bifurcate(condTok, varids, getSettings());
+            return true;
         }
 
         return false;
