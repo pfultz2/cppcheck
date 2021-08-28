@@ -7243,6 +7243,9 @@ void Tokenizer::simplifyVarDecl(Token * tokBegin, const Token * const tokEnd, co
         if (Token::simpleMatch(tok, "= {")) {
             tok = tok->next()->link();
         }
+        if (Token::simpleMatch(tok, "{") && tok->isCpp11init()) {
+            tok = tok->link();
+        }
         if (!tok) {
             syntaxError(tokBegin);
         }

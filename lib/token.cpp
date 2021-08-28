@@ -2533,3 +2533,111 @@ bool TokenImpl::getCppcheckAttribute(TokenImpl::CppcheckAttributes::Type type, M
         *value = attr->value;
     return attr != nullptr;
 }
+
+Token* findTypeEnd(Token* tok)
+{
+    while (Token::Match(tok, "%name%|.|::|*|&|&&|<|(|template|decltype|sizeof")) {
+        if (Token::Match(tok, "(|<"))
+            tok = tok->link();
+        if (!tok)
+            return nullptr;
+        tok = tok->next();
+    }
+    return tok;
+}
+
+const Token* findTypeEnd(const Token* tok)
+{
+    return findTypeEnd(const_cast<Token*>(tok));
+}
+
+const Token * findLambdaEndScope(const Token *tok)
+{
+    if (!Token::simpleMatch(tok, "["))
+        return nullptr;
+    tok = tok->link();
+    if (!Token::Match(tok, "] (|{"))
+        return nullptr;
+    tok = tok->linkAt(1);
+    if (Token::simpleMatch(tok, "}"))
+        return tok;
+    if (Token::simpleMatch(tok, ") {"))
+        return tok->linkAt(1);
+    if (!Token::simpleMatch(tok, ")"))
+        return nullptr;
+    tok = tok->next();
+    while (Token::Match(tok, "mutable|constexpr|constval|noexcept|.")) {
+        if (Token::simpleMatch(tok, "noexcept ("))
+            tok = tok->linkAt(1);
+        if (Token::simpleMatch(tok, ".")) {
+            tok = findTypeEnd(tok);
+            break;
+        }
+        tok = tok->next();
+    }
+    if (Token::simpleMatch(tok, "{"))
+        return tok->link();
+    return nullptr;
+}
+
+static bool iscpp11init_impl(const Token * const tok)
+{
+    if (Token::simpleMatch(tok, "{") && Token::simpleMatch(tok->link()->previous(), "; }"))
+        return false;
+    const Token *nameToken = tok;
+    while (nameToken && nameToken->str() == "{") {
+        if (nameToken != tok && nameToken->isCpp11init())
+            return true;
+        nameToken = nameToken->previous();
+        if (nameToken && nameToken->str() == "," && Token::simpleMatch(nameToken->previous(), "} ,"))
+            nameToken = nameToken->linkAt(-1);
+    }
+    if (!nameToken)
+        return false;
+    if (nameToken->str() == ")" && Token::simpleMatch(nameToken->link()->previous(), "decltype ("))
+        return true;
+    if (nameToken->str() == ">" && nameToken->link())
+        nameToken = nameToken->link()->previous();
+
+    const Token *endtok = nullptr;
+    if (Token::Match(nameToken, "%name%|return {") && (!Token::simpleMatch(nameToken->tokAt(2), "[") || findLambdaEndScope(nameToken->tokAt(2))))
+        endtok = nameToken->linkAt(1);
+    else if (Token::Match(nameToken,"%name% <") && Token::simpleMatch(nameToken->linkAt(1),"> {"))
+        endtok = nameToken->linkAt(1)->linkAt(1);
+    else if (Token::Match(nameToken->previous(), "%name% ( {"))
+        endtok = nameToken->linkAt(1);
+    else
+        return false;
+    if (Token::Match(nameToken, "else|try|do|const|constexpr|override|volatile|&|&&"))
+        return false;
+    if (Token::simpleMatch(nameToken->previous(), "namespace"))
+        return false;
+    if (Token::Match(nameToken, "%any% {")) {
+        // If there is semicolon between {..} this is not a initlist
+        for (const Token *tok2 = nameToken->next(); tok2 != endtok; tok2 = tok2->next()) {
+            if (tok2->str() == ";")
+                return false;
+            const Token * lambdaEnd = findLambdaEndScope(tok2);
+            if (lambdaEnd)
+                tok2 = lambdaEnd;
+        }
+    }
+    // There is no initialisation for example here: 'class Fred {};'
+    if (!Token::simpleMatch(endtok, "} ;"))
+        return true;
+    const Token *prev = nameToken;
+    while (Token::Match(prev, "%name%|::|:|<|>")) {
+        if (Token::Match(prev, "class|struct"))
+            return false;
+
+        prev = prev->previous();
+    }
+    return true;
+}
+
+bool Token::isCpp11init() const
+{
+    if (mImpl->mCpp11init == TokenImpl::Cpp11init::UNKNOWN)
+        mImpl->mCpp11init = iscpp11init_impl(this) ? TokenImpl::Cpp11init::CPP11INIT : TokenImpl::Cpp11init::NOINIT;
+    return mImpl->mCpp11init == TokenImpl::Cpp11init::CPP11INIT;
+}
