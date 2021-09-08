@@ -272,6 +272,25 @@ const Token *parseCompareInt(const Token *tok, ValueFlow::Value &true_value, Val
     });
 }
 
+template<class Predicate, class Compare>
+static const ValueFlow::Value* getCompareValue(const std::list<ValueFlow::Value>& values,
+                                               Predicate pred,
+                                               Compare compare)
+{
+    const ValueFlow::Value* result = nullptr;
+    for (const ValueFlow::Value& value : values) {
+        if (!pred(value))
+            continue;
+        if (result)
+            result = &std::min(value, *result, [compare](const ValueFlow::Value& x, const ValueFlow::Value& y) {
+                return compare(x.intvalue, y.intvalue);
+            });
+        else
+            result = &value;
+    }
+    return result;
+}
+
 static bool isEscapeScope(const Token* tok, TokenList * tokenlist, bool unknown = false)
 {
     if (!Token::simpleMatch(tok, "{"))
@@ -1584,26 +1603,124 @@ static std::vector<MathLib::bigint> minUnsignedValue(const Token* tok, int depth
     return result;
 }
 
+static bool getMinMaxValues(const ValueType *vt, const cppcheck::Platform &platform, MathLib::bigint *minValue, MathLib::bigint *maxValue)
+{
+    if (!vt || !vt->isIntegral() || vt->pointer)
+        return false;
+
+    int bits;
+    switch (vt->type) {
+    case ValueType::Type::BOOL:
+        bits = 1;
+        break;
+    case ValueType::Type::CHAR:
+        bits = platform.char_bit;
+        break;
+    case ValueType::Type::SHORT:
+        bits = platform.short_bit;
+        break;
+    case ValueType::Type::INT:
+        bits = platform.int_bit;
+        break;
+    case ValueType::Type::LONG:
+        bits = platform.long_bit;
+        break;
+    case ValueType::Type::LONGLONG:
+        bits = platform.long_long_bit;
+        break;
+    default:
+        return false;
+    }
+
+    if (bits == 1) {
+        *minValue = 0;
+        *maxValue = 1;
+    } else if (bits < 62) {
+        if (vt->sign == ValueType::Sign::UNSIGNED) {
+            *minValue = 0;
+            *maxValue = (1LL << bits) - 1;
+        } else {
+            *minValue = -(1LL << (bits - 1));
+            *maxValue = (1LL << (bits - 1)) - 1;
+        }
+    } else if (bits == 64) {
+        if (vt->sign == ValueType::Sign::UNSIGNED) {
+            *minValue = 0;
+            *maxValue = LLONG_MAX; // todo max unsigned value
+        } else {
+            *minValue = LLONG_MIN;
+            *maxValue = LLONG_MAX;
+        }
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+ValueFlow::Value makeImpossibleValue(MathLib::bigint val, ValueFlow::Value::Bound bound)
+{
+    ValueFlow::Value r(val, bound);
+    r.setImpossible();
+    return r;
+}
+
+const ValueFlow::Value* getMinIntValue(const std::list<ValueFlow::Value>& values)
+{
+    auto pred = [](const ValueFlow::Value& v) {
+        return v.isIntValue() && v.isImpossible() && v.bound == ValueFlow::Value::Bound::Upper;
+    };
+    return getCompareValue(values, pred, std::less<MathLib::bigint>{});
+}
+
+const ValueFlow::Value* getMaxIntValue(const std::list<ValueFlow::Value>& values)
+{
+    auto pred = [](const ValueFlow::Value& v) {
+        return v.isIntValue() && v.isImpossible() && v.bound == ValueFlow::Value::Bound::Lower;
+    };
+    return getCompareValue(values, pred, std::greater<MathLib::bigint>{});
+}
+
+static void valueFlowImpossibleFold(Token* tok, const Settings* settings)
+{
+    if (!tok)
+        return;
+    if (tok->hasKnownIntValue())
+        return;
+    if (astIsPointer(tok))
+        return;
+    valueFlowImpossibleFold(tok->astOperand1(), settings);
+    valueFlowImpossibleFold(tok->astOperand2(), settings);
+    MathLib::bigint imin, imax;
+
+    if (Token::simpleMatch(tok, "%") && tok->astOperand2()) {
+        if (tok->astOperand2()->hasKnownIntValue()) {
+            setTokenValue(tok, makeImpossibleValue(tok->astOperand2()->values().front().intvalue + 1, ValueFlow::Value::Bound::Lower), settings);
+        } else {
+            const ValueFlow::Value* maxValue = getMaxIntValue(tok->astOperand2()->values());
+            if (maxValue)
+                setTokenValue(tok, *maxValue, settings);
+        }
+        if (astIsUnsigned(tok))
+            setTokenValue(tok, makeImpossibleValue(-1, ValueFlow::Value::Bound::Upper), settings);
+    } else if (getMinMaxValues(tok->valueType(), *settings, &imin, &imax) && ValueFlow::getSizeOf(*tok->valueType(), settings) < sizeof(MathLib::bigint)) {
+        setTokenValue(tok, makeImpossibleValue(imin - 1, ValueFlow::Value::Bound::Upper), settings);
+        setTokenValue(tok, makeImpossibleValue(imax + 1, ValueFlow::Value::Bound::Lower), settings);
+    } else if (astIsUnsigned(tok)) {
+        setTokenValue(tok, makeImpossibleValue(-1, ValueFlow::Value::Bound::Upper), settings);
+    }
+
+}
+
 static void valueFlowImpossibleValues(TokenList* tokenList, const Settings* settings)
 {
     for (Token* tok = tokenList->front(); tok; tok = tok->next()) {
         if (tok->hasKnownIntValue())
             continue;
-        if (astIsUnsigned(tok) && !astIsPointer(tok)) {
-            std::vector<MathLib::bigint> minvalue = minUnsignedValue(tok);
-            if (minvalue.empty())
-                continue;
-            ValueFlow::Value value{std::max<MathLib::bigint>(0, minvalue.front()) - 1};
-            value.bound = ValueFlow::Value::Bound::Upper;
-            value.setImpossible();
-            setTokenValue(tok, value, settings);
+        if (!tok->astParent()) {
+            valueFlowImpossibleFold(tok, settings);
         }
-        if (Token::simpleMatch(tok, "%") && tok->astOperand2() && tok->astOperand2()->hasKnownIntValue()) {
-            ValueFlow::Value value{tok->astOperand2()->values().front()};
-            value.bound = ValueFlow::Value::Bound::Lower;
-            value.setImpossible();
-            setTokenValue(tok, value, settings);
-        } else if (Token::Match(tok, "abs|labs|llabs|fabs|fabsf|fabsl (")) {
+        if (Token::Match(tok, "abs|labs|llabs|fabs|fabsf|fabsl (")) {
             ValueFlow::Value value{-1};
             value.bound = ValueFlow::Value::Bound::Upper;
             value.setImpossible();
@@ -4354,25 +4471,6 @@ static void valueFlowSymbolicAbs(TokenList* tokenlist, SymbolDatabase* symboldat
             setTokenValue(tok->next(), v, tokenlist->getSettings());
         }
     }
-}
-
-template<class Predicate, class Compare>
-static const ValueFlow::Value* getCompareValue(const std::list<ValueFlow::Value>& values,
-                                               Predicate pred,
-                                               Compare compare)
-{
-    const ValueFlow::Value* result = nullptr;
-    for (const ValueFlow::Value& value : values) {
-        if (!pred(value))
-            continue;
-        if (result)
-            result = &std::min(value, *result, [compare](const ValueFlow::Value& x, const ValueFlow::Value& y) {
-                return compare(x.intvalue, y.intvalue);
-            });
-        else
-            result = &value;
-    }
-    return result;
 }
 
 struct Interval {
@@ -7252,61 +7350,6 @@ static void valueFlowDynamicBufferSize(TokenList* tokenlist, SymbolDatabase* sym
             valueFlowForward(const_cast<Token*>(rhs), functionScope->bodyEnd, tok->next(), values, tokenlist, settings);
         }
     }
-}
-
-static bool getMinMaxValues(const ValueType *vt, const cppcheck::Platform &platform, MathLib::bigint *minValue, MathLib::bigint *maxValue)
-{
-    if (!vt || !vt->isIntegral() || vt->pointer)
-        return false;
-
-    int bits;
-    switch (vt->type) {
-    case ValueType::Type::BOOL:
-        bits = 1;
-        break;
-    case ValueType::Type::CHAR:
-        bits = platform.char_bit;
-        break;
-    case ValueType::Type::SHORT:
-        bits = platform.short_bit;
-        break;
-    case ValueType::Type::INT:
-        bits = platform.int_bit;
-        break;
-    case ValueType::Type::LONG:
-        bits = platform.long_bit;
-        break;
-    case ValueType::Type::LONGLONG:
-        bits = platform.long_long_bit;
-        break;
-    default:
-        return false;
-    }
-
-    if (bits == 1) {
-        *minValue = 0;
-        *maxValue = 1;
-    } else if (bits < 62) {
-        if (vt->sign == ValueType::Sign::UNSIGNED) {
-            *minValue = 0;
-            *maxValue = (1LL << bits) - 1;
-        } else {
-            *minValue = -(1LL << (bits - 1));
-            *maxValue = (1LL << (bits - 1)) - 1;
-        }
-    } else if (bits == 64) {
-        if (vt->sign == ValueType::Sign::UNSIGNED) {
-            *minValue = 0;
-            *maxValue = LLONG_MAX; // todo max unsigned value
-        } else {
-            *minValue = LLONG_MIN;
-            *maxValue = LLONG_MAX;
-        }
-    } else {
-        return false;
-    }
-
-    return true;
 }
 
 static bool getMinMaxValues(const std::string &typestr, const Settings *settings, MathLib::bigint *minvalue, MathLib::bigint *maxvalue)

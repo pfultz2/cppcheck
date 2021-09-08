@@ -466,6 +466,12 @@ private:
         settings.debugwarnings = false;
     }
 
+    std::list<ValueFlow::Value> withoutImpossible(std::list<ValueFlow::Value> values)
+    {
+        values.remove_if(std::mem_fn(&ValueFlow::Value::isImpossible));
+        return values;
+    }
+
     std::list<ValueFlow::Value> tokenValues(const char code[], const char tokstr[], const Settings *s = nullptr) {
         Tokenizer tokenizer(s ? s : &settings, this);
         std::istringstream istr(code);
@@ -504,6 +510,7 @@ private:
 
     ValueFlow::Value valueOfTok(const char code[], const char tokstr[]) {
         std::list<ValueFlow::Value> values = tokenValues(code, tokstr);
+        values.remove_if(std::mem_fn(&ValueFlow::Value::isImpossible));
         return values.size() == 1U && !values.front().isTokValue() ? values.front() : ValueFlow::Value();
     }
 
@@ -517,8 +524,7 @@ private:
         ASSERT_EQUALS(0, valueOfTok("x(NULL);", "NULL").intvalue);
         ASSERT_EQUALS((int)('a'), valueOfTok("x='a';", "'a'").intvalue);
         ASSERT_EQUALS((int)('\n'), valueOfTok("x='\\n';", "'\\n'").intvalue);
-        TODO_ASSERT_EQUALS(
-            0xFFFFFFFF00000000, -1, valueOfTok("x=0xFFFFFFFF00000000;", "0xFFFFFFFF00000000").intvalue); // #7701
+        // TODO_ASSERT_EQUALS(0xFFFFFFFF00000000, -1, valueOfTok("x=0xFFFFFFFF00000000;", "0xFFFFFFFF00000000").intvalue); // #7701
         ASSERT_EQUALS_DOUBLE(16, valueOfTok("x=(double)16;", "(").floatValue, 1e-5);
         ASSERT_EQUALS_DOUBLE(0.0625, valueOfTok("x=1/(double)16;", "/").floatValue, 1e-5);
 
@@ -819,12 +825,12 @@ private:
         ASSERT_EQUALS(10, valueOfTok("x = static_cast<int>(10);", "( 10 )").intvalue);
 
         // Don't calculate if there is UB
-        ASSERT(tokenValues(";-1<<10;","<<").empty());
-        ASSERT(tokenValues(";10<<-1;","<<").empty());
-        ASSERT(tokenValues(";10<<64;","<<").empty());
-        ASSERT(tokenValues(";-1>>10;",">>").empty());
-        ASSERT(tokenValues(";10>>-1;",">>").empty());
-        ASSERT(tokenValues(";10>>64;",">>").empty());
+        ASSERT(withoutImpossible(tokenValues(";-1<<10;","<<")).empty());
+        ASSERT(withoutImpossible(tokenValues(";10<<-1;","<<")).empty());
+        ASSERT(withoutImpossible(tokenValues(";10<<64;","<<")).empty());
+        ASSERT(withoutImpossible(tokenValues(";-1>>10;",">>")).empty());
+        ASSERT(withoutImpossible(tokenValues(";10>>-1;",">>")).empty());
+        ASSERT(withoutImpossible(tokenValues(";10>>64;",">>")).empty());
 
         // calculation using 1,2 variables/values
         code  = "void f(int x) {\n"
@@ -850,7 +856,7 @@ private:
                 "    if (x==2) {}\n"
                 "    if (x==4) {}\n"
                 "}";
-        std::list<ValueFlow::Value> values = tokenValues(code,"*");
+        std::list<ValueFlow::Value> values = withoutImpossible(tokenValues(code,"*"));
         ASSERT_EQUALS(2U, values.size());
         ASSERT_EQUALS(4, values.front().intvalue);
         ASSERT_EQUALS(16, values.back().intvalue);
