@@ -2584,26 +2584,21 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
     }
 };
 
-struct ExpressionAnalyzer : SingleValueFlowAnalyzer {
-    const Token* expr;
+template<class Base, REQUIRES("Base must be derived from ValueFlowAnalyzer", std::is_base_of<ValueFlowAnalyzer, Base>)>
+struct ExpressionAnalyzerMixin : Base {
     bool local;
     bool unknown;
     bool dependOnThis;
 
-    ExpressionAnalyzer() : SingleValueFlowAnalyzer(), expr(nullptr), local(true), unknown(false), dependOnThis(false) {}
-
-    ExpressionAnalyzer(const Token* e, const ValueFlow::Value& val, const TokenList* t)
-        : SingleValueFlowAnalyzer(val, t), expr(e), local(true), unknown(false), dependOnThis(false) {
-
-        assert(e && e->exprId() != 0 && "Not a valid expression");
-        dependOnThis = exprDependsOnThis(expr);
-        setupExprVarIds(expr);
-        if (val.isSymbolicValue())
-            setupExprVarIds(val.tokvalue);
+    template<class... Ts>
+    explicit ExpressionAnalyzerMixin(Ts&&... xs)
+        : Base(std::forward<Ts>(xs)...), local(true), unknown(false), dependOnThis(false) {
     }
 
-    virtual const ValueType* getValueType(const Token*) const OVERRIDE {
-        return expr->valueType();
+    void setExpr(const Token* e) {
+        assert(e && e->exprId() != 0 && "Not a valid expression");
+        dependOnThis = exprDependsOnThis(e);
+        setupExprVarIds(e);
     }
 
     static bool nonLocal(const Variable* var, bool deref) {
@@ -2618,7 +2613,8 @@ struct ExpressionAnalyzer : SingleValueFlowAnalyzer {
         visitAstNodes(start, [&](const Token* tok) {
             const bool top = depth == 0 && tok == start;
             const bool ispointer = astIsPointer(tok) || astIsSmartPointer(tok);
-            if (!top || !ispointer || value.indirect != 0) {
+            const bool indirect = this->getValue(start) && this->getValue(start)->indirect;
+            if (!top || !ispointer || indirect) {
                 for (const ValueFlow::Value& v : tok->values()) {
                     if (!(v.isLocalLifetimeValue() || (ispointer && v.isSymbolicValue() && v.isKnown())))
                         continue;
@@ -2635,11 +2631,11 @@ struct ExpressionAnalyzer : SingleValueFlowAnalyzer {
                 return ChildrenToVisit::none;
             }
             if (tok->varId() > 0) {
-                varids[tok->varId()] = tok->variable();
+                this->varids[tok->varId()] = tok->variable();
                 if (!Token::simpleMatch(tok->previous(), ".")) {
                     const Variable* var = tok->variable();
                     if (var && var->isReference() && var->isLocal() && Token::Match(var->nameToken(), "%var% [=(]") &&
-                        !isGlobalData(var->nameToken()->next()->astOperand2(), isCPP()))
+                        !isGlobalData(var->nameToken()->next()->astOperand2(), this->isCPP()))
                         return ChildrenToVisit::none;
                     const bool deref = tok->astParent() &&
                                        (tok->astParent()->isUnaryOp("*") ||
@@ -2655,6 +2651,33 @@ struct ExpressionAnalyzer : SingleValueFlowAnalyzer {
         return unknown;
     }
 
+    virtual bool dependsOnThis() const OVERRIDE {
+        return dependOnThis;
+    }
+
+    virtual bool isGlobal() const OVERRIDE {
+        return !local;
+    }
+};
+
+struct ExpressionAnalyzer : ExpressionAnalyzerMixin<SingleValueFlowAnalyzer> {
+    const Token* expr;
+
+    ExpressionAnalyzer() : ExpressionAnalyzerMixin<SingleValueFlowAnalyzer>(), expr(nullptr)
+    {}
+
+    ExpressionAnalyzer(const Token* e, const ValueFlow::Value& val, const TokenList* t)
+        : ExpressionAnalyzerMixin<SingleValueFlowAnalyzer>(val, t), expr(e) {
+
+        setExpr(e);
+        if (val.isSymbolicValue())
+            setupExprVarIds(val.tokvalue);
+    }
+
+    virtual const ValueType* getValueType(const Token*) const OVERRIDE {
+        return expr->valueType();
+    }
+
     virtual ProgramState getProgramState() const OVERRIDE {
         ProgramState ps;
         ps[expr->exprId()] = value;
@@ -2663,14 +2686,6 @@ struct ExpressionAnalyzer : SingleValueFlowAnalyzer {
 
     virtual bool match(const Token* tok) const OVERRIDE {
         return tok->exprId() == expr->exprId();
-    }
-
-    virtual bool dependsOnThis() const OVERRIDE {
-        return dependOnThis;
-    }
-
-    virtual bool isGlobal() const OVERRIDE {
-        return !local;
     }
 };
 
