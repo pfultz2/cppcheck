@@ -1944,6 +1944,10 @@ struct ValueFlowAnalyzer : Analyzer {
 
     explicit ValueFlowAnalyzer(const TokenList* t) : tokenlist(t), pms(tokenlist->getSettings()) {}
 
+    virtual const std::unordered_map<nonneg int, const Variable*>& getVars() const = 0;
+
+    virtual void addVar(const Variable* var) = 0;
+
     virtual const ValueFlow::Value* getValue(const Token* tok) const = 0;
     virtual ValueFlow::Value* getValue(const Token* tok) = 0;
 
@@ -2462,8 +2466,12 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
 
     SingleValueFlowAnalyzer(const ValueFlow::Value& v, const TokenList* t) : ValueFlowAnalyzer(t), value(v) {}
 
-    const std::unordered_map<nonneg int, const Variable*>& getVars() const {
+    virtual const std::unordered_map<nonneg int, const Variable*>& getVars() const OVERRIDE {
         return varids;
+    }
+
+    virtual void addVar(const Variable* var) OVERRIDE {
+        this->varids[var->declarationId()] = var;
     }
 
     const std::unordered_map<nonneg int, const Variable*>& getAliasedVars() const {
@@ -2631,7 +2639,7 @@ struct ExpressionAnalyzerMixin : Base {
                 return ChildrenToVisit::none;
             }
             if (tok->varId() > 0) {
-                this->varids[tok->varId()] = tok->variable();
+                this->addVar(tok->variable());
                 if (!Token::simpleMatch(tok->previous(), ".")) {
                     const Variable* var = tok->variable();
                     if (var && var->isReference() && var->isLocal() && Token::Match(var->nameToken(), "%var% [=(]") &&
@@ -2700,6 +2708,36 @@ struct OppositeExpressionAnalyzer : ExpressionAnalyzer {
 
     virtual bool match(const Token* tok) const OVERRIDE {
         return isOppositeCond(isNot, isCPP(), expr, tok, getSettings()->library, true, true);
+    }
+};
+
+struct SubExpression {
+    const Token* expr = nullptr;
+    std::string op{};
+    std::unordered_map<MathLib::bigint, ValueFlow::Value> values{};
+    std::function<MathLib::bigint(const Token*)> encode = nullptr;
+};
+
+struct SubExpressionAnalyzer : ExpressionAnalyzerMixin<ValueFlowAnalyzer> {
+    SubExpression subExpr;
+    std::unordered_map<nonneg int, const Variable*> varids;
+    SubExpressionAnalyzer() : ExpressionAnalyzerMixin<ValueFlowAnalyzer>(), subExpr() {}
+
+    SubExpressionAnalyzer(SubExpression subExpr, const Token* e, const ValueFlow::Value& val, const TokenList* t)
+        : ExpressionAnalyzerMixin<ValueFlowAnalyzer>(t), subExpr(std::move(subExpr))
+    {}
+
+    virtual const std::unordered_map<nonneg int, const Variable*>& getVars() const OVERRIDE {
+        return varids;
+    }
+
+    virtual void addVar(const Variable* var) OVERRIDE {
+        this->varids[var->declarationId()] = var;
+    }
+
+    virtual bool match(const Token* tok) const OVERRIDE {
+        return tok->str() == subExpr.op && tok->astOperand1() && tok->astOperand1()->exprId() == subExpr.expr->exprId() &&
+                subExpr.values.count(subExpr.encode(tok->astOperand2())) > 0;
     }
 };
 
@@ -5737,8 +5775,12 @@ struct MultiValueFlowAnalyzer : ValueFlowAnalyzer {
         }
     }
 
-    virtual const std::unordered_map<nonneg int, const Variable*>& getVars() const {
+    virtual const std::unordered_map<nonneg int, const Variable*>& getVars() const OVERRIDE {
         return vars;
+    }
+
+    virtual void addVar(const Variable* var) OVERRIDE {
+        this->vars[var->declarationId()] = var;
     }
 
     virtual const ValueFlow::Value* getValue(const Token* tok) const OVERRIDE {
