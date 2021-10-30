@@ -678,7 +678,10 @@ static ValueFlow::Value execute(const Token* expr, ProgramMemory& pm)
             return execute(expr->astOperand1(), pm);
     }
     if (expr->exprId() > 0 && pm.hasValue(expr->exprId())) {
-        return pm.values.at(expr->exprId());
+        ValueFlow::Value result = pm.values.at(expr->exprId());
+        if (result.isImpossible() && result.isIntValue() && result.intvalue == 0 && isUsedAsBool(expr))
+            result.intvalue = !result.intvalue;
+        return result;
     }
 
     return unknown;
@@ -687,14 +690,8 @@ static ValueFlow::Value execute(const Token* expr, ProgramMemory& pm)
 void execute(const Token* expr, ProgramMemory* const programMemory, MathLib::bigint* result, bool* error)
 {
     ValueFlow::Value v = execute(expr, *programMemory);
-    if (!v.isIntValue())
+    if (!v.isIntValue() || v.isImpossible())
         *error = true;
-    else if (v.isImpossible()) {
-        if (isUsedAsBool(expr) && v.intvalue == 0)
-            *result = !v.intvalue;
-        else
-            *error = true;
-    } else {
+    else
         *result = v.intvalue;
-    }
 }
