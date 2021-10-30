@@ -683,8 +683,14 @@ static ValueFlow::Value execute(const Token* expr, ProgramMemory& pm)
 void execute(const Token* expr, ProgramMemory* const programMemory, MathLib::bigint* result, bool* error)
 {
     ValueFlow::Value v = execute(expr, *programMemory);
-    if (!v.isIntValue() || v.isImpossible())
+    if (!v.isIntValue())
         *error = true;
-    else
+    else if (v.isImpossible()) {
+        if (isUsedAsBool(expr) && v.intvalue == 0)
+            *result = !v.intvalue;
+        else
+            *error = true;
+    } else {
         *result = v.intvalue;
+    }
 }
