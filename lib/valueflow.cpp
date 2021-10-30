@@ -5435,6 +5435,11 @@ struct IntegralInferModel : InferModel {
     }
 };
 
+ValuePtr<InferModel> makeIntegralInferModel()
+{
+    return IntegralInferModel{};
+}
+
 ValueFlow::Value inferCondition(const std::string& op, const Token* varTok, MathLib::bigint val)
 {
     if (!varTok)

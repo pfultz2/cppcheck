@@ -35,6 +35,7 @@
 #include <vector>
 
 class ErrorLogger;
+struct InferModel;
 class Settings;
 class SymbolDatabase;
 class Token;
@@ -42,6 +43,8 @@ class TokenList;
 class ValueType;
 class Variable;
 
+template<class T>
+class ValuePtr;
 namespace ValueFlow {
     struct increment {
         template<class T>
@@ -480,6 +483,8 @@ const Token *parseCompareInt(const Token *tok, ValueFlow::Value &true_value, Val
 
 ValueFlow::Value inferCondition(std::string op, MathLib::bigint val, const Token* varTok);
 ValueFlow::Value inferCondition(const std::string& op, const Token* varTok, MathLib::bigint val);
+
+ValuePtr<InferModel> makeIntegralInferModel();
 
 std::vector<LifetimeToken> getLifetimeTokens(const Token* tok,
                                              bool escape = false,
