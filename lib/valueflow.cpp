@@ -4994,25 +4994,52 @@ struct ConditionHandler {
         Condition() : vartok(nullptr), true_values(), false_values(), inverted(false), impossible(true) {}
     };
 
+    virtual ValuePtr<Analyzer> makeForwardAnalyzer(const Token* exprTok, const ValueFlow::Value& value, TokenList* tokenlist) const {
+        return {};
+    }
+
+    virtual ValuePtr<Analyzer> makeReverseAnalyzer(const Token* exprTok, const ValueFlow::Value& value, TokenList* tokenlist) const {
+        return {};
+    }
+
     virtual Analyzer::Result forward(Token* start,
                                      const Token* stop,
                                      const Token* exprTok,
                                      const std::list<ValueFlow::Value>& values,
                                      TokenList* tokenlist,
-                                     const Settings* settings) const = 0;
+                                     const Settings* settings) const
+    {
+        Analyzer::Result result{};
+        for (const ValueFlow::Value& v : values) {
+            result.update(valueFlowGenericForward(start->next(), stop, makeForwardAnalyzer(exprTok, v, tokenlist), settings));
+        }
+        return result;
+    }
 
     virtual Analyzer::Result forward(Token* top,
                                      const Token* exprTok,
                                      const std::list<ValueFlow::Value>& values,
                                      TokenList* tokenlist,
-                                     const Settings* settings) const = 0;
+                                     const Settings* settings) const
+    {
+        Analyzer::Result result{};
+        for (const ValueFlow::Value& v : values) {
+            result.update(valueFlowGenericForward(top, makeForwardAnalyzer(exprTok, v, tokenlist), settings));
+        }
+        return result;
+    }
 
     virtual void reverse(Token* start,
                          const Token* endToken,
                          const Token* exprTok,
                          const std::list<ValueFlow::Value>& values,
                          TokenList* tokenlist,
-                         const Settings* settings) const = 0;
+                         const Settings* settings) const
+    {
+        for (const ValueFlow::Value& v : values) {
+            valueFlowGenericReverse(start, endToken, makeReverseAnalyzer(exprTok, v, tokenlist), settings);
+        }
+    }
 
     virtual std::vector<Condition> parse(const Token* tok, const Settings* settings) const = 0;
 
@@ -5469,30 +5496,12 @@ static void valueFlowCondition(const ValuePtr<ConditionHandler>& handler,
 }
 
 struct SimpleConditionHandler : ConditionHandler {
-    virtual Analyzer::Result forward(Token* start,
-                                     const Token* stop,
-                                     const Token* exprTok,
-                                     const std::list<ValueFlow::Value>& values,
-                                     TokenList* tokenlist,
-                                     const Settings* settings) const OVERRIDE {
-        return valueFlowForward(start->next(), stop, exprTok, values, tokenlist, settings);
+    virtual ValuePtr<Analyzer> makeForwardAnalyzer(const Token* exprTok, const ValueFlow::Value& value, TokenList* tokenlist) const {
+        return makeAnalyzer(exprTok, value, tokenlist);
     }
 
-    virtual Analyzer::Result forward(Token* top,
-                                     const Token* exprTok,
-                                     const std::list<ValueFlow::Value>& values,
-                                     TokenList* tokenlist,
-                                     const Settings* settings) const OVERRIDE {
-        return valueFlowForward(top, exprTok, values, tokenlist, settings);
-    }
-
-    virtual void reverse(Token* start,
-                         const Token* endToken,
-                         const Token* exprTok,
-                         const std::list<ValueFlow::Value>& values,
-                         TokenList* tokenlist,
-                         const Settings* settings) const OVERRIDE {
-        return valueFlowReverse(start, endToken, exprTok, values, tokenlist, settings);
+    virtual ValuePtr<Analyzer> makeReverseAnalyzer(const Token* exprTok, const ValueFlow::Value& value, TokenList* tokenlist) const {
+        return ExpressionAnalyzer(exprTok, value, tokenlist);
     }
 
     virtual std::vector<Condition> parse(const Token* tok, const Settings*) const OVERRIDE {
