@@ -1154,6 +1154,8 @@ public:
     const Function *getDestructor() const;
 
     void addFunction(const Function & func) {
+        if (func.retDef && !func.isConstructor() && !func.isDestructor() && !func.isLambda())
+            assert(func.token != func.retDef);
         functionList.push_back(func);
 
         const Function * back = &functionList.back();

@@ -1650,9 +1650,12 @@ bool SymbolDatabase::isFunction(const Token *tok, const Scope* outerScope, const
         if (!mTokenizer->isFunctionHead(tok->next(), ";:{"))
             return false;
 
+        const bool isFuncType = outerScope->className != tok->str();
+
         // skip over destructor "~"
-        if (tok1->str() == "~")
+        if (tok1->str() == "~" && !isFuncType)
             tok1 = tok1->previous();
+        
 
         // skip over qualification
         while (Token::simpleMatch(tok1, "::")) {
@@ -1662,6 +1665,10 @@ bool SymbolDatabase::isFunction(const Token *tok, const Scope* outerScope, const
             else if (tok1 && tok1->str() == ">" && tok1->link() && Token::Match(tok1->link()->previous(), "%name%"))
                 tok1 = tok1->link()->tokAt(-2);
         }
+
+        // No return type so its not a function
+        if (isFuncType && Token::Match(tok1, "{|}|;|public:|protected:|private:|~"))
+            return false;
 
         // skip over const, noexcept, throw, override, final and volatile specifiers
         while (Token::Match(tok2, "const|noexcept|throw|override|final|volatile|&|&&")) {
