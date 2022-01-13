@@ -874,6 +874,50 @@ static bool isOperator(const Token *tok)
     return tok->strAt(-1) == "operator";
 }
 
+template<class T, size_t N>
+struct SmallSet
+{
+    SmallSet()
+    : n(0)
+    {}
+
+    bool contains(const T& x) const
+    {
+        if (n == 0)
+            return false;
+        else if (n <= N)
+            return std::find(buffer.begin(), buffer.end(), x) != buffer.end();
+        else
+            return set.count(x) > 0;
+
+    }
+
+    template<class U>
+    bool insert(U&& x)
+    {
+        if (n < N) {
+            if (contains(x))
+                return false;
+            buffer[n] = std::forward<U>(x);
+            n++;
+            return true;
+        }
+        if (n == N) {
+            // TODO: Check if we can insert before copying
+            set.insert(buffer.begin(), buffer.end());
+        }
+        bool r = set.insert(std::forward<U>(x)).second;
+        if (r)
+            n++;
+        return r;
+
+    }
+private:
+    std::array<T, N> buffer;
+    std::unordered_set<T> set;
+    size_t n;
+};
+
 const Token * Token::findClosingBracket() const
 {
     if (mStr != "<")
@@ -889,7 +933,7 @@ const Token * Token::findClosingBracket() const
 
     const Token *closing = nullptr;
     const bool templateParameter(strAt(-1) == "template");
-    std::set<std::string> templateParameters;
+    SmallSet<std::string, 4> templateParameters;
 
     bool isDecl = true;
     for (const Token *prev = previous(); prev; prev = prev->previous()) {
@@ -912,7 +956,7 @@ const Token * Token::findClosingBracket() const
         // we can make some guesses for template parameters
         else if (closing->str() == "<" && closing->previous() &&
                  (closing->previous()->isName() || isOperator(closing->previous())) &&
-                 (templateParameter ? templateParameters.find(closing->strAt(-1)) == templateParameters.end() : true))
+                 (templateParameter ? !templateParameters.contains(closing->strAt(-1)) : true))
             ++depth;
         else if (closing->str() == ">") {
             if (--depth == 0)
