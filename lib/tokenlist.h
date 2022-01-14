@@ -87,6 +87,8 @@ public:
      * @return new location of last token copied
      */
     static Token *copyTokens(Token *dest, const Token *first, const Token *last, bool one_line = true);
+    
+    static std::size_t countTokens(const Token *first, const Token *last, std::size_t maxSize = 512);
 
     /**
      * Create tokens from code.

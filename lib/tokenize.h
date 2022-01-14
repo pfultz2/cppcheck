@@ -401,7 +401,7 @@ public:
 
     /**
      */
-    bool simplifyUsing();
+    int simplifyUsing();
 
     /**
      * Simplify casts

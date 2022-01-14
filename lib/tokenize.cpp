@@ -2188,12 +2188,12 @@ static bool scopesMatch(const std::string &scope1, const std::string &scope2, co
     return false;
 }
 
-bool Tokenizer::simplifyUsing()
+int Tokenizer::simplifyUsing()
 {
     if (!isCPP() || mSettings->standards.cpp < Standards::CPP11)
-        return false;
+        return 0;
 
-    bool substitute = false;
+    int substitute = 0;
     ScopeInfo3 scopeInfo;
     ScopeInfo3 *currentScope = &scopeInfo;
     struct Using {
@@ -2577,7 +2577,7 @@ bool Tokenizer::simplifyUsing()
                         TokenList::copyTokens(tok1->next(), arrayStart, usingEnd->previous());
                         TokenList::copyTokens(tok1, start, arrayStart->previous());
                         tok1->deleteThis();
-                        substitute = true;
+                        substitute += TokenList::countTokens(start, usingEnd);
                     }
                 } else {
                     // add some qualification back if needed
@@ -2611,7 +2611,7 @@ bool Tokenizer::simplifyUsing()
                     // just replace simple type aliases
                     TokenList::copyTokens(tok1, start, usingEnd->previous());
                     tok1->deleteThis();
-                    substitute = true;
+                    substitute += TokenList::countTokens(start, usingEnd);
                 }
             } else {
                 skip = true;
@@ -5028,8 +5028,13 @@ bool Tokenizer::simplifyTokenList1(const char FileName[])
     }
 
     // using A = B;
-    while (simplifyUsing())
-        ;
+    int maxUsingDepth = 128;
+    while (maxUsingDepth > 0) {
+        int n = simplifyUsing();
+        if (n == 0)
+            break;
+        maxUsingDepth -= n;
+    }
 
     // Add parentheses to ternary operator where necessary
     // TODO: this is only necessary if one typedef simplification had a comma and was used within ?:

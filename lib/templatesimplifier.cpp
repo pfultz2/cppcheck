@@ -919,6 +919,9 @@ void TemplateSimplifier::getTemplateInstantiations()
                 continue;
             }
 
+            if (templateParameters(tok->next()) > 16)
+                continue;
+
             // Add inner template instantiations first => go to the ">"
             // and then parse backwards, adding all seen instantiations
             Token *tok2 = tok->next()->findClosingBracket();
@@ -3721,8 +3724,15 @@ void TemplateSimplifier::simplifyTemplates(
         if (passCount) {
             // it may take more than one pass to simplify type aliases
             bool usingChanged = false;
-            while (mTokenizer->simplifyUsing())
-                usingChanged = true;
+            int maxUsingDepth = 128;
+            while (maxUsingDepth > 0) {
+                int n = mTokenizer->simplifyUsing();
+                if (n > 0)
+                    usingChanged = true;
+                else
+                    break;
+                maxUsingDepth -= n;
+            }
 
             if (!usingChanged && !mChanged)
                 break;

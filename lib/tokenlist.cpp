@@ -375,6 +375,19 @@ void TokenList::insertTokens(Token *dest, const Token *src, nonneg int n)
     }
 }
 
+std::size_t TokenList::countTokens(const Token *first, const Token *last, std::size_t maxSize)
+{
+    std::size_t n = 0;
+    for (const Token *tok = first; tok != last->next(); tok = tok->next()) {
+        if (!tok)
+            return maxSize;
+        n++;
+        if (n > maxSize)
+            return n;
+    }
+    return n;
+}
+
 //---------------------------------------------------------------------------
 // Tokenize - tokenizes a given file.
 //---------------------------------------------------------------------------
