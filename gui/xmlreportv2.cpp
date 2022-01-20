@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2020 Cppcheck team.
+ * Copyright (C) 2007-2021 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -51,8 +51,7 @@ XmlReportV2::XmlReportV2(const QString &filename) :
     XmlReport(filename),
     mXmlReader(nullptr),
     mXmlWriter(nullptr)
-{
-}
+{}
 
 XmlReportV2::~XmlReportV2()
 {
@@ -100,13 +99,13 @@ void XmlReportV2::writeFooter()
 void XmlReportV2::writeError(const ErrorItem &error)
 {
     /*
-    Error example from the core program in xml
-    <error id="mismatchAllocDealloc" severity="error" msg="Mismatching allocation and deallocation: k"
+       Error example from the core program in xml
+       <error id="mismatchAllocDealloc" severity="error" msg="Mismatching allocation and deallocation: k"
               verbose="Mismatching allocation and deallocation: k">
-      <location file="..\..\test\test.cxx" line="16"/>
-      <location file="..\..\test\test.cxx" line="32"/>
-    </error>
-    */
+       <location file="..\..\test\test.cxx" line="16"/>
+       <location file="..\..\test\test.cxx" line="32"/>
+       </error>
+     */
 
     mXmlWriter->writeStartElement(ErrorElementName);
     mXmlWriter->writeAttribute(IdAttribute, error.errorId);
@@ -192,13 +191,13 @@ QList<ErrorItem> XmlReportV2::read()
 ErrorItem XmlReportV2::readError(QXmlStreamReader *reader)
 {
     /*
-    Error example from the core program in xml
-    <error id="mismatchAllocDealloc" severity="error" msg="Mismatching allocation and deallocation: k"
+       Error example from the core program in xml
+       <error id="mismatchAllocDealloc" severity="error" msg="Mismatching allocation and deallocation: k"
               verbose="Mismatching allocation and deallocation: k">
-      <location file="..\..\test\test.cxx" line="16"/>
-      <location file="..\..\test\test.cxx" line="32"/>
-    </error>
-    */
+       <location file="..\..\test\test.cxx" line="16"/>
+       <location file="..\..\test\test.cxx" line="32"/>
+       </error>
+     */
 
     ErrorItem item;
 

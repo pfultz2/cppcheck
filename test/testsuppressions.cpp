@@ -31,8 +31,7 @@
 
 class TestSuppressions : public TestFixture {
 public:
-    TestSuppressions() : TestFixture("TestSuppressions") {
-    }
+    TestSuppressions() : TestFixture("TestSuppressions") {}
 
 private:
 
@@ -82,6 +81,9 @@ private:
     Suppressions::ErrorMessage errorMessage(const std::string &errorId) const {
         Suppressions::ErrorMessage ret;
         ret.errorId = errorId;
+        ret.hash = 0;
+        ret.lineNumber = 0;
+        ret.certainty = Certainty::CertaintyLevel::normal;
         return ret;
     }
 

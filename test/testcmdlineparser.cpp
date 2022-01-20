@@ -34,8 +34,7 @@ class TestCmdlineParser : public TestFixture {
 public:
     TestCmdlineParser()
         : TestFixture("TestCmdlineParser")
-        , defParser(&settings) {
-    }
+        , defParser(&settings) {}
 
 private:
     Settings settings;
@@ -131,6 +130,7 @@ private:
         TEST_CASE(errorlistverbose2);
         TEST_CASE(ignorepathsnopath);
 
+        // TODO
         // Disabling these tests since they use relative paths to the
         // testrunner executable.
         //TEST_CASE(ignorepaths1);
@@ -827,7 +827,7 @@ private:
         const char * const argv[] = {"cppcheck", "--template", "gcc", "file.cpp"};
         settings.templateFormat.clear();
         ASSERT(defParser.parseFromArgs(4, argv));
-        ASSERT_EQUALS("{file}:{line}:{column}: warning: {message} [{id}]\\n{code}", settings.templateFormat);
+        ASSERT_EQUALS("{bold}{file}:{line}:{column}: {magenta}warning:{default} {message} [{id}]{reset}\\n{code}", settings.templateFormat);
     }
 
     void templatesVs() {
@@ -975,8 +975,8 @@ private:
             ASSERT_EQUALS("src/", parser.getIgnoredPaths()[0]);
             ASSERT_EQUALS("module/", parser.getIgnoredPaths()[1]);
         }
-    */
-    void ignorepaths4() {
+
+       void ignorepaths4() {
         REDIRECT;
         const char * const argv[] = {"cppcheck", "-i", "src", "-i", "module", "file.cpp"};
         CmdLineParser parser(&settings);
@@ -984,8 +984,8 @@ private:
         ASSERT_EQUALS(2, parser.getIgnoredPaths().size());
         ASSERT_EQUALS("src/", parser.getIgnoredPaths()[0]);
         ASSERT_EQUALS("module/", parser.getIgnoredPaths()[1]);
-    }
-    /*
+       }
+
         void ignorefilepaths1() {
             REDIRECT;
             const char * const argv[] = {"cppcheck", "-ifoo.cpp", "file.cpp"};
@@ -994,15 +994,16 @@ private:
             ASSERT_EQUALS(1, parser.getIgnoredPaths().size());
             ASSERT_EQUALS("foo.cpp", parser.getIgnoredPaths()[0]);
         }
-    */
-    void ignorefilepaths2() {
+
+       void ignorefilepaths2() {
         REDIRECT;
         const char * const argv[] = {"cppcheck", "-isrc/foo.cpp", "file.cpp"};
         CmdLineParser parser(&settings);
         ASSERT(parser.parseFromArgs(3, argv));
         ASSERT_EQUALS(1, parser.getIgnoredPaths().size());
         ASSERT_EQUALS("src/foo.cpp", parser.getIgnoredPaths()[0]);
-    }
+       }
+     */
 
     void checkconfig() {
         REDIRECT;

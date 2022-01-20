@@ -26,6 +26,63 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <wchar.h>
+#include <string.h>
+
+char * overlappingWriteFunction_stpcpy(char *src, char *dest)
+{
+    // No warning shall be shown:
+    (void) stpcpy(dest, src);
+    // cppcheck-suppress overlappingWriteFunction
+    return stpcpy(src, src);
+}
+
+void overlappingWriteFunction_bcopy(char *buf, const size_t count)
+{
+    // No warning shall be shown:
+    // cppcheck-suppress bcopyCalled
+    bcopy(&buf[0], &buf[3], count); // size is not known
+    // cppcheck-suppress bcopyCalled
+    bcopy(&buf[0], &buf[3], 3U);    // no-overlap
+    // cppcheck-suppress bcopyCalled
+    // cppcheck-suppress overlappingWriteFunction
+    bcopy(&buf[0], &buf[3], 4U);
+}
+
+void overlappingWriteFunction_memccpy(unsigned char *src, unsigned char *dest, int c, size_t count)
+{
+    // No warning shall be shown:
+    (void)memccpy(dest, src, c, count);
+    (void)memccpy(dest, src, 42, count);
+    // cppcheck-suppress overlappingWriteFunction
+    (void)memccpy(dest, dest, c, 4);
+    // cppcheck-suppress overlappingWriteFunction
+    (void)memccpy(dest, dest+3, c, 4);
+}
+
+void overlappingWriteFunction_stpncpy(char *src, char *dest, ssize_t n)
+{
+    // No warning shall be shown:
+    (void) stpncpy(dest, src, n);
+    // cppcheck-suppress overlappingWriteFunction
+    (void)stpncpy(src, src+3, 4);
+}
+
+wchar_t* overlappingWriteFunction_wcpncpy(wchar_t *src, wchar_t *dest, ssize_t n)
+{
+    // No warning shall be shown:
+    (void) wcpncpy(dest, src, n);
+    // cppcheck-suppress overlappingWriteFunction
+    return wcpncpy(src, src+3, 4);
+}
+
+void overlappingWriteFunction_swab(char *src, char *dest, ssize_t n)
+{
+    // No warning shall be shown:
+    swab(dest, src, n);
+    // cppcheck-suppress overlappingWriteFunction
+    swab(src, src+3, 4);
+}
 
 bool invalidFunctionArgBool_isascii(bool b, int c)
 {
@@ -288,7 +345,7 @@ void noleak(int x, int y, int z)
         int fd = open("path", O_RDONLY);
         FILE *f = fdopen(fd, "rt");
         fclose(f);
-    */
+     */
 }
 
 
@@ -369,15 +426,15 @@ void uninitvar(int fd)
     // cppcheck-suppress gcvtCalled
     gcvt(3.141, 2, buf);
 
-    char *filename;
+    char *filename1, *filename2;
     struct utimbuf *times;
     // cppcheck-suppress uninitvar
     // cppcheck-suppress utimeCalled
-    utime(filename, times);
+    utime(filename1, times);
     struct timeval times1[2];
     // cppcheck-suppress uninitvar
     // cppcheck-suppress utimeCalled
-    utime(filename, times1);
+    utime(filename2, times1);
 
     // cppcheck-suppress unreadVariable
     // cppcheck-suppress uninitvar

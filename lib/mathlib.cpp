@@ -357,105 +357,6 @@ unsigned int MathLib::encodeMultiChar(const std::string& str)
     return retval;
 }
 
-std::string MathLib::normalizeCharacterLiteral(const std::string& iLiteral)
-{
-    std::string normalizedLiteral;
-    const std::string::size_type iLiteralLen = iLiteral.size();
-    for (std::string::size_type idx = 0; idx < iLiteralLen ; ++idx) {
-        if (iLiteral[idx] != '\\') {
-            normalizedLiteral.push_back(iLiteral[idx]);
-            continue;
-        }
-        ++idx;
-        if (idx == iLiteralLen) {
-            throw InternalError(nullptr, "Internal Error. MathLib::normalizeCharacterLiteral: Unhandled char constant '" + iLiteral + "'.");
-        }
-        switch (iLiteral[idx]) {
-        case 'x':
-            // Hexa-decimal number: skip \x and interpret the next two characters
-        {
-            if (++idx == iLiteralLen)
-                throw InternalError(nullptr, "Internal Error. MathLib::normalizeCharacterLiteral: Unhandled char constant '" + iLiteral + "'.");
-            std::string tempBuf;
-            tempBuf.push_back(iLiteral[idx]);
-            if (++idx != iLiteralLen)
-                tempBuf.push_back(iLiteral[idx]);
-            normalizedLiteral.push_back(static_cast<char>(MathLib::toULongNumber("0x" + tempBuf)));
-            continue;
-        }
-        case 'u':
-        case 'U':
-            // Unicode string; just skip the \u or \U
-            if (idx + 1 == iLiteralLen)
-                throw InternalError(nullptr, "Internal Error. MathLib::characterLiteralToLongNumber: Unhandled char constant '" + iLiteral + "'.");
-            continue;
-        }
-        // Single digit octal number
-        if (1 == iLiteralLen - idx) {
-            switch (iLiteral[idx]) {
-            case '0':
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-            case '5':
-            case '6':
-            case '7':
-                normalizedLiteral.push_back(iLiteral[idx]-'0');
-                break;
-            case 'a':
-                normalizedLiteral.push_back('\a');
-                break;
-            case 'b':
-                normalizedLiteral.push_back('\b');
-                break;
-            case 'e':
-                normalizedLiteral.push_back(0x1B); // clang, gcc, tcc interpnormalizedLiteral this as 0x1B - escape character
-                break;
-            case 'f':
-                normalizedLiteral.push_back('\f');
-                break;
-            case 'n':
-                normalizedLiteral.push_back('\n');
-                break;
-            case 'r':
-                normalizedLiteral.push_back('\r');
-                break;
-            case 't':
-                normalizedLiteral.push_back('\t');
-                break;
-            case 'v':
-                normalizedLiteral.push_back('\v');
-                break;
-            case '\\':
-            case '\?':
-            case '\'':
-            case '\"':
-                normalizedLiteral.push_back(iLiteral[idx]);
-                break;
-            default:
-                throw InternalError(nullptr, "Internal Error. MathLib::normalizeCharacterLiteral: Unhandled char constant '" + iLiteral + "'.");
-            }
-            continue;
-        }
-        // 2-3 digit octal number
-        if (!MathLib::isOctalDigit(iLiteral[idx]))
-            throw InternalError(nullptr, "Internal Error. MathLib::normalizeCharacterLiteral: Unhandled char constant '" + iLiteral + "'.");
-        std::string tempBuf;
-        tempBuf.push_back(iLiteral[idx]);
-        ++idx;
-        if (MathLib::isOctalDigit(iLiteral[idx])) {
-            tempBuf.push_back(iLiteral[idx]);
-            ++idx;
-            if (MathLib::isOctalDigit(iLiteral[idx])) {
-                tempBuf.push_back(iLiteral[idx]);
-            }
-        }
-        normalizedLiteral.push_back(static_cast<char>(MathLib::toLongNumber("0" + tempBuf)));
-    }
-    return normalizedLiteral;
-}
-
 MathLib::bigint MathLib::toLongNumber(const std::string & str)
 {
     // hexadecimal numbers:
@@ -533,7 +434,7 @@ static double myStod(const std::string& str, std::string::const_iterator from, s
     int distance;
     if (std::string::npos == decimalsep) {
         distance = to - it;
-    } else  if (decimalsep > (to - str.begin()))
+    } else if (decimalsep > (to - str.begin()))
         return 0.; // error handling??
     else
         distance = int(decimalsep)-(from - str.begin());
@@ -797,6 +698,7 @@ static bool isValidIntegerSuffixIt(std::string::const_iterator it, std::string::
             (state == Status::SUFFIX_UI64));
 }
 
+// cppcheck-suppress unusedFunction
 bool MathLib::isValidIntegerSuffix(const std::string& str, bool supportMicrosoftExtensions)
 {
     return isValidIntegerSuffixIt(str.begin(), str.end(), supportMicrosoftExtensions);
@@ -1130,7 +1032,7 @@ std::string MathLib::subtract(const std::string &first, const std::string &secon
     }
 
     if (first == second)
-        return "0.0" ;
+        return "0.0";
 
     double d1 = toDoubleNumber(first);
     double d2 = toDoubleNumber(second);
@@ -1279,16 +1181,19 @@ bool MathLib::isNotEqual(const std::string &first, const std::string &second)
     return !isEqual(first, second);
 }
 
+// cppcheck-suppress unusedFunction
 bool MathLib::isGreater(const std::string &first, const std::string &second)
 {
     return toDoubleNumber(first) > toDoubleNumber(second);
 }
 
+// cppcheck-suppress unusedFunction
 bool MathLib::isGreaterEqual(const std::string &first, const std::string &second)
 {
     return toDoubleNumber(first) >= toDoubleNumber(second);
 }
 
+// cppcheck-suppress unusedFunction
 bool MathLib::isLess(const std::string &first, const std::string &second)
 {
     return toDoubleNumber(first) < toDoubleNumber(second);

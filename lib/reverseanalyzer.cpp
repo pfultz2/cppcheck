@@ -3,6 +3,7 @@
 #include "astutils.h"
 #include "errortypes.h"
 #include "forwardanalyzer.h"
+#include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
 #include "valueptr.h"
@@ -17,7 +18,7 @@ struct ReverseTraversal {
     const Settings* settings;
 
     std::pair<bool, bool> evalCond(const Token* tok) {
-        std::vector<int> result = analyzer->evaluate(tok);
+        std::vector<MathLib::bigint> result = analyzer->evaluate(tok);
         // TODO: We should convert to bool
         bool checkThen = std::any_of(result.begin(), result.end(), [](int x) {
             return x == 1;
@@ -37,6 +38,44 @@ struct ReverseTraversal {
         if (action.isInvalid())
             return false;
         return true;
+    }
+
+    Token* getParentFunction(Token* tok)
+    {
+        if (!tok)
+            return nullptr;
+        if (!tok->astParent())
+            return nullptr;
+        int argn = -1;
+        if (Token* ftok = getTokenArgumentFunction(tok, argn)) {
+            while (!Token::Match(ftok, "(|{")) {
+                if (!ftok)
+                    return nullptr;
+                if (ftok->index() >= tok->index())
+                    return nullptr;
+                if (ftok->link())
+                    ftok = ftok->link()->next();
+                else
+                    ftok = ftok->next();
+            }
+            if (ftok == tok)
+                return nullptr;
+            return ftok;
+        }
+        return nullptr;
+    }
+
+    Token* getTopFunction(Token* tok)
+    {
+        if (!tok)
+            return nullptr;
+        if (!tok->astParent())
+            return tok;
+        Token* parent = tok;
+        Token* top = tok;
+        while ((parent = getParentFunction(parent)))
+            top = parent;
+        return top;
     }
 
     bool updateRecursive(Token* start) {
@@ -94,6 +133,8 @@ struct ReverseTraversal {
             }
             if (tok != parent->astOperand2())
                 continue;
+            if (Token::simpleMatch(parent, ":"))
+                parent = parent->astParent();
             if (!Token::Match(parent, "%oror%|&&|?"))
                 continue;
             Token* condTok = parent->astOperand1();
@@ -120,12 +161,17 @@ struct ReverseTraversal {
         if (start == end)
             return;
         std::size_t i = start->index();
-        for (Token* tok = start->previous(); tok != end; tok = tok->previous()) {
+        for (Token* tok = start->previous(); succeeds(tok, end); tok = tok->previous()) {
             if (tok->index() >= i)
                 throw InternalError(tok, "Cyclic reverse analysis.");
             i = tok->index();
             if (tok == start || (tok->str() == "{" && (tok->scope()->type == Scope::ScopeType::eFunction ||
-                                 tok->scope()->type == Scope::ScopeType::eLambda))) {
+                                                       tok->scope()->type == Scope::ScopeType::eLambda))) {
+                const Function* f = tok->scope()->function;
+                if (f && f->isConstructor()) {
+                    if (const Token* initList = f->constructorMemberInitialization())
+                        traverse(tok->previous(), tok->tokAt(initList->index() - tok->index()));
+                }
                 break;
             }
             if (Token::Match(tok, "return|break|continue"))
@@ -161,7 +207,7 @@ struct ReverseTraversal {
                     Analyzer::Action lhsAction =
                         analyzer->analyze(assignTok->astOperand1(), Analyzer::Direction::Reverse);
                     // Assignment from
-                    if (rhsAction.isRead() && !lhsAction.isInvalid()) {
+                    if (rhsAction.isRead() && !lhsAction.isInvalid() && assignTok->astOperand1()->exprId() > 0) {
                         const std::string info = "Assignment from '" + assignTok->expressionString() + "'";
                         ValuePtr<Analyzer> a = analyzer->reanalyze(assignTok->astOperand1(), info);
                         if (a) {
@@ -171,7 +217,9 @@ struct ReverseTraversal {
                                                     settings);
                         }
                         // Assignment to
-                    } else if (lhsAction.matches() && !assignTok->astOperand2()->hasKnownValue()) {
+                    } else if (lhsAction.matches() && !assignTok->astOperand2()->hasKnownIntValue() &&
+                               assignTok->astOperand2()->exprId() > 0 &&
+                               isConstExpression(assignTok->astOperand2(), settings->library, true, true)) {
                         const std::string info = "Assignment to '" + assignTok->expressionString() + "'";
                         ValuePtr<Analyzer> a = analyzer->reanalyze(assignTok->astOperand2(), info);
                         if (a) {
@@ -188,6 +236,16 @@ struct ReverseTraversal {
                 if (!updateRecursive(assignTop->astOperand2()))
                     break;
                 tok = previousBeforeAstLeftmostLeaf(assignTop)->next();
+                continue;
+            }
+            if (tok->str() == ")" && !isUnevaluated(tok)) {
+                if (Token* top = getTopFunction(tok->link())) {
+                    if (!updateRecursive(top))
+                        break;
+                    Token* next = previousBeforeAstLeftmostLeaf(top);
+                    if (next && precedes(next, tok))
+                        tok = next->next();
+                }
                 continue;
             }
             if (tok->str() == "}") {
@@ -246,6 +304,12 @@ struct ReverseTraversal {
                     if (action.isModified())
                         break;
                 }
+                Token* condTok = getCondTokFromEnd(tok->link());
+                if (condTok) {
+                    Analyzer::Result r = valueFlowGenericForward(condTok, analyzer, settings);
+                    if (r.action.isModified())
+                        break;
+                }
                 if (Token::simpleMatch(tok->tokAt(-2), "} else {"))
                     tok = tok->linkAt(-2);
                 if (Token::simpleMatch(tok->previous(), ") {"))
@@ -260,12 +324,23 @@ struct ReverseTraversal {
                 tok = parent;
                 continue;
             }
+            if (tok->str() == "case") {
+                const Scope* scope = tok->scope();
+                while (scope && scope->type != Scope::eSwitch)
+                    scope = scope->nestedIn;
+                if (!scope || scope->type != Scope::eSwitch)
+                    break;
+                tok = tok->tokAt(scope->bodyStart->index() - tok->index() - 1);
+                continue;
+            }
             if (!update(tok))
                 break;
         }
     }
 
     static Token* assignExpr(Token* tok) {
+        if (Token::Match(tok, ")|}"))
+            tok = tok->link();
         while (tok->astParent() && (astIsRHS(tok) || !tok->astParent()->isBinaryOp())) {
             if (tok->astParent()->isAssignmentOp())
                 return tok->astParent();

@@ -8,13 +8,38 @@ jobs:
   build:
 
     runs-on: ubuntu-20.04
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Cache Cppcheck
+        uses: actions/cache@v2
+        with:
+          path: cppcheck
+          key: ${{ runner.os }}-scriptcheck-cppcheck-${{ github.sha }}
+
+      - name: build cppcheck
+        run: |
+          make -j$(nproc) -s
+          strip -s ./cppcheck
+
+  scriptcheck:
+
+    needs: build
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
-        python-version: [2.7, 3.5, 3.6, 3.7, 3.8, 3.9]
+        python-version: [2.7, 3.5, 3.6, 3.7, 3.8, 3.9, '3.10']
       fail-fast: false
 
     steps:
       - uses: actions/checkout@v2
+
+      - name: Restore Cppcheck
+        uses: actions/cache@v2
+        with:
+          path: cppcheck
+          key: ${{ runner.os }}-scriptcheck-cppcheck-${{ github.sha }}
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2
@@ -48,25 +73,22 @@ jobs:
           python -m pip install psutil
 
       - name: run Shellcheck
-        if: matrix.python-version == '3.9'
+        if: matrix.python-version == '3.10'
         run: |
           find . -name "*.sh" | xargs shellcheck --exclude SC2002,SC2013,SC2034,SC2035,SC2043,SC2046,SC2086,SC2089,SC2090,SC2129,SC2211,SC2231
 
       - name: run pylint
-        if: matrix.python-version == '3.9'
+        if: matrix.python-version == '3.10'
         run: |
-          pylint --rcfile=pylintrc_travis addons/*.py
-          pylint --rcfile=pylintrc_travis htmlreport/cppcheck-htmlreport
-          pylint --rcfile=pylintrc_travis htmlreport/*.py
-          pylint --rcfile=pylintrc_travis tools/*.py
+          pylint --rcfile=pylintrc_travis --jobs $(nproc) addons/*.py htmlreport/cppcheck-htmlreport htmlreport/*.py tools/*.py
 
       - name: check .json files
-        if: matrix.python-version == '3.9'
+        if: matrix.python-version == '3.10'
         run: |
           find . -name '*.json' | xargs -n 1 python -m json.tool > /dev/null
 
       - name: Validate
-        if: matrix.python-version == '3.9'
+        if: matrix.python-version == '3.10'
         run: |
           make -j$(nproc) validateCFG validatePlatforms validateRules
 
@@ -86,10 +108,6 @@ jobs:
         run: |
           python tools/test_matchcompiler.py
 
-      - name: build cppcheck
-        run: |
-          make -j$(nproc) -s
-
       - name: test addons
         run: |
           python -m pytest addons/test/test-*.py
@@ -103,8 +121,7 @@ jobs:
           ./check.sh
 
       - name: dmake
-        if: matrix.python-version == '3.9'
+        if: matrix.python-version == '3.10'
         run: |
           make -j$(nproc) run-dmake
           git diff --exit-code
-

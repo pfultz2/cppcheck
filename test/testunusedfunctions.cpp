@@ -26,8 +26,7 @@
 
 class TestUnusedFunctions : public TestFixture {
 public:
-    TestUnusedFunctions() : TestFixture("TestUnusedFunctions") {
-    }
+    TestUnusedFunctions() : TestFixture("TestUnusedFunctions") {}
 
 private:
     Settings settings;
@@ -46,11 +45,15 @@ private:
         TEST_CASE(template2);
         TEST_CASE(template3);
         TEST_CASE(template4); // #9805
+        TEST_CASE(template5);
+        TEST_CASE(template6); // #10475 crash
+        TEST_CASE(template7); // #9766 crash
         TEST_CASE(throwIsNotAFunction);
         TEST_CASE(unusedError);
         TEST_CASE(unusedMain);
         TEST_CASE(initializationIsNotAFunction);
         TEST_CASE(operator1);   // #3195
+        TEST_CASE(operator2);   // #7974
         TEST_CASE(returnRef);
         TEST_CASE(attribute); // #3471 - FP __attribute__(constructor)
         TEST_CASE(initializer_list);
@@ -66,7 +69,8 @@ private:
         TEST_CASE(operatorOverload);
     }
 
-    void check(const char code[], Settings::PlatformType platform = Settings::Native) {
+#define check(...) check_(__FILE__, __LINE__, __VA_ARGS__)
+    void check_(const char* file, int line, const char code[], Settings::PlatformType platform = Settings::Native) {
         // Clear the error buffer..
         errout.str("");
 
@@ -75,13 +79,13 @@ private:
         // Tokenize..
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
-        tokenizer.tokenize(istr, "test.cpp");
+        ASSERT_LOC(tokenizer.tokenize(istr, "test.cpp"), file, line);
 
         // Check for unused functions..
         CheckUnusedFunctions checkUnusedFunctions(&tokenizer, &settings, this);
         checkUnusedFunctions.parseTokens(tokenizer,  "someFile.c", &settings);
         // check() returns error if and only if errout is not empty.
-        if (checkUnusedFunctions.check(this, settings)) {
+        if ((checkUnusedFunctions.check)(this, settings)) {
             ASSERT(errout.str() != "");
         } else {
             ASSERT_EQUALS("", errout.str());
@@ -249,6 +253,32 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void template5() { // #9220
+        check("void f(){}\n"
+              "\n"
+              "typedef void(*Filter)();\n"
+              "\n"
+              "template <Filter fun>\n"
+              "void g() { fun(); }\n"
+              "\n"
+              "int main() { g<f>(); return 0;}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void template6() { // #10475
+        check("template<template<typename...> class Ref, typename... Args>\n"
+              "struct Foo<Ref<Args...>, Ref> : std::true_type {};\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void template7()
+    { // #9766
+        check("void f() {\n"
+              "    std::array<std::array<double,3>,3> array;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:1]: (style) The function 'f' is never used.\n", errout.str());
+    }
+
     void throwIsNotAFunction() {
         check("struct A {void f() const throw () {}}; int main() {A a; a.f();}");
         ASSERT_EQUALS("", errout.str());
@@ -295,6 +325,19 @@ private:
         ASSERT_EQUALS("", errout.str());
 
         check("struct Foo { operator std::string(int a) {} };");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void operator2() { // #7974
+        check("bool operator==(const data_t& a, const data_t& b) {\n"
+              "    return (a.fd == b.fd);\n"
+              "}\n"
+              "bool operator==(const event& a, const event& b) {\n"
+              "    return ((a.events == b.events) && (a.data == b.data));\n"
+              "}\n"
+              "int main(event a, event b) {\n"
+              "    return a == b;\n"
+              "}\n");
         ASSERT_EQUALS("", errout.str());
     }
 
@@ -347,9 +390,8 @@ private:
         ASSERT_EQUALS("", errout.str());
 
         // Don't crash on wrong syntax
-        ASSERT_THROW(check("int x __attribute__((constructor));\n"
-                           "int x __attribute__((destructor));"),
-                     InternalError);
+        check("int x __attribute__((constructor));\n"
+              "int y __attribute__((destructor));");
     }
 
     void initializer_list() {
@@ -412,13 +454,13 @@ private:
 
             Tokenizer tokenizer2(&settings, this);
             std::istringstream istr(code);
-            tokenizer2.tokenize(istr, fname.str().c_str());
+            ASSERT(tokenizer2.tokenize(istr, fname.str().c_str()));
 
             c.parseTokens(tokenizer2, "someFile.c", &settings);
         }
 
         // Check for unused functions..
-        c.check(this, settings);
+        (c.check)(this, settings);
 
         ASSERT_EQUALS("[test1.cpp:1]: (style) The function 'f' is never used.\n", errout.str());
     }

@@ -30,14 +30,15 @@ public:
 private:
     Settings settings;
 
-    void check(const char code[], const char *filename = "test.cpp") {
+#define check(...) check_(__FILE__, __LINE__, __VA_ARGS__)
+    void check_(const char* file, int line, const char code[], const char *filename = "test.cpp") {
         // Clear the error buffer..
         errout.str("");
 
         // Tokenize..
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
-        tokenizer.tokenize(istr, filename);
+        ASSERT_LOC(tokenizer.tokenize(istr, filename), file, line);
 
         // Check..
         CheckAssert checkAssert;
@@ -136,7 +137,7 @@ private:
               "   void Foo();\n"
               "};\n"
               "void foo(SquarePack s) {\n"
-              "   assert( s.Foo(); );\n"
+              "   assert( s.Foo() );\n"
               "}");
         ASSERT_EQUALS("[test.cpp:5]: (warning) Assert statement calls a function which may have desired side effects: 'Foo'.\n", errout.str());
 
@@ -144,7 +145,7 @@ private:
               "   void Foo() const;\n"
               "};\n"
               "void foo(SquarePack* s) {\n"
-              "   assert( s->Foo(); );\n"
+              "   assert( s->Foo() );\n"
               "}");
         ASSERT_EQUALS("", errout.str());
 
@@ -152,14 +153,14 @@ private:
               "   static void Foo();\n"
               "};\n"
               "void foo(SquarePack* s) {\n"
-              "   assert( s->Foo(); );\n"
+              "   assert( s->Foo() );\n"
               "}");
         ASSERT_EQUALS("", errout.str());
 
         check("struct SquarePack {\n"
               "};\n"
               "void foo(SquarePack* s) {\n"
-              "   assert( s->Foo(); );\n"
+              "   assert( s->Foo() );\n"
               "}");
         ASSERT_EQUALS("", errout.str());
     }
@@ -232,6 +233,11 @@ private:
     void crash() {
         check("void foo() {\n"
               "  assert(sizeof(struct { int a[x++]; })==sizeof(int));\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void foo() {\n" // #9790
+              "  assert(kad_bucket_hash(&(kad_guid) { .bytes = { 0 } }, & (kad_guid){.bytes = { 0 }}) == -1);\n"
               "}");
         ASSERT_EQUALS("", errout.str());
     }

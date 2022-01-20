@@ -24,14 +24,13 @@
 #include "check.h"
 #include "config.h"
 #include "errortypes.h"
-#include "token.h"
 #include "tokenize.h"
 
-#include <list>
 #include <string>
 
 class Settings;
 class ErrorLogger;
+class Token;
 
 // CWE ID used:
 static const struct CWE CWE398(398U);   // Indicator of Poor Code Quality
@@ -54,13 +53,11 @@ static const struct CWE CWE480(480U);   // Use of Incorrect Operator
 class CPPCHECKLIB CheckExceptionSafety : public Check {
 public:
     /** This constructor is used when registering the CheckClass */
-    CheckExceptionSafety() : Check(myName()) {
-    }
+    CheckExceptionSafety() : Check(myName()) {}
 
     /** This constructor is used when running checks. */
     CheckExceptionSafety(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
-        : Check(myName(), tokenizer, settings, errorLogger) {
-    }
+        : Check(myName(), tokenizer, settings, errorLogger) {}
 
     void runChecks(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger) OVERRIDE {
         if (tokenizer->isC())

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2021 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -195,6 +195,8 @@ bool Path::isCPP(const std::string &path)
            extension == ".hh" ||
            extension == ".tpp" ||
            extension == ".txx" ||
+           extension == ".ipp" ||
+           extension == ".ixx" ||
            getFilenameExtension(path) == ".C"; // In unix, ".C" is considered C++ file
 }
 

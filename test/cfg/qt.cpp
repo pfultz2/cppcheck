@@ -49,6 +49,27 @@ QString::iterator QString3()
     return it;
 }
 
+void QString4()
+{
+    // cppcheck-suppress unusedVariable
+    QString qs;
+}
+
+// cppcheck-suppress passedByValue
+bool QString5(QString s) { // #10710
+    return s.isEmpty();
+}
+
+// cppcheck-suppress passedByValue
+QStringList QString6(QString s) {
+    return QStringList{ "*" + s + "*" };
+}
+
+// cppcheck-suppress passedByValue
+bool QString7(QString s, const QString& l) {
+    return l.startsWith(s);
+}
+
 void QByteArray1(QByteArray byteArrayArg)
 {
     for (int i = 0; i <= byteArrayArg.size(); ++i) {
@@ -121,6 +142,17 @@ void QList1(QList<int> intListArg)
     (void)qstringList4[0];
 }
 
+QList<int> QList2() { // #10556
+    QList<int> v;
+    
+    for (int i = 0; i < 4; ++i)
+    {
+        v.append(i);
+        (void)v.at(i);
+    }
+    return v;
+}
+
 QList<int>::iterator QList3()
 {
     QList<int> qlist1;
@@ -136,6 +168,7 @@ QList<int>::iterator QList3()
 
 void QLinkedList1()
 {
+    // cppcheck-suppress unreadVariable
     QLinkedList<QString> qstringLinkedList1{"one", "two"};
 
     QLinkedList<QString> qstringLinkedList2 = {"one", "two"};
@@ -279,6 +312,14 @@ QVector<int>::iterator QVector2()
     return it;
 }
 
+// cppcheck-suppress passedByValue
+void duplicateExpression_QString_Compare(QString style) //#8723
+{
+    // cppcheck-suppress duplicateExpression
+    if (style.compare( "x", Qt::CaseInsensitive ) == 0 || style.compare( "x", Qt::CaseInsensitive ) == 0)
+    {}
+}
+
 void QStack1(QStack<int> intStackArg)
 {
     for (int i = 0; i <= intStackArg.size(); ++i) {
@@ -341,7 +382,7 @@ void QStack3()
 }
 
 // Verify that Qt macros do not result in syntax errors, false positives or other issues.
-class MacroTest1: public QObject {
+class MacroTest1 : public QObject {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID "com.foo.bar" FILE "test.json")
 
@@ -373,8 +414,7 @@ void MacroTest2_test()
 
 void validCode(int * pIntPtr, QString & qstrArg)
 {
-    if (QFile::exists("test")) {
-    }
+    if (QFile::exists("test")) {}
 
     if (pIntPtr != Q_NULLPTR) {
         *pIntPtr = 5;
@@ -384,8 +424,7 @@ void validCode(int * pIntPtr, QString & qstrArg)
         forever {
         }
     } else if (pIntPtr && *pIntPtr == 2) {
-        Q_FOREVER {
-        }
+        Q_FOREVER {}
     }
 
     if (Q_LIKELY(pIntPtr)) {}
@@ -399,13 +438,11 @@ void validCode(int * pIntPtr, QString & qstrArg)
 
     //#9650
     QString qstr1(qstrArg);
-    if (qstr1.length() == 1) {
-    } else {
+    if (qstr1.length() == 1) {} else {
         qstr1.chop(1);
         if (qstr1.length() == 1) {}
     }
-    if (qstr1.length() == 1) {
-    } else {
+    if (qstr1.length() == 1) {} else {
         qstr1.remove(1);
         if (qstr1.length() == 1) {}
     }

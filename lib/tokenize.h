@@ -25,7 +25,6 @@
 #include "errortypes.h"
 #include "tokenlist.h"
 
-#include <ctime>
 #include <list>
 #include <map>
 #include <string>
@@ -61,7 +60,7 @@ class CPPCHECKLIB Tokenizer {
     class VariableMap {
     private:
         std::map<std::string, int> mVariableId;
-        std::stack<std::list<std::pair<std::string,int> > > mScopeInfo;
+        std::stack<std::list<std::pair<std::string,int>>> mScopeInfo;
         mutable nonneg int mVarId;
     public:
         VariableMap();
@@ -146,22 +145,22 @@ public:
     void setVarIdPass2();
 
     /**
-    * Basic simplification of tokenlist
-    *
-    * @param FileName The filename to run; used to do
-    * markup checks.
-    *
-    * @return false if there is an error that requires aborting
-    * the checking of this file.
-    */
+     * Basic simplification of tokenlist
+     *
+     * @param FileName The filename to run; used to do
+     * markup checks.
+     *
+     * @return false if there is an error that requires aborting
+     * the checking of this file.
+     */
     bool simplifyTokenList1(const char FileName[]);
 
     /**
-    * Most aggressive simplification of tokenlist
-    *
-    * @return false if there is an error that requires aborting
-    * the checking of this file.
-    */
+     * Most aggressive simplification of tokenlist
+     *
+     * @return false if there is an error that requires aborting
+     * the checking of this file.
+     */
     bool simplifyTokenList2();
 
     /**
@@ -243,20 +242,20 @@ public:
     void simplifyOffsetPointerDereference();
 
     /**
-       * Simplify referencing a pointer offset:
-       *     "Replace "&str[num]" => "(str + num)"
-       */
+     * Simplify referencing a pointer offset:
+     *     "Replace "&str[num]" => "(str + num)"
+     */
     void simplifyOffsetPointerReference();
 
     /** Insert array size where it isn't given */
     void arraySize();
 
     /** Simplify labels and 'case|default' syntaxes.
-      */
+     */
     void simplifyLabelsCaseDefault();
 
     /** simplify case ranges (gcc extension)
-      */
+     */
     void simplifyCaseRange();
 
     /** Remove macros in global scope */
@@ -268,9 +267,9 @@ public:
     void removePragma();
 
     /** Remove undefined macro in class definition:
-      * class DLLEXPORT Fred { };
-      * class Fred FINAL : Base { };
-      */
+     * class DLLEXPORT Fred { };
+     * class Fred FINAL : Base { };
+     */
     void removeMacroInClassDef();
 
     /** Remove unknown macro in variable declarations: PROGMEM char x; */
@@ -280,9 +279,9 @@ public:
     void removeRedundantAssignment();
 
     /** Simplifies some realloc usage like
-      * 'x = realloc (0, n);' => 'x = malloc(n);'
-      * 'x = realloc (y, 0);' => 'x = 0; free(y);'
-      */
+     * 'x = realloc (0, n);' => 'x = malloc(n);'
+     * 'x = realloc (y, 0);' => 'x = 0; free(y);'
+     */
     void simplifyRealloc();
 
     /** Add parentheses for sizeof: sizeof x => sizeof(x) */
@@ -745,23 +744,23 @@ private:
     void simplifyNamespaceStd();
 
     /**
-    * Convert Microsoft memory functions
-    * CopyMemory(dst, src, len) -> memcpy(dst, src, len)
-    * FillMemory(dst, len, val) -> memset(dst, val, len)
-    * MoveMemory(dst, src, len) -> memmove(dst, src, len)
-    * ZeroMemory(dst, len) -> memset(dst, 0, len)
-    */
+     * Convert Microsoft memory functions
+     * CopyMemory(dst, src, len) -> memcpy(dst, src, len)
+     * FillMemory(dst, len, val) -> memset(dst, val, len)
+     * MoveMemory(dst, src, len) -> memmove(dst, src, len)
+     * ZeroMemory(dst, len) -> memset(dst, 0, len)
+     */
     void simplifyMicrosoftMemoryFunctions();
 
     /**
-    * Convert Microsoft string functions
-    * _tcscpy -> strcpy
-    */
+     * Convert Microsoft string functions
+     * _tcscpy -> strcpy
+     */
     void simplifyMicrosoftStringFunctions();
 
     /**
-      * Remove Borland code
-      */
+     * Remove Borland code
+     */
     void simplifyBorland();
 
     /**
@@ -779,8 +778,8 @@ private:
     void simplifyOverloadedOperators();
 
     /**
-    * Remove [[attribute]] (C++11 and later) from TokenList
-    */
+     * Remove [[attribute]] (C++11 and later) from TokenList
+     */
     void simplifyCPPAttribute();
 
     /**
@@ -807,14 +806,9 @@ private:
     void simplifyCoroutines();
 
     /**
-    * Prepare ternary operators with parentheses so that the AST can be created
-    * */
+     * Prepare ternary operators with parentheses so that the AST can be created
+     * */
     void prepareTernaryOpForAST();
-
-    /**
-     * check for duplicate enum definition
-     */
-    static bool duplicateDefinition(Token **tokPtr);
 
     /**
      * report error message
@@ -829,17 +823,17 @@ private:
     void setVarIdClassDeclaration(const Token * const startToken,
                                   const VariableMap &variableMap,
                                   const nonneg int scopeStartVarId,
-                                  std::map<int, std::map<std::string,int> >& structMembers);
+                                  std::map<int, std::map<std::string,int>>& structMembers);
 
     void setVarIdStructMembers(Token **tok1,
-                               std::map<int, std::map<std::string, int> >& structMembers,
+                               std::map<int, std::map<std::string, int>>& structMembers,
                                nonneg int *varId) const;
 
     void setVarIdClassFunction(const std::string &classname,
                                Token * const startToken,
                                const Token * const endToken,
                                const std::map<std::string,int> &varlist,
-                               std::map<int, std::map<std::string,int> >& structMembers,
+                               std::map<int, std::map<std::string,int>>& structMembers,
                                nonneg int *varId_);
 
     /**
@@ -906,32 +900,32 @@ public:
     }
 
     /**
-    * Helper function to check whether number is zero (0 or 0.0 or 0E+0) or not?
-    * @param s the string to check
-    * @return true in case is is zero and false otherwise.
-    */
+     * Helper function to check whether number is zero (0 or 0.0 or 0E+0) or not?
+     * @param s the string to check
+     * @return true in case is is zero and false otherwise.
+     */
     static bool isZeroNumber(const std::string &s);
 
     /**
-    * Helper function to check whether number is one (1 or 0.1E+1 or 1E+0) or not?
-    * @param s the string to check
-    * @return true in case is is one and false otherwise.
-    */
+     * Helper function to check whether number is one (1 or 0.1E+1 or 1E+0) or not?
+     * @param s the string to check
+     * @return true in case is is one and false otherwise.
+     */
     static bool isOneNumber(const std::string &s);
 
     /**
-    * Helper function to check whether number is two (2 or 0.2E+1 or 2E+0) or not?
-    * @param s the string to check
-    * @return true in case is is two and false otherwise.
-    */
+     * Helper function to check whether number is two (2 or 0.2E+1 or 2E+0) or not?
+     * @param s the string to check
+     * @return true in case is is two and false otherwise.
+     */
     static bool isTwoNumber(const std::string &s);
 
     /**
-    * Helper function to check for start of function execution scope.
-    * Do not use this in checks.  Use the symbol database.
-    * @param tok pointer to end parentheses of parameter list
-    * @return pointer to start brace of function scope or nullptr if not start.
-    */
+     * Helper function to check for start of function execution scope.
+     * Do not use this in checks.  Use the symbol database.
+     * @param tok pointer to end parentheses of parameter list
+     * @return pointer to start brace of function scope or nullptr if not start.
+     */
     static const Token * startOfExecutableScope(const Token * tok);
 
 #ifdef MAXTIME
@@ -959,9 +953,9 @@ private:
     Token *processFunc(Token *tok2, bool inOperator) const;
 
     /**
-    * Get new variable id.
-    * @return new variable id
-    */
+     * Get new variable id.
+     * @return new variable id
+     */
     nonneg int newVarId() {
         return ++mVarId;
     }
@@ -986,6 +980,15 @@ private:
 
     /** sizeof information for known types */
     std::map<std::string, int> mTypeSize;
+
+    struct TypedefInfo {
+        std::string name;
+        std::string filename;
+        int lineNumber;
+        int column;
+        bool used;
+    };
+    std::vector<TypedefInfo> mTypedefInfo;
 
     /** variable count */
     nonneg int mVarId;

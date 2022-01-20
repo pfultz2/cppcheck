@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2020 Cppcheck team.
+ * Copyright (C) 2007-2021 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,6 @@
 
 #include "settings.h"
 #include "testsuite.h"
-#include "testutils.h"
 #include "token.h"
 #include "tokenize.h"
 #include "tokenlist.h"
@@ -26,15 +25,11 @@
 #include "symboldatabase.h"
 
 #include <string>
-#include <vector>
-
-struct InternalError;
 
 
 class TestTokenRange : public TestFixture {
 public:
-    TestTokenRange() : TestFixture("TestTokenRange") {
-    }
+    TestTokenRange() : TestFixture("TestTokenRange") {}
 
 private:
     void run() OVERRIDE {
@@ -105,7 +100,7 @@ private:
         Settings settings;
         Tokenizer tokenizer{ &settings, nullptr };
         std::istringstream sample("void a(){} void main(){ if(true){a();} }");
-        tokenizer.tokenize(sample, "test.cpp");
+        ASSERT(tokenizer.tokenize(sample, "test.cpp"));
 
         const SymbolDatabase* sd = tokenizer.getSymbolDatabase();
         const Scope& scope = *std::next(sd->scopeList.begin(), 3); //The scope of the if block

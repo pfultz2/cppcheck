@@ -19,6 +19,7 @@
 #ifndef THREADEXECUTOR_H
 #define THREADEXECUTOR_H
 
+#include "color.h"
 #include "config.h"
 #include "errorlogger.h"
 
@@ -31,9 +32,10 @@
 #define THREADING_MODEL_FORK
 #elif defined(_WIN32)
 #define THREADING_MODEL_WIN
-#include <windows.h>
-
 #include "importproject.h"
+#include <mutex>
+#else
+#error "No threading moodel defined"
 #endif
 
 class Settings;
@@ -53,7 +55,7 @@ public:
     void operator=(const ThreadExecutor &) = delete;
     unsigned int check();
 
-    void reportOut(const std::string &outmsg) OVERRIDE;
+    void reportOut(const std::string &outmsg, Color c) OVERRIDE;
     void reportErr(const ErrorMessage &msg) OVERRIDE;
     void reportInfo(const ErrorMessage &msg) OVERRIDE;
     void bughuntingReport(const std::string &str) OVERRIDE;
@@ -68,10 +70,14 @@ public:
     void addFileContent(const std::string &path, const std::string &content);
 
 private:
+    enum class MessageType {REPORT_ERROR, REPORT_INFO};
+
     const std::map<std::string, std::size_t> &mFiles;
     Settings &mSettings;
     ErrorLogger &mErrorLogger;
     unsigned int mFileCount;
+
+    void report(const ErrorMessage &msg, MessageType msgType);
 
 #if defined(THREADING_MODEL_FORK)
 
@@ -119,8 +125,6 @@ public:
 #elif defined(THREADING_MODEL_WIN)
 
 private:
-    enum class MessageType {REPORT_ERROR, REPORT_INFO};
-
     std::map<std::string, std::string> mFileContents;
     std::map<std::string, std::size_t>::const_iterator mItNextFile;
     std::list<ImportProject::FileSettings>::const_iterator mItNextFileSettings;
@@ -128,16 +132,14 @@ private:
     std::size_t mTotalFiles;
     std::size_t mProcessedSize;
     std::size_t mTotalFileSize;
-    CRITICAL_SECTION mFileSync;
+    std::mutex mFileSync;
 
     std::list<std::string> mErrorList;
-    CRITICAL_SECTION mErrorSync;
+    std::mutex mErrorSync;
 
-    CRITICAL_SECTION mReportSync;
+    std::mutex mReportSync;
 
-    void report(const ErrorMessage &msg, MessageType msgType);
-
-    static unsigned __stdcall threadProc(void*);
+    static unsigned __stdcall threadProc(ThreadExecutor *threadExecutor);
 
 public:
     /**

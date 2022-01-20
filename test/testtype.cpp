@@ -26,8 +26,7 @@
 
 class TestType : public TestFixture {
 public:
-    TestType() : TestFixture("TestType") {
-    }
+    TestType() : TestFixture("TestType") {}
 
 private:
 
@@ -41,7 +40,8 @@ private:
         TEST_CASE(checkFloatToIntegerOverflow);
     }
 
-    void check(const char code[], Settings* settings = nullptr, const char filename[] = "test.cpp", const std::string& standard = "c++11") {
+#define check(...) check_(__FILE__, __LINE__, __VA_ARGS__)
+    void check_(const char* file, int line, const char code[], Settings* settings = nullptr, const char filename[] = "test.cpp", const std::string& standard = "c++11") {
         // Clear the error buffer..
         errout.str("");
 
@@ -56,7 +56,7 @@ private:
         // Tokenize..
         Tokenizer tokenizer(settings, this);
         std::istringstream istr(code);
-        tokenizer.tokenize(istr, filename);
+        ASSERT_LOC(tokenizer.tokenize(istr, filename), file, line);
 
         // Check..
         CheckType checkType(&tokenizer, settings, this);
@@ -70,7 +70,7 @@ private:
         // unsigned types getting promoted to int sizeof(int) = 4 bytes
         // and unsigned types having already a size of 4 bytes
         {
-            const std::string types[] = {"unsigned char", /*[unsigned]*/"char", "bool", "unsigned short", "unsigned int", "unsigned long"};
+            const std::string types[] = {"unsigned char", /*[unsigned]*/ "char", "bool", "unsigned short", "unsigned int", "unsigned long"};
             for (const std::string& type : types) {
                 check((type + " f(" + type +" x) { return x << 31; }").c_str(), &settings);
                 ASSERT_EQUALS("", errout.str());
@@ -85,7 +85,7 @@ private:
         // signed types getting promoted to int sizeof(int) = 4 bytes
         // and signed types having already a size of 4 bytes
         {
-            const std::string types[] = {"signed char", "signed short", /*[signed]*/"short", "wchar_t", /*[signed]*/"int", "signed int", /*[signed]*/"long", "signed long"};
+            const std::string types[] = {"signed char", "signed short", /*[signed]*/ "short", "wchar_t", /*[signed]*/ "int", "signed int", /*[signed]*/ "long", "signed long"};
             for (const std::string& type : types) {
                 // c++11
                 check((type + " f(" + type +" x) { return x << 33; }").c_str(), &settings);
@@ -166,6 +166,17 @@ private:
               "    UINFO(x << 1234);\n"
               "}");
         ASSERT_EQUALS("", errout.str());
+
+        // #8640
+        check("int f (void)\n"
+              "{\n"
+              "    constexpr const int a = 1;\n"
+              "    constexpr const int shift[1] = {32};\n"
+              "    constexpr const int ret = a << shift[0];\n" // shift too many bits
+              "    return ret;\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:5]: (error) Shifting 32-bit value by 32 bits is undefined behaviour\n"
+                      "[test.cpp:5]: (error) Signed integer overflow for expression 'a<<shift[0]'.\n", errout.str());
 
         // #8885
         check("int f(int k, int rm) {\n"

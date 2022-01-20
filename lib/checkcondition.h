@@ -47,13 +47,11 @@ class ValueType;
 class CPPCHECKLIB CheckCondition : public Check {
 public:
     /** This constructor is used when registering the CheckAssignIf */
-    CheckCondition() : Check(myName()) {
-    }
+    CheckCondition() : Check(myName()) {}
 
     /** This constructor is used when running checks. */
     CheckCondition(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
-        : Check(myName(), tokenizer, settings, errorLogger) {
-    }
+        : Check(myName(), tokenizer, settings, errorLogger) {}
 
     void runChecks(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger) OVERRIDE {
         CheckCondition checkCondition(tokenizer, settings, errorLogger);
@@ -71,6 +69,7 @@ public:
         checkCondition.comparison();
         checkCondition.checkModuloAlwaysTrueFalse();
         checkCondition.checkAssignmentInCondition();
+        checkCondition.checkCompareValueOutOfTypeRange();
     }
 
     /** mismatching assignment / comparison */
@@ -167,6 +166,9 @@ private:
 
     void assignmentInCondition(const Token *eq);
 
+    void checkCompareValueOutOfTypeRange();
+    void compareValueOutOfTypeRangeError(const Token *comparison, const std::string &type, long long value, bool result);
+
     void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const OVERRIDE {
         CheckCondition c(nullptr, settings, errorLogger);
 
@@ -190,6 +192,7 @@ private:
         c.pointerAdditionResultNotNullError(nullptr, nullptr);
         c.duplicateConditionalAssignError(nullptr, nullptr);
         c.assignmentInCondition(nullptr);
+        c.compareValueOutOfTypeRangeError(nullptr, "unsigned char", 256, true);
     }
 
     static std::string myName() {

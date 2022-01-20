@@ -35,7 +35,6 @@
 #include <set>
 #include <string>
 #include <vector>
-#include <unordered_map>
 
 namespace ValueFlow {
     class Value;
@@ -95,6 +94,8 @@ private:
 public:
     Settings();
 
+    void loadCppcheckCfg(const std::string &executable);
+
     /** @brief addons, either filename of python/json file or json data */
     std::list<std::string> addons;
 
@@ -114,7 +115,7 @@ public:
     /** Filename for bug hunting report */
     std::string bugHuntingReport;
 
-    /** @brief --cppcheck-build-dir */
+    /** @brief --cppcheck-build-dir. Always uses / as path separator. No trailing path separator. */
     std::string buildDir;
 
     /** @brief check all configurations (false if -D or --max-configs is used */
@@ -191,8 +192,8 @@ public:
         Default value is 0. */
     int exitCode;
 
-    /** @brief --file-filter for analyzing special files */
-    std::string fileFilter;
+    /** @brief List of --file-filter for analyzing special files */
+    std::vector<std::string> fileFilters;
 
     /** @brief Force checking the files with "too many" configurations (--force). */
     bool force;
@@ -217,8 +218,8 @@ public:
     unsigned int jobs;
 
     /** @brief Collect unmatched suppressions in one run.
-      * This delays the reporting until all files are checked.
-      * It is needed by checks that analyse the whole code base. */
+     * This delays the reporting until all files are checked.
+     * It is needed by checks that analyse the whole code base. */
     bool jointSuppressionReport;
 
     /** @brief --library= */
@@ -390,9 +391,9 @@ public:
     std::string addEnabled(const std::string &str);
 
     /**
-    * @brief Returns true if given value can be shown
-    * @return true if the value can be shown
-    */
+     * @brief Returns true if given value can be shown
+     * @return true if the value can be shown
+     */
     bool isEnabled(const ValueFlow::Value *value, bool inconclusiveCheck=false) const;
 
     /** Is posix library specified? */

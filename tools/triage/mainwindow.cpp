@@ -22,7 +22,7 @@ MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow),
     mVersionRe("^(master|main|your|head|[12].[0-9][0-9]?) (.*)"),
-    hFiles{"*.hpp", "*.h", "*.hxx", "*.hh", "*.tpp", "*.txx"},
+    hFiles{"*.hpp", "*.h", "*.hxx", "*.hh", "*.tpp", "*.txx", "*.ipp", "*.ixx"},
     srcFiles{"*.cpp", "*.cxx", "*.cc", "*.c++", "*.C", "*.c", "*.cl"}
 {
     ui->setupUi(this);
@@ -31,6 +31,10 @@ MainWindow::MainWindow(QWidget *parent) :
     if (!workFolder.exists()) {
         workFolder.mkdir(WORK_FOLDER);
     }
+
+    ui->results->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->results, &QListWidget::customContextMenuRequested,
+            this, &MainWindow::resultsContextMenu);
 
     mFSmodel.setRootPath(WORK_FOLDER);
     mFSmodel.setReadOnly(true);
@@ -342,3 +346,20 @@ void MainWindow::searchResultsDoubleClick()
     const int line = filename.midRef(idx + 1).toInt();
     showSrcFile(WORK_FOLDER + QString{"/"} + filename.left(idx), "", line);
 }
+
+void MainWindow::resultsContextMenu(const QPoint& pos)
+{
+    if (ui->results->selectedItems().isEmpty())
+        return;
+    QMenu submenu;
+    submenu.addAction("Copy");
+    QAction* menuItem = submenu.exec(ui->results->mapToGlobal(pos));
+    if (menuItem && menuItem->text().contains("Copy"))
+    {
+        QString text;
+        for (const auto *res: ui->results->selectedItems())
+            text += res->text() + "\n";
+        QApplication::clipboard()->setText(text);
+    }
+}
+

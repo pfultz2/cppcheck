@@ -257,12 +257,12 @@ static bool isLocalVarNoAutoDealloc(const Token *varTok, const bool isCpp)
 }
 
 /** checks if nameToken is a name of a function in a function call:
-*     func(arg)
-* or
-*     func<temp1_arg>(arg)
-* @param nameToken Function name token
-* @return opening parenthesis token or NULL if not a function call
-*/
+ *     func(arg)
+ * or
+ *     func<temp1_arg>(arg)
+ * @param nameToken Function name token
+ * @return opening parenthesis token or NULL if not a function call
+ */
 
 static const Token * isFunctionCall(const Token * nameToken)
 {
@@ -836,7 +836,7 @@ void CheckLeakAutoVar::changeAllocStatus(VarInfo *varInfo, const VarInfo::AllocI
             var->second.type = allocation.type;
             var->second.allocTok = allocation.allocTok;
         }
-    } else if (allocation.status != VarInfo::NOALLOC) {
+    } else if (allocation.status != VarInfo::NOALLOC && allocation.status != VarInfo::OWNED) {
         alloctype[arg->varId()].status = VarInfo::DEALLOC;
         alloctype[arg->varId()].allocTok = tok;
     }
@@ -859,10 +859,17 @@ void CheckLeakAutoVar::functionCall(const Token *tokName, const Token *tokOpenin
     int argNr = 1;
     for (const Token *funcArg = tokFirstArg; funcArg; funcArg = funcArg->nextArgument()) {
         const Token* arg = funcArg;
-        if (mTokenizer->isCPP() && arg->str() == "new") {
-            arg = arg->next();
-            if (Token::simpleMatch(arg, "( std :: nothrow )"))
-                arg = arg->tokAt(5);
+        if (mTokenizer->isCPP()) {
+            int tokAdvance = 0;
+            if (arg->str() == "new")
+                tokAdvance = 1;
+            else if (Token::simpleMatch(arg, "* new"))
+                tokAdvance = 2;
+            if (tokAdvance > 0) {
+                arg = arg->tokAt(tokAdvance);
+                if (Token::simpleMatch(arg, "( std :: nothrow )"))
+                    arg = arg->tokAt(5);
+            }
         }
 
         // Skip casts

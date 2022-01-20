@@ -501,14 +501,26 @@ void simplecpp::TokenList::readfile(std::istream &istr, const std::string &filen
                 oldLastToken = cback();
                 const std::string lastline(lastLine());
                 if (lastline == "# file %str%") {
+                    const Token *strtok = cback();
+                    while (strtok->comment)
+                        strtok = strtok->previous;
                     loc.push(location);
-                    location.fileIndex = fileIndex(cback()->str().substr(1U, cback()->str().size() - 2U));
+                    location.fileIndex = fileIndex(strtok->str().substr(1U, strtok->str().size() - 2U));
                     location.line = 1U;
                 } else if (lastline == "# line %num%") {
-                    lineDirective(location.fileIndex, std::atol(cback()->str().c_str()), &location);
+                    const Token *numtok = cback();
+                    while (numtok->comment)
+                        numtok = numtok->previous;
+                    lineDirective(location.fileIndex, std::atol(numtok->str().c_str()), &location);
                 } else if (lastline == "# %num% %str%" || lastline == "# line %num% %str%") {
-                    lineDirective(fileIndex(replaceAll(cback()->str().substr(1U, cback()->str().size() - 2U),"\\\\","\\")),
-                                  std::atol(cback()->previous->str().c_str()), &location);
+                    const Token *strtok = cback();
+                    while (strtok->comment)
+                        strtok = strtok->previous;
+                    const Token *numtok = strtok->previous;
+                    while (numtok->comment)
+                        numtok = numtok->previous;
+                    lineDirective(fileIndex(replaceAll(strtok->str().substr(1U, strtok->str().size() - 2U),"\\\\","\\")),
+                                  std::atol(numtok->str().c_str()), &location);
                 }
                 // #endfile
                 else if (lastline == "# endfile" && !loc.empty()) {
@@ -1393,10 +1405,12 @@ namespace simplecpp {
         };
     private:
         /** Create new token where Token::macro is set for replaced tokens */
-        Token *newMacroToken(const TokenString &str, const Location &loc, bool replaced) const {
+        Token *newMacroToken(const TokenString &str, const Location &loc, bool replaced, const Token *expandedFromToken=NULL) const {
             Token *tok = new Token(str,loc);
             if (replaced)
                 tok->macro = nameTokDef->str();
+            if (expandedFromToken)
+                tok->setExpandedFrom(expandedFromToken, this);
             return tok;
         }
 
@@ -1504,8 +1518,11 @@ namespace simplecpp {
                                 expanded = true;
                             }
                         }
-                        if (!expanded)
+                        if (!expanded) {
                             tokens->push_back(new Token(*tok));
+                            if (tok->macro.empty() && (par > 0 || tok->str() != "("))
+                                tokens->back()->macro = name();
+                        }
                     }
 
                     if (tok->op == '(')
@@ -1609,7 +1626,14 @@ namespace simplecpp {
                     if (sameline(tok, tok->next) && tok->next && tok->next->op == '#' && tok->next->next && tok->next->next->op == '#') {
                         if (!sameline(tok, tok->next->next->next))
                             throw invalidHashHash(tok->location, name());
-                        output->push_back(newMacroToken(expandArgStr(tok, parametertokens2), loc, isReplaced(expandedmacros)));
+                        TokenList new_output(files);
+                        if (!expandArg(&new_output, tok, parametertokens2))
+                            output->push_back(newMacroToken(tok->str(), loc, isReplaced(expandedmacros), tok));
+                        else if (new_output.empty()) // placemarker token
+                            output->push_back(newMacroToken("", loc, isReplaced(expandedmacros)));
+                        else
+                            for (const Token *tok2 = new_output.cfront(); tok2; tok2 = tok2->next)
+                                output->push_back(newMacroToken(tok2->str(), loc, isReplaced(expandedmacros), tok2));
                         tok = tok->next;
                     } else {
                         tok = expandToken(output, loc, tok, macros, expandedmacros, parametertokens2);
@@ -1700,7 +1724,7 @@ namespace simplecpp {
         const Token *expandToken(TokenList *output, const Location &loc, const Token *tok, const std::map<TokenString,Macro> &macros, const std::set<TokenString> &expandedmacros, const std::vector<const Token*> &parametertokens) const {
             // Not name..
             if (!tok->name) {
-                output->push_back(newMacroToken(tok->str(), loc, true));
+                output->push_back(newMacroToken(tok->str(), loc, true, tok));
                 return tok->next;
             }
 
@@ -1724,14 +1748,14 @@ namespace simplecpp {
                     return recursiveExpandToken(output, temp, loc, tok, macros, expandedmacros2, parametertokens);
                 }
                 if (!sameline(tok, tok->next) || tok->next->op != '(') {
-                    output->push_back(newMacroToken(tok->str(), loc, true));
+                    output->push_back(newMacroToken(tok->str(), loc, true, tok));
                     return tok->next;
                 }
                 TokenList tokens(files);
                 tokens.push_back(new Token(*tok));
                 const Token *tok2 = appendTokens(&tokens, loc, tok->next, macros, expandedmacros, parametertokens);
                 if (!tok2) {
-                    output->push_back(newMacroToken(tok->str(), loc, true));
+                    output->push_back(newMacroToken(tok->str(), loc, true, tok));
                     return tok->next;
                 }
                 TokenList temp(files);
@@ -1769,7 +1793,7 @@ namespace simplecpp {
                 }
             }
 
-            output->push_back(newMacroToken(tok->str(), loc, true));
+            output->push_back(newMacroToken(tok->str(), loc, true, tok));
             return tok->next;
         }
 
@@ -1801,31 +1825,15 @@ namespace simplecpp {
                 return true;
             for (const Token *partok = parametertokens[argnr]->next; partok != parametertokens[argnr + 1U];) {
                 const std::map<TokenString, Macro>::const_iterator it = macros.find(partok->str());
-                if (it != macros.end() && (partok->str() == name() || expandedmacros.find(partok->str()) == expandedmacros.end()))
+                if (it != macros.end() && !partok->isExpandedFrom(&it->second) && (partok->str() == name() || expandedmacros.find(partok->str()) == expandedmacros.end()))
                     partok = it->second.expand(output, loc, partok, macros, expandedmacros);
                 else {
-                    output->push_back(newMacroToken(partok->str(), loc, isReplaced(expandedmacros)));
+                    output->push_back(newMacroToken(partok->str(), loc, isReplaced(expandedmacros), partok));
+                    output->back()->macro = partok->macro;
                     partok = partok->next;
                 }
             }
             return true;
-        }
-
-        /**
-         * Get string for token. If token is argument, the expanded string is returned.
-         * @param tok              The token
-         * @param parametertokens  parameters given when expanding this macro
-         * @return string
-         */
-        std::string expandArgStr(const Token *tok, const std::vector<const Token *> &parametertokens) const {
-            TokenList tokens(files);
-            if (expandArg(&tokens, tok, parametertokens)) {
-                std::string s;
-                for (const Token *tok2 = tokens.cfront(); tok2; tok2 = tok2->next)
-                    s += tok2->str();
-                return s;
-            }
-            return tok->str();
         }
 
         /**
@@ -2488,7 +2496,7 @@ long long simplecpp::characterLiteralToLL(const std::string& str)
                 // Assuming this is a UTF-8 encoded code point.
                 // This decoder may not completely validate the input.
                 // Noncharacters are neither rejected nor replaced.
-                
+
                 int additional_bytes;
                 if (value >= 0xf5)  // higher values would result in code points above 0x10ffff
                     throw std::runtime_error("assumed UTF-8 encoded source, but sequence is invalid");
@@ -2500,26 +2508,26 @@ long long simplecpp::characterLiteralToLL(const std::string& str)
                     additional_bytes = 1;
                 else
                     throw std::runtime_error("assumed UTF-8 encoded source, but sequence is invalid");
-                
+
                 value &= (1 << (6 - additional_bytes)) - 1;
 
                 while (additional_bytes--) {
-                    if(pos + 1 >= str.size())
+                    if (pos + 1 >= str.size())
                         throw std::runtime_error("assumed UTF-8 encoded source, but character literal ends unexpectedly");
-                    
+
                     unsigned char c = str[pos++];
-                    
+
                     if (((c >> 6) != 2)    // ensure c has form 0xb10xxxxxx
                         || (!value && additional_bytes == 1 && c < 0xa0)    // overlong 3-bytes encoding
                         || (!value && additional_bytes == 2 && c < 0x90))   // overlong 4-bytes encoding
                         throw std::runtime_error("assumed UTF-8 encoded source, but sequence is invalid");
-                    
+
                     value = (value << 6) | (c & ((1 << 7) - 1));
                 }
 
                 if (value >= 0xd800 && value <= 0xdfff)
                     throw std::runtime_error("assumed UTF-8 encoded source, but sequence is invalid");
-                
+
                 if ((utf8 && value > 0x7f) || (utf16 && value > 0xffff) || value > 0x10ffff)
                     throw std::runtime_error("code point too large");
             }
@@ -2810,7 +2818,7 @@ static bool preprocessToken(simplecpp::TokenList &output, const simplecpp::Token
     return true;
 }
 
-void simplecpp::preprocess(simplecpp::TokenList &output, const simplecpp::TokenList &rawtokens, std::vector<std::string> &files, std::map<std::string, simplecpp::TokenList *> &filedata, const simplecpp::DUI &dui, simplecpp::OutputList *outputList, std::list<simplecpp::MacroUsage> *macroUsage)
+void simplecpp::preprocess(simplecpp::TokenList &output, const simplecpp::TokenList &rawtokens, std::vector<std::string> &files, std::map<std::string, simplecpp::TokenList *> &filedata, const simplecpp::DUI &dui, simplecpp::OutputList *outputList, std::list<simplecpp::MacroUsage> *macroUsage, std::list<simplecpp::IfCond> *ifCond)
 {
     std::map<std::string, std::size_t> sizeOfType(rawtokens.sizeOfType);
     sizeOfType.insert(std::make_pair("char", sizeof(char)));
@@ -3125,7 +3133,17 @@ void simplecpp::preprocess(simplecpp::TokenList &output, const simplecpp::TokenL
                         tok = tmp->previous;
                     }
                     try {
-                        conditionIsTrue = (evaluate(expr, sizeOfType) != 0);
+                        if (ifCond) {
+                            std::string E;
+                            for (const simplecpp::Token *tok = expr.cfront(); tok; tok = tok->next)
+                                E += (E.empty() ? "" : " ") + tok->str();
+                            const long long result = evaluate(expr, sizeOfType);
+                            conditionIsTrue = (result != 0);
+                            ifCond->push_back(IfCond(rawtok->location, E, result));
+                        } else {
+                            const long long result = evaluate(expr, sizeOfType);
+                            conditionIsTrue = (result != 0);
+                        }
                     } catch (const std::exception &e) {
                         if (outputList) {
                             Output out(rawtok->location.files);

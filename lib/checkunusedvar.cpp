@@ -26,11 +26,8 @@
 #include "symboldatabase.h"
 #include "token.h"
 #include "tokenize.h"
-#include "valueflow.h"
 
 #include <algorithm>
-#include <cctype>
-#include <cstddef>
 #include <list>
 #include <set>
 #include <utility>
@@ -73,6 +70,7 @@ static bool isRaiiClass(const ValueType *valueType, bool cpp, bool defaultReturn
             return true;
         return defaultReturn;
 
+    case ValueType::Type::SMART_POINTER:
     case ValueType::Type::CONTAINER:
     case ValueType::Type::ITERATOR:
     case ValueType::Type::VOID:
@@ -115,8 +113,7 @@ public:
             _read(read),
             _write(write),
             _modified(modified),
-            _allocateMemory(allocateMemory) {
-        }
+            _allocateMemory(allocateMemory) {}
 
         /** variable is used.. set both read+write */
         void use() {
@@ -712,8 +709,8 @@ void CheckUnusedVar::checkFunctionVariableUsage_iterateScopes(const Scope* const
             else if (mTokenizer->isC() ||
                      i->typeEndToken()->isStandardType() ||
                      isRecordTypeWithoutSideEffects(i->type()) ||
-                     (i->isStlType() &&
-                      !Token::Match(i->typeStartToken()->tokAt(2), "lock_guard|unique_lock|shared_ptr|unique_ptr|auto_ptr|shared_lock")))
+                     mSettings->library.detectContainer(i->typeStartToken(), /*iterator*/ false) ||
+                     i->isStlType())
                 type = Variables::standard;
             if (type == Variables::none || isPartOfClassStructUnion(i->typeStartToken()))
                 continue;
@@ -731,7 +728,8 @@ void CheckUnusedVar::checkFunctionVariableUsage_iterateScopes(const Scope* const
                     break;
                 }
             }
-            if (i->isArray() && i->isClass()) // Array of class/struct members. Initialized by ctor.
+            if (i->isArray() && i->isClass() && // Array of class/struct members. Initialized by ctor except for std::array
+                !(i->isStlType() && i->valueType() && i->valueType()->containerTypeToken && i->valueType()->containerTypeToken->isStandardType()))
                 variables.write(i->declarationId(), i->nameToken());
             if (i->isArray() && Token::Match(i->nameToken(), "%name% [ %var% ]")) // Array index variable read.
                 variables.read(i->nameToken()->tokAt(2)->varId(), i->nameToken());
@@ -1150,9 +1148,6 @@ void CheckUnusedVar::checkFunctionVariableUsage()
     if (!mSettings->severity.isEnabled(Severity::style))
         return;
 
-    if (mSettings->clang)
-        return;
-
     // Parse all executing scopes..
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
 
@@ -1182,9 +1177,12 @@ void CheckUnusedVar::checkFunctionVariableUsage()
             }
             // not assignment/initialization/increment => continue
             const bool isAssignment = tok->isAssignmentOp() && tok->astOperand1();
-            const bool isInitialization = (Token::Match(tok, "%var% (") && tok->variable() && tok->variable()->nameToken() == tok);
+            const bool isInitialization = (Token::Match(tok, "%var% (|{") && tok->variable() && tok->variable()->nameToken() == tok);
             const bool isIncrementOrDecrement = (tok->tokType() == Token::Type::eIncDecOp);
             if (!isAssignment && !isInitialization && !isIncrementOrDecrement)
+                continue;
+
+            if (isInitialization && Token::Match(tok, "%var% { }")) // don't warn for trivial initialization
                 continue;
 
             if (isIncrementOrDecrement && tok->astParent() && precedes(tok, tok->astOperand1()))
@@ -1194,7 +1192,7 @@ void CheckUnusedVar::checkFunctionVariableUsage()
                 continue;
 
             if (tok->isName()) {
-                if (isRaiiClass(tok->valueType(), mTokenizer->isCPP(), true))
+                if (isRaiiClass(tok->valueType(), mTokenizer->isCPP(), false))
                     continue;
                 tok = tok->next();
             }
@@ -1225,6 +1223,8 @@ void CheckUnusedVar::checkFunctionVariableUsage()
                 op1tok = op1tok->astOperand1();
 
             const Variable *op1Var = op1tok ? op1tok->variable() : nullptr;
+            if (!op1Var && Token::Match(tok, "(|{") && tok->previous() && tok->previous()->variable())
+                op1Var = tok->previous()->variable();
             std::string bailoutTypeName;
             if (op1Var) {
                 if (op1Var->isReference() && op1Var->nameToken() != tok->astOperand1())
@@ -1280,8 +1280,8 @@ void CheckUnusedVar::checkFunctionVariableUsage()
                                     Severity::information,
                                     "checkLibraryCheckType",
                                     "--check-library: Provide <type-checks><unusedvar> configuration for " + bailoutTypeName);
-                        continue;
                     }
+                    continue;
                 }
 
                 // warn
@@ -1456,14 +1456,17 @@ void CheckUnusedVar::checkStructMemberUsage()
                 continue;
 
             // Check if the struct member variable is used anywhere in the file
-            std::string tmp(". " + var.name());
-            if (Token::findsimplematch(mTokenizer->tokens(), tmp.c_str(), tmp.size()))
-                continue;
-            tmp = (":: " + var.name());
-            if (Token::findsimplematch(mTokenizer->tokens(), tmp.c_str(), tmp.size()))
-                continue;
-
-            unusedStructMemberError(var.nameToken(), scope.className, var.name(), scope.type == Scope::eUnion);
+            bool use = false;
+            for (const Token *tok = mTokenizer->tokens(); tok; tok = tok->next()) {
+                if (tok->variable() != &var)
+                    continue;
+                if (tok != var.nameToken()) {
+                    use = true;
+                    break;
+                }
+            }
+            if (!use)
+                unusedStructMemberError(var.nameToken(), scope.className, var.name(), scope.type == Scope::eUnion);
         }
     }
 }
@@ -1479,7 +1482,7 @@ bool CheckUnusedVar::isRecordTypeWithoutSideEffects(const Type* type)
     // a type that has no side effects (no constructors and no members with constructors)
     /** @todo false negative: check constructors for side effects */
     const std::pair<std::map<const Type *,bool>::iterator,bool> found=mIsRecordTypeWithoutSideEffectsMap.insert(
-                std::pair<const Type *,bool>(type,false)); //Initialize with side effects for possible recursions
+        std::pair<const Type *,bool>(type,false));         //Initialize with side effects for possible recursions
     bool & withoutSideEffects = found.first->second;
     if (!found.second)
         return withoutSideEffects;
@@ -1521,7 +1524,7 @@ bool CheckUnusedVar::isRecordTypeWithoutSideEffects(const Type* type)
                     }
                     const Function* initValueFunc = valueToken->function();
                     if (initValueFunc && !isFunctionWithoutSideEffects(*initValueFunc, valueToken,
-                    std::list<const Function*> {})) {
+                                                                       std::list<const Function*> {})) {
                         return withoutSideEffects = false;
                     }
                 }
@@ -1575,7 +1578,7 @@ bool CheckUnusedVar::isEmptyType(const Type* type)
     // a type that has no variables and no constructor
 
     const std::pair<std::map<const Type *,bool>::iterator,bool> found=mIsEmptyTypeMap.insert(
-                std::pair<const Type *,bool>(type,false));
+        std::pair<const Type *,bool>(type,false));
     bool & emptyType=found.first->second;
     if (!found.second)
         return emptyType;
@@ -1597,7 +1600,7 @@ bool CheckUnusedVar::isEmptyType(const Type* type)
 }
 
 bool CheckUnusedVar::isFunctionWithoutSideEffects(const Function& func, const Token* functionUsageToken,
-        std::list<const Function*> checkedFuncs)
+                                                  std::list<const Function*> checkedFuncs)
 {
     // no body to analyze
     if (!func.hasBody()) {

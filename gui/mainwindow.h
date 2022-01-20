@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2020 Cppcheck team.
+ * Copyright (C) 2007-2021 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -58,8 +58,8 @@ public:
     MainWindow &operator=(const MainWindow &) = delete;
 
     /**
-      * List of checked platforms.
-      */
+     * List of checked platforms.
+     */
     Platforms mPlatforms;
 
     /**
@@ -234,10 +234,10 @@ protected slots:
     void editVariableContract(QString var);
 
     /** Delete contract for function */
-    void deleteFunctionContract(QString function);
+    void deleteFunctionContract(const QString& function);
 
     /** Edit constraints for variable */
-    void deleteVariableContract(QString var);
+    void deleteVariableContract(const QString& var);
 
 private:
 
@@ -254,11 +254,11 @@ private:
     void reAnalyzeSelected(QStringList files);
 
     /**
-      * @brief Analyze the project.
-      * @param projectFile Pointer to the project to analyze.
-      * @param checkLibrary Flag to indicate if the library should be checked.
-      * @param checkConfiguration Flag to indicate if the configuration should be checked.
-      */
+     * @brief Analyze the project.
+     * @param projectFile Pointer to the project to analyze.
+     * @param checkLibrary Flag to indicate if the library should be checked.
+     * @param checkConfiguration Flag to indicate if the configuration should be checked.
+     */
     void analyzeProject(const ProjectFile *projectFile, const bool checkLibrary = false, const bool checkConfiguration = false);
 
     /**
@@ -268,7 +268,7 @@ private:
     void setLanguage(const QString &code);
 
     /** @brief Event coming when application is about to close. */
-    virtual void closeEvent(QCloseEvent *event);
+    void closeEvent(QCloseEvent *event) override;
 
     /**
      * @brief Helper function to toggle all show error menu items
@@ -373,9 +373,9 @@ private:
     void loadResults(const QString &selectedFile, const QString &sourceDirectory);
 
     /**
-    * @brief Load last project results to the GUI.
-    * @return Returns true if last results was loaded
-    */
+     * @brief Load last project results to the GUI.
+     * @return Returns true if last results was loaded
+     */
     bool loadLastResults();
 
     /**

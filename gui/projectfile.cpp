@@ -788,7 +788,7 @@ void ProjectFile::setLibraries(const QStringList &libraries)
     mLibraries = libraries;
 }
 
-void ProjectFile::setFunctionContract(QString function, QString expects)
+void ProjectFile::setFunctionContract(const QString& function, const QString& expects)
 {
     mFunctionContracts[function.toStdString()] = expects.toStdString();
 }
@@ -818,7 +818,7 @@ void ProjectFile::setVSConfigurations(const QStringList &vsConfigs)
     mVsConfigurations = vsConfigs;
 }
 
-void ProjectFile::setWarningTags(std::size_t hash, QString tags)
+void ProjectFile::setWarningTags(std::size_t hash, const QString& tags)
 {
     if (tags.isEmpty())
         mWarningTags.erase(hash);
@@ -1035,7 +1035,6 @@ bool ProjectFile::write(const QString &filename)
         for (const QString &tag: tags) {
             xmlWriter.writeStartElement(CppcheckXml::TagWarningsElementName);
             xmlWriter.writeAttribute(CppcheckXml::TagAttributeName, tag);
-            QStringList warnings;
             for (const auto& wt: mWarningTags) {
                 if (wt.second == tag) {
                     xmlWriter.writeStartElement(CppcheckXml::WarningElementName);
@@ -1070,7 +1069,7 @@ QStringList ProjectFile::fromNativeSeparators(const QStringList &paths)
 {
     QStringList ret;
     foreach (const QString &path, paths)
-        ret << QDir::fromNativeSeparators(path);
+    ret << QDir::fromNativeSeparators(path);
     return ret;
 }
 
@@ -1156,9 +1155,9 @@ QString ProjectFile::getAddonFilePath(QString filesDir, const QString &addon)
     QStringList searchPaths;
     searchPaths << filesDir << (filesDir + "addons/") << (filesDir + "../addons/")
 #ifdef FILESDIR
-                << (QLatin1String(FILESDIR) + "/addons/")
+        << (QLatin1String(FILESDIR) + "/addons/")
 #endif
-                ;
+    ;
 
     foreach (QString path, searchPaths) {
         QString f = path + addon + ".py";

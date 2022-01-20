@@ -27,8 +27,7 @@
 
 class TestGarbage : public TestFixture {
 public:
-    TestGarbage() : TestFixture("TestGarbage") {
-    }
+    TestGarbage() : TestFixture("TestGarbage") {}
 
 private:
     Settings settings;
@@ -242,6 +241,10 @@ private:
         TEST_CASE(garbageCode213); // #8758
         TEST_CASE(garbageCode214);
         TEST_CASE(garbageCode215); // daca@home script with extension .c
+        TEST_CASE(garbageCode216); // #7884
+        TEST_CASE(garbageCode217); // #10011
+        TEST_CASE(garbageCode218); // #8763
+        TEST_CASE(garbageCode219); // #10101
 
         TEST_CASE(garbageCodeFuzzerClientMode1); // test cases created with the fuzzer client, mode 1
 
@@ -259,6 +262,7 @@ private:
         TEST_CASE(nonGarbageCode1); // #8346
     }
 
+#define checkCodeInternal(code, filename) checkCodeInternal_(code, filename, __FILE__, __LINE__)
     std::string checkCode(const std::string &code, bool cpp = true) {
         // double the tests - run each example as C as well as C++
         const char* const filename = cpp ? "test.cpp" : "test.c";
@@ -267,19 +271,18 @@ private:
         // run alternate check first. It should only ensure stability - so we catch exceptions here.
         try {
             checkCodeInternal(code, alternatefilename);
-        } catch (const InternalError&) {
-        }
+        } catch (const InternalError&) {}
 
         return checkCodeInternal(code, filename);
     }
 
-    std::string checkCodeInternal(const std::string &code, const char* filename) {
+    std::string checkCodeInternal_(const std::string &code, const char* filename, const char* file, int line) {
         errout.str("");
 
         // tokenize..
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
-        tokenizer.tokenize(istr, filename);
+        ASSERT_LOC(tokenizer.tokenize(istr, filename), file, line);
 
         // call all "runChecks" in all registered Check classes
         for (std::list<Check *>::const_iterator it = Check::instances().begin(); it != Check::instances().end(); ++it) {
@@ -289,11 +292,12 @@ private:
         return tokenizer.tokens()->stringifyList(false, false, false, true, false, nullptr, nullptr);
     }
 
-    std::string getSyntaxError(const char code[]) {
+#define getSyntaxError(code) getSyntaxError_(code, __FILE__, __LINE__)
+    std::string getSyntaxError_(const char code[], const char* file, int line) {
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         try {
-            tokenizer.tokenize(istr, "test.cpp");
+            ASSERT_LOC(tokenizer.tokenize(istr, "test.cpp"), file, line);
         } catch (InternalError& e) {
             if (e.id != "syntaxError")
                 return "";
@@ -310,7 +314,7 @@ private:
             errout.str("");
             Tokenizer tokenizer(&settings, this);
             std::istringstream istr(code);
-            tokenizer.tokenize(istr, "test.cpp");
+            ASSERT(tokenizer.tokenize(istr, "test.cpp"));
             ASSERT_EQUALS("", errout.str());
         }
     }
@@ -358,7 +362,7 @@ private:
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         try {
-            tokenizer.tokenize(istr, "test.cpp");
+            ASSERT(tokenizer.tokenize(istr, "test.cpp"));
             assertThrowFail(__FILE__, __LINE__);
         } catch (InternalError& e) {
             ASSERT_EQUALS("syntax error", e.errorMessage);
@@ -392,14 +396,14 @@ private:
             errout.str("");
             Tokenizer tokenizer(&settings, this);
             std::istringstream istr(code);
-            tokenizer.tokenize(istr, "test.c");
+            ASSERT(tokenizer.tokenize(istr, "test.c"));
             ASSERT_EQUALS("", errout.str());
         }
         {
             errout.str("");
             Tokenizer tokenizer(&settings, this);
             std::istringstream istr(code);
-            tokenizer.tokenize(istr, "test.cpp");
+            ASSERT(tokenizer.tokenize(istr, "test.cpp"));
             ASSERT_EQUALS("[test.cpp:1]: (information) The code 'class x y {' is not handled. You can use -I or --include to add handling of this code.\n", errout.str());
         }
     }
@@ -950,9 +954,9 @@ private:
     }
 
     void garbageCode121() { // #2585
-        ASSERT_THROW(checkCode("abcdef?""?<"
-                               "123456?""?>"
-                               "+?""?="), InternalError);
+        ASSERT_THROW(checkCode("abcdef?" "?<"
+                               "123456?" "?>"
+                               "+?" "?="), InternalError);
     }
 
     void garbageCode122() { // #6303
@@ -1580,7 +1584,7 @@ private:
 
     // #8752
     void garbageCode199() {
-        checkCode("d f(){e n00e0[]n00e0&""0+f=0}");
+        checkCode("d f(){e n00e0[]n00e0&" "0+f=0}");
     }
 
     // #8757
@@ -1668,6 +1672,31 @@ private:
         ASSERT_THROW(checkCode("a = [1,2,3];"), InternalError);
     }
 
+    void garbageCode216() { // #7884
+        checkCode("template<typename> struct A {};\n"
+                  "template<typename...T> struct A<T::T...> {}; \n"
+                  "A<int> a;");
+    }
+
+    void garbageCode217() { // #10011
+        ASSERT_THROW(checkCode("void f() {\n"
+                               "    auto p;\n"
+                               "    if (g(p)) {}\n"
+                               "    assert();\n"
+                               "}"), InternalError);
+    }
+
+    void garbageCode218() { // #8763
+        checkCode("d f(){t n0000 const[]n0000+0!=n0000,(0)}"); // don't crash
+    }
+    void garbageCode219() { // #10101
+        checkCode("typedef void (*func) (addr) ;\n"
+                  "void bar(void) {\n"
+                  "    func f;\n"
+                  "    f & = (func)42;\n"
+                  "}\n"); // don't crash
+    }
+
     void syntaxErrorFirstToken() {
         ASSERT_THROW(checkCode("&operator(){[]};"), InternalError); // #7818
         ASSERT_THROW(checkCode("*(*const<> (size_t); foo) { } *(*const (size_t)() ; foo) { }"), InternalError); // #6858
@@ -1740,12 +1769,13 @@ private:
 
     void cliCode() {
         // #8913
-        ASSERT_THROW(checkCode("public ref class LibCecSharp : public CecCallbackMethods {\n"
-                               "array<CecAdapter ^> ^ FindAdapters(String ^ path) {}\n"
-                               "bool GetDeviceInformation(String ^ port, LibCECConfiguration ^configuration, uint32_t timeoutMs) {\n"
-                               "bool bReturn(false);\n"
-                               "}\n"
-                               "};"), InternalError);
+        ASSERT_NO_THROW(checkCode(
+                            "public ref class LibCecSharp : public CecCallbackMethods {\n"
+                            "array<CecAdapter ^> ^ FindAdapters(String ^ path) {}\n"
+                            "bool GetDeviceInformation(String ^ port, LibCECConfiguration ^configuration, uint32_t timeoutMs) {\n"
+                            "bool bReturn(false);\n"
+                            "}\n"
+                            "};"));
     }
 
     void enumTrailingComma() {

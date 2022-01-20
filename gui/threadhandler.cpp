@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2020 Cppcheck team.
+ * Copyright (C) 2007-2021 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -92,8 +92,15 @@ void ThreadHandler::check(const Settings &settings)
         mRunningThreadCount = mResults.getFileCount();
     }
 
+    QStringList addonsAndTools = mAddonsAndTools;
+    for (const std::string& addon: settings.addons) {
+        QString s = QString::fromStdString(addon);
+        if (!addonsAndTools.contains(s))
+            addonsAndTools << s;
+    }
+
     for (int i = 0; i < mRunningThreadCount; i++) {
-        mThreads[i]->setAddonsAndTools(mAddonsAndTools);
+        mThreads[i]->setAddonsAndTools(addonsAndTools);
         mThreads[i]->setSuppressions(mSuppressions);
         mThreads[i]->setClangIncludePaths(mClangIncludePaths);
         mThreads[i]->setDataDir(mDataDir);

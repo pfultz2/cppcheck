@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2017 Cppcheck team.
+ * Copyright (C) 2007-2021 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -60,9 +60,9 @@ void ApplicationDialog::browse()
     filter += tr("Executable files (*.exe);;All files(*.*)");
 #endif // Q_OS_WIN
     QString selectedFile = QFileDialog::getOpenFileName(this,
-                           tr("Select viewer application"),
-                           getPath(SETTINGS_LAST_APP_PATH),
-                           filter);
+                                                        tr("Select viewer application"),
+                                                        getPath(SETTINGS_LAST_APP_PATH),
+                                                        filter);
 
     if (!selectedFile.isEmpty()) {
         setPath(SETTINGS_LAST_APP_PATH, selectedFile);

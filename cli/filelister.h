@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2017 Cppcheck team.
+ * Copyright (C) 2007-2021 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -81,9 +81,9 @@ public:
     static bool isDirectory(const std::string &path);
 
     /**
-      * @brief Check if the given path is a file and if it exists?
-      * @return true if path points to file and the file exists.
-      */
+     * @brief Check if the given path is a file and if it exists?
+     * @return true if path points to file and the file exists.
+     */
     static bool fileExists(const std::string &path);
 };
 

@@ -26,8 +26,7 @@
 
 class TestIO : public TestFixture {
 public:
-    TestIO() : TestFixture("TestIO") {
-    }
+    TestIO() : TestFixture("TestIO") {}
 
 private:
     Settings settings;
@@ -45,11 +44,13 @@ private:
         TEST_CASE(fileIOwithoutPositioning);
         TEST_CASE(seekOnAppendedFile);
         TEST_CASE(fflushOnInputStream);
+        TEST_CASE(incompatibleFileOpen);
 
         TEST_CASE(testScanf1); // Scanf without field limiters
         TEST_CASE(testScanf2);
         TEST_CASE(testScanf3); // #3494
         TEST_CASE(testScanf4); // #ticket 2553
+        TEST_CASE(testScanf5); // #10632
 
         TEST_CASE(testScanfArgument);
         TEST_CASE(testPrintfArgument);
@@ -74,9 +75,11 @@ private:
         TEST_CASE(testPrintfTypeAlias1);
         TEST_CASE(testPrintfAuto); // #8992
         TEST_CASE(testPrintfParenthesis); // #8489
+        TEST_CASE(testStdDistance); // #10304
     }
 
-    void check(const char* code, bool inconclusive = false, bool portability = false, Settings::PlatformType platform = Settings::Unspecified, bool onlyFormatStr = false) {
+#define check(...) check_(__FILE__, __LINE__, __VA_ARGS__)
+    void check_(const char* file, int line, const char* code, bool inconclusive = false, bool portability = false, Settings::PlatformType platform = Settings::Unspecified, bool onlyFormatStr = false) {
         // Clear the error buffer..
         errout.str("");
 
@@ -91,7 +94,7 @@ private:
         // Tokenize..
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
-        tokenizer.tokenize(istr, "test.cpp");
+        ASSERT_LOC(tokenizer.tokenize(istr, "test.cpp"), file, line);
 
         // Check..
         CheckIO checkIO(&tokenizer, &settings, this);
@@ -714,7 +717,13 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
-
+    void incompatibleFileOpen() {
+        check("void foo() {\n"
+              "    FILE *f1 = fopen(\"tmp\", \"wt\");\n"
+              "    FILE *f2 = fopen(\"tmp\", \"rt\");\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:3]: (warning) The file '\"tmp\"' is opened for read and write access at the same time on different streams\n", errout.str());
+    }
 
 
     void testScanf1() {
@@ -766,23 +775,32 @@ private:
         ASSERT_EQUALS("[test.cpp:4]: (error) Width 70 given in format string (no. 1) is larger than destination buffer 'str[8]', use %7s to prevent overflowing it.\n", errout.str());
     }
 
+    void testScanf5() { // #10632
+        check("char s1[42], s2[42];\n"
+              "void test() {\n"
+              "    scanf(\"%42s%42[a-z]\", s1, s2);\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Width 42 given in format string (no. 1) is larger than destination buffer 's1[42]', use %41s to prevent overflowing it.\n"
+                      "[test.cpp:3]: (error) Width 42 given in format string (no. 2) is larger than destination buffer 's2[42]', use %41[a-z] to prevent overflowing it.\n", errout.str());
+    }
 
-#define TEST_SCANF_CODE(format, type)\
+
+#define TEST_SCANF_CODE(format, type) \
     "void f(){" type " x; scanf(\"" format "\", &x);}"
 
-#define TEST_SCANF_ERR(format, formatStr, type)\
+#define TEST_SCANF_ERR(format, formatStr, type) \
     "[test.cpp:1]: (warning) " format " in format string (no. 1) requires '" formatStr " *' but the argument type is '" type " *'.\n"
 
-#define TEST_SCANF_ERR_AKA(format, formatStr, type, akaType)\
+#define TEST_SCANF_ERR_AKA(format, formatStr, type, akaType) \
     "[test.cpp:1]: (portability) " format " in format string (no. 1) requires '" formatStr " *' but the argument type is '" type " * {aka " akaType " *}'.\n"
 
-#define TEST_PRINTF_CODE(format, type)\
+#define TEST_PRINTF_CODE(format, type) \
     "void f(" type " x){printf(\"" format "\", x);}"
 
-#define TEST_PRINTF_ERR(format, requiredType, actualType)\
+#define TEST_PRINTF_ERR(format, requiredType, actualType) \
     "[test.cpp:1]: (warning) " format " in format string (no. 1) requires '" requiredType "' but the argument type is '" actualType "'.\n"
 
-#define TEST_PRINTF_ERR_AKA(format, requiredType, actualType, akaType)\
+#define TEST_PRINTF_ERR_AKA(format, requiredType, actualType, akaType) \
     "[test.cpp:1]: (portability) " format " in format string (no. 1) requires '" requiredType "' but the argument type is '" actualType " {aka " akaType "}'.\n"
 
     void testFormatStrNoWarn(const char *filename, unsigned int linenr, const char* code) {
@@ -1526,6 +1544,8 @@ private:
         TEST_SCANF_NOWARN("%zd", "ssize_t", "ssize_t");
         TEST_SCANF_WARN_AKA("%zd", "ssize_t", "ptrdiff_t", "signed long", "signed long long");
 
+        TEST_SCANF_WARN_AKA("%zi", "ssize_t", "size_t", "unsigned long", "unsigned long long");
+
         TEST_SCANF_WARN("%tu", "unsigned ptrdiff_t", "bool");
         TEST_SCANF_WARN("%tu", "unsigned ptrdiff_t", "char");
         TEST_SCANF_WARN("%tu", "unsigned ptrdiff_t", "signed char");
@@ -2093,6 +2113,11 @@ private:
             ASSERT_EQUALS("[test.cpp:3]: (warning) %s in format string (no. 1) requires a 'char *' but the argument type is 'const char *'.\n"
                           "[test.cpp:3]: (warning) scanf() without field width limits can crash with huge input data.\n", errout.str());
         }
+
+        check("void f() {\n" // #7038
+              "    scanf(\"%i\", \"abc\" + 1);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:2]: (warning) %i in format string (no. 1) requires 'int *' but the argument type is 'const char *'.\n", errout.str());
     }
 
     void testPrintfArgument() {
@@ -3698,6 +3723,9 @@ private:
         TEST_PRINTF_WARN_AKA("%jx", "uintmax_t", "std::intptr_t", "signed long", "signed long long");
         TEST_PRINTF_WARN_AKA("%jx", "uintmax_t", "std::uintptr_t", "unsigned long", "unsigned long long");
 
+        TEST_PRINTF_WARN_AKA("%zd", "ssize_t", "size_t", "unsigned long", "unsigned long long");
+        TEST_PRINTF_WARN_AKA("%zi", "ssize_t", "size_t", "unsigned long", "unsigned long long");
+
         TEST_PRINTF_WARN("%zu", "size_t", "bool");
         TEST_PRINTF_WARN("%zu", "size_t", "char");
         TEST_PRINTF_WARN("%zu", "size_t", "signed char");
@@ -4598,9 +4626,12 @@ private:
 
         check("void f() {\n"
               "  char str[8];\n"
-              "  scanf_s(\"%8c\", str, sizeof(str))\n"
-              "  scanf_s(\"%9c\", str, sizeof(str))\n"
-              "}\n", false, false, Settings::Win32A);
+              "  scanf_s(\"%8c\", str, sizeof(str));\n"
+              "  scanf_s(\"%9c\", str, sizeof(str));\n"
+              "}\n",
+              false,
+              false,
+              Settings::Win32A);
         ASSERT_EQUALS("[test.cpp:4]: (error) Width 9 given in format string (no. 1) is larger than destination buffer 'str[8]', use %8c to prevent overflowing it.\n", errout.str());
 
         check("void foo() {\n"
@@ -4818,6 +4849,14 @@ private:
               "    printf(\"%f\", ((a >> 24) + 1) & 0xff);\n"
               "}");
         ASSERT_EQUALS("[test.cpp:2]: (warning) %f in format string (no. 1) requires 'double' but the argument type is 'signed int'.\n", errout.str());
+    }
+
+    void testStdDistance() { // #10304
+        check("void foo(const std::vector<int>& IO, const int* pio) {\n"
+              "const auto Idx = std::distance(&IO.front(), pio);\n"
+              "printf(\"Idx = %td\", Idx);\n"
+              "}", /*inconclusive*/ false, /*portability*/ true);
+        ASSERT_EQUALS("", errout.str());
     }
 };
 
