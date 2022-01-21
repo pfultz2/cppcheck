@@ -28,10 +28,11 @@ class Settings;
 
 struct AST {
     static AST parse(Token* tok, const Settings* settings);
-    AST(Token* tok=nullptr);
+    AST(Token* tok=nullptr, Token* next=nullptr);
     AST(Token* tok, AST op1);
     AST(Token* tok, AST op1, AST op2);
     bool failed() const;
+    bool empty() const;
     bool isPrefixUnary() const;
     bool isPostfixUnary() const;
     bool isBinary() const;
