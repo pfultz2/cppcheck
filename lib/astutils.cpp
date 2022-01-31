@@ -2350,6 +2350,9 @@ static bool isExpressionChangedAt(const F& getExprTok,
             aliased = true;
         if (!aliased) {
             aliased = findAstNode(getExprTok(), [&](const Token* childTok) {
+                // static int n = 10000;
+                // assert(n > 0);
+                // n--;
                 for (const ValueFlow::Value& val : tok->values()) {
                     if (val.isImpossible())
                         continue;

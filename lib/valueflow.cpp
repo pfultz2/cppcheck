@@ -110,6 +110,7 @@
 #include <functional>
 #include <initializer_list>
 #include <iosfwd>
+#include <iostream>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -3388,6 +3389,51 @@ static void valueFlowLifetimeConstructor(Token *tok,
                                          ErrorLogger *errorLogger,
                                          const Settings *settings);
 
+static const Scope* getVarScope(const Variable* var)
+{
+    if (!var)
+        return nullptr;
+    if (var->scope())
+        return var->scope();
+    if (var->typeStartToken())
+        return var->typeStartToken()->scope();
+    return nullptr;
+}
+
+static const Token* getEndOfExprScope(const Token* tok, const Scope* defaultScope = nullptr)
+{
+    const Scope* scope = nullptr;
+    bool global = false;
+    visitAstNodes(tok, [&](const Token* child) {
+        if (const Variable* var = child->variable()) {
+            if (var->isGlobal() || var->isNamespace())
+                global = true;
+            if (var->isLocal() || var->isArgument()) {
+                const Scope* localScope = getVarScope(var);
+                if (localScope && localScope->isExecutable() && localScope->bodyEnd) {
+                    if (!scope || precedes(localScope->bodyEnd, scope->bodyEnd))
+                        scope = localScope;
+                }
+            }
+
+        }
+        return ChildrenToVisit::op1_and_op2;
+    });
+    if (!scope)
+        scope = defaultScope;
+    if (!scope) {
+        scope = tok->scope();
+        // If its global then pick the function scope
+        if (global) {
+            while (scope->isLocal())
+                scope = scope->nestedIn;
+        }
+    }
+    if (scope)
+        return scope->bodyEnd;
+    return nullptr;
+}
+
 static const Token* getEndOfVarScope(const Token* tok, const std::vector<const Variable*>& vars)
 {
     const Token* endOfVarScope = nullptr;
@@ -5627,7 +5673,13 @@ struct ConditionHandler {
                 }
                 if (values.empty())
                     return;
-                forward(after, scope->bodyEnd, cond.vartok, values, tokenlist, settings);
+                std::cout << "Start forward after: " << tok->expressionString() << std::endl;
+                auto endOfExprScope = getEndOfExprScope(cond.vartok, scope);
+                std::cout << "getEndOfExprScope(cond.vartok, scope): " << (endOfExprScope ? endOfExprScope->index() : -1) << std::endl;
+                std::cout << "scope->bodyEnd: " << (scope->bodyEnd ? scope->bodyEnd->index() : -1) << std::endl;
+                std::cout << "tok: " << tok->index() << std::endl;
+                forward(after, getEndOfExprScope(cond.vartok, scope), cond.vartok, values, tokenlist, settings);
+                std::cout << "Finish forward after: " << tok->expressionString() << std::endl;
             }
         });
     }
@@ -5640,7 +5692,9 @@ static void valueFlowCondition(const ValuePtr<ConditionHandler>& handler,
                                ErrorLogger* errorLogger,
                                const Settings* settings)
 {
+    printf("before\n");
     handler->beforeCondition(tokenlist, symboldatabase, errorLogger, settings);
+    printf("after\n");
     handler->afterCondition(tokenlist, symboldatabase, errorLogger, settings);
 }
 
@@ -7913,63 +7967,69 @@ static std::size_t getTotalValues(TokenList *tokenlist)
     return n;
 }
 
+#define TRACE(...) { \
+    printf("start: %s\n", #__VA_ARGS__); \
+    __VA_ARGS__; \
+    printf("finish: %s\n", #__VA_ARGS__); \
+}
+
 void ValueFlow::setValues(TokenList *tokenlist, SymbolDatabase* symboldatabase, ErrorLogger *errorLogger, const Settings *settings)
 {
     for (Token *tok = tokenlist->front(); tok; tok = tok->next())
         tok->clearValueFlow();
 
-    valueFlowEnumValue(symboldatabase, settings);
-    valueFlowNumber(tokenlist);
-    valueFlowString(tokenlist);
-    valueFlowArray(tokenlist);
-    valueFlowUnknownFunctionReturn(tokenlist, settings);
-    valueFlowGlobalConstVar(tokenlist, settings);
-    valueFlowEnumValue(symboldatabase, settings);
-    valueFlowNumber(tokenlist);
-    valueFlowGlobalStaticVar(tokenlist, settings);
-    valueFlowPointerAlias(tokenlist);
-    valueFlowLifetime(tokenlist, symboldatabase, errorLogger, settings);
-    valueFlowSymbolic(tokenlist, symboldatabase);
-    valueFlowBitAnd(tokenlist);
-    valueFlowSameExpressions(tokenlist);
-    valueFlowConditionExpressions(tokenlist, symboldatabase, errorLogger, settings);
+    TRACE(valueFlowEnumValue(symboldatabase, settings));
+    TRACE(valueFlowNumber(tokenlist));
+    TRACE(valueFlowString(tokenlist));
+    TRACE(valueFlowArray(tokenlist));
+    TRACE(valueFlowUnknownFunctionReturn(tokenlist, settings));
+    TRACE(valueFlowGlobalConstVar(tokenlist, settings));
+    TRACE(valueFlowEnumValue(symboldatabase, settings));
+    TRACE(valueFlowNumber(tokenlist));
+    TRACE(valueFlowGlobalStaticVar(tokenlist, settings));
+    TRACE(valueFlowPointerAlias(tokenlist));
+    TRACE(valueFlowLifetime(tokenlist, symboldatabase, errorLogger, settings));
+    TRACE(valueFlowSymbolic(tokenlist, symboldatabase));
+    TRACE(valueFlowBitAnd(tokenlist));
+    TRACE(valueFlowSameExpressions(tokenlist));
+    TRACE(valueFlowConditionExpressions(tokenlist, symboldatabase, errorLogger, settings));
 
     std::size_t values = 0;
     std::size_t n = 4;
     while (n > 0 && values < getTotalValues(tokenlist)) {
         values = getTotalValues(tokenlist);
-        valueFlowImpossibleValues(tokenlist, settings);
-        valueFlowSymbolicIdentity(tokenlist);
-        valueFlowSymbolicAbs(tokenlist, symboldatabase);
-        valueFlowCondition(SymbolicConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings);
-        valueFlowSymbolicInfer(tokenlist, symboldatabase);
-        valueFlowArrayBool(tokenlist);
-        valueFlowRightShift(tokenlist, settings);
-        valueFlowAfterAssign(tokenlist, symboldatabase, errorLogger, settings);
-        valueFlowAfterSwap(tokenlist, symboldatabase, errorLogger, settings);
-        valueFlowCondition(SimpleConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings);
-        valueFlowInferCondition(tokenlist, settings);
-        valueFlowSwitchVariable(tokenlist, symboldatabase, errorLogger, settings);
-        valueFlowForLoop(tokenlist, symboldatabase, errorLogger, settings);
-        valueFlowSubFunction(tokenlist, symboldatabase, errorLogger, settings);
-        valueFlowFunctionReturn(tokenlist, errorLogger);
-        valueFlowLifetime(tokenlist, symboldatabase, errorLogger, settings);
-        valueFlowFunctionDefaultParameter(tokenlist, symboldatabase, settings);
-        valueFlowUninit(tokenlist, symboldatabase, settings);
+        TRACE(valueFlowImpossibleValues(tokenlist, settings));
+        TRACE(valueFlowSymbolicIdentity(tokenlist));
+        TRACE(valueFlowSymbolicAbs(tokenlist, symboldatabase));
+        TRACE(valueFlowCondition(SymbolicConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings));
+        TRACE(valueFlowSymbolicInfer(tokenlist, symboldatabase));
+        TRACE(valueFlowArrayBool(tokenlist));
+        TRACE(valueFlowRightShift(tokenlist, settings));
+        TRACE(valueFlowAfterAssign(tokenlist, symboldatabase, errorLogger, settings));
+        TRACE(valueFlowAfterSwap(tokenlist, symboldatabase, errorLogger, settings));
+        TRACE(valueFlowCondition(SimpleConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings));
+        TRACE(valueFlowInferCondition(tokenlist, settings));
+        TRACE(valueFlowSwitchVariable(tokenlist, symboldatabase, errorLogger, settings));
+        TRACE(valueFlowForLoop(tokenlist, symboldatabase, errorLogger, settings));
+        TRACE(valueFlowSubFunction(tokenlist, symboldatabase, errorLogger, settings));
+        TRACE(valueFlowFunctionReturn(tokenlist, errorLogger));
+        TRACE(valueFlowLifetime(tokenlist, symboldatabase, errorLogger, settings));
+        TRACE(valueFlowFunctionDefaultParameter(tokenlist, symboldatabase, settings));
+        TRACE(valueFlowUninit(tokenlist, symboldatabase, settings));
         if (tokenlist->isCPP()) {
-            valueFlowAfterMove(tokenlist, symboldatabase, settings);
-            valueFlowSmartPointer(tokenlist, errorLogger, settings);
-            valueFlowIterators(tokenlist, settings);
-            valueFlowCondition(IteratorConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings);
-            valueFlowIteratorInfer(tokenlist, settings);
-            valueFlowContainerSize(tokenlist, symboldatabase, errorLogger, settings);
-            valueFlowCondition(ContainerConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings);
+            TRACE(valueFlowAfterMove(tokenlist, symboldatabase, settings));
+            TRACE(valueFlowSmartPointer(tokenlist, errorLogger, settings));
+            TRACE(valueFlowIterators(tokenlist, settings));
+            TRACE(valueFlowCondition(IteratorConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings));
+            TRACE(valueFlowIteratorInfer(tokenlist, settings));
+            TRACE(valueFlowContainerSize(tokenlist, symboldatabase, errorLogger, settings));
+            TRACE(valueFlowCondition(ContainerConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings));
         }
-        valueFlowSafeFunctions(tokenlist, symboldatabase, settings);
+        TRACE(valueFlowSafeFunctions(tokenlist, symboldatabase, settings));
         n--;
     }
 
-    valueFlowDynamicBufferSize(tokenlist, symboldatabase, settings);
+    TRACE(valueFlowDynamicBufferSize(tokenlist, symboldatabase, settings));
 }
 
 ValueFlow::Value ValueFlow::Value::unknown()
