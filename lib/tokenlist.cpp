@@ -1039,7 +1039,8 @@ static void compilePrecedence3(Token *&tok, AST_state& state)
                 state.inArrayAssignment = 1;
             compilePrecedence3(tok, state);
             state.inArrayAssignment = inArrayAssignment;
-            compileUnaryOp(castTok, state, nullptr);
+            castTok = castTok->next();
+            compileUnaryOp(castTok, state, compileExpression);
         } else if (state.cpp && Token::Match(tok, "new %name%|::|(")) {
             Token* newtok = tok;
             tok = tok->next();
