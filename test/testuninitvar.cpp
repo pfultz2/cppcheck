@@ -3549,7 +3549,7 @@ private:
                         "}");
         ASSERT_EQUALS("", errout.str());
 
-        valueFlowUninit("int f(int x) {\n"
+        valueFlowUninit("int f(int x, int y) {\n"
                         "    int a;\n"
                         "    if (x)\n"
                         "        a = y;\n"

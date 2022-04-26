@@ -2004,7 +2004,7 @@ private:
         ASSERT_EQUALS(false, testValueOfX(code, 8U, "\"\"", ValueFlow::Value::ValueType::TOK));
         ASSERT_EQUALS(false, testValueOfX(code, 9U, "\"\"", ValueFlow::Value::ValueType::TOK));
 
-        code = "void f() {\n" // #7599
+        code = "void f(bool a) {\n" // #7599
                "  t *x = 0;\n"
                "  y = (a ? 1 : x\n" // <- x is 0
                "       && x->y ? 1 : 2);" // <- x is not 0
@@ -2012,7 +2012,7 @@ private:
         ASSERT_EQUALS(true, testValueOfX(code, 3U, 0));
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
 
-        code = "void f() {\n" // #7599
+        code = "void f(bool a) {\n" // #7599
                "  t *x = 0;\n"
                "  y = (a ? 1 : !x\n" // <- x is 0
                "       || x->y ? 1 : 2);" // <- x is not 0
@@ -2021,14 +2021,14 @@ private:
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
 
         // if/else
-        code = "void f() {\n"
+        code = "void f(bool condition) {\n"
                "    int x = 123;\n"
                "    if (condition) return;\n"
-               "    a = 2 + x;\n"
+               "    int a = 2 + x;\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 123));
 
-        code = "void f() {\n"
+        code = "void f(bool condition) {\n"
                "    int x = 1;\n"
                "    if (condition) x = 2;\n"
                "    a = 2 + x;\n"
@@ -2036,11 +2036,11 @@ private:
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 1));
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 2));
 
-        code = "void f() {\n"
+        code = "void f(bool condition1, bool condition2) {\n"
                "    int x = 123;\n"
                "    if (condition1) x = 456;\n"
                "    if (condition2) x = 789;\n"
-               "    a = 2 + x;\n" // <- either assignment "x=123" is redundant or x can be 123 here.
+               "    int a = 2 + x;\n" // <- either assignment "x=123" is redundant or x can be 123 here.
                "}";
         TODO_ASSERT_EQUALS(true, false, testValueOfX(code, 5U, 123));
 
@@ -2054,15 +2054,15 @@ private:
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 123));
 
-        code = "void f() {\n"
+        code = "void f(bool condition1) {\n"
                "    int x = 1;\n"
                "    if (condition1) x = 2;\n"
                "    else return;\n"
-               "    a = 2 + x;\n"
+               "    int a = 2 + x;\n"
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 5U, 1));
 
-        code = "void f(){\n"
+        code = "void f(int a){\n"
                "    int x = 0;\n"
                "    if (a>=0) { x = getx(); }\n"
                "    if (x==0) { return; }\n"
@@ -2108,11 +2108,11 @@ private:
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 33));
 
-        code = "void f() {\n"
+        code = "void f(int a) {\n"
                "    int x = 32;\n"
                "    if (a==1) { z=x+12; }\n"
                "    if (a==2) { z=x+32; }\n"
-               "    z = x;\n"
+               "    int z = x;\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 3U, 32));
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 32));
@@ -2123,14 +2123,14 @@ private:
                "    if (!x) {\n"
                "        x = getx();\n"
                "    }\n"
-               "    y = x;\n"
+               "    int y = x;\n"
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 6U, 0));
 
         code = "void f(int y) {\n" // alias
                "  int x = y;\n"
                "  if (y == 54) {}\n"
-               "  else { a = x; }\n"
+               "  else { int a = x; }\n"
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 54));
 
@@ -2140,7 +2140,7 @@ private:
                "        x = NULL;\n"
                "        return 1;\n"
                "    }\n"
-               "    a = x->y;\n"
+               "    int a = x->y;\n"
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 7U, 0));
 
@@ -3497,9 +3497,9 @@ private:
     void valueFlowForwardTernary() {
         const char *code;
 
-        code = "int f() {\n"
+        code = "int f(bool b) {\n"
                "  int x=5;\n"
-               "  a = b ? init1(&x) : init2(&x);\n"
+               "  int a = b ? init1(&x) : init2(&x);\n"
                "  return 1 + x;\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 3U, 5));

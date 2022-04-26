@@ -1423,6 +1423,8 @@ void SymbolDatabase::createSymbolDatabaseIncompleteVars()
             continue;
         if (Token::Match(tok, "%var%"))
             continue;
+        if (tok->varId() > 0)
+            continue;
         if (tok->type())
             continue;
         if (Token::Match(tok->next(), "::|.|(|:|%var%"))
@@ -1443,6 +1445,9 @@ void SymbolDatabase::createSymbolDatabaseIncompleteVars()
         if (Token::simpleMatch(tok->previous(), "goto"))
             continue;
         if (cppkeywords.count(tok->str()) > 0)
+            continue;
+        // TODO: Use library to configure this
+        if (Token::simpleMatch(tok->tokAt(-2), "std ::") && Token::Match(tok, "cout|wcout|cerr|wcerr|clog|wclog"))
             continue;
         if (mSettings->standards.cpp >= Standards::CPP20 && cpp20keywords.count(tok->str()) > 0)
             continue;

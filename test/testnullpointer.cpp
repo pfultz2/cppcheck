@@ -1196,7 +1196,7 @@ private:
                   "    if (!p || *p) { }\n"
                   "}", true);
             ASSERT_EQUALS("", errout.str());
-            check("void f() {\n"
+            check("void f(bool x) {\n"
                   "    int *p = NULL;\n"
                   "    if (x)\n"
                   "        p = q;\n"
@@ -3483,7 +3483,7 @@ private:
                       "[test.cpp:5]: (error) Null pointer dereference\n"
                       , errout.str());
 
-        check("void f(std::string s1, const std::string& s2, const std::string* s3) {\n"
+        check("void f(std::string s1, const std::string& s2, const std::string* s3, bool x) {\n"
               "    void* p = 0;\n"
               "    if (x) { return; }\n"
               "    foo(s1 == p);\n"

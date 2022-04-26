@@ -3018,7 +3018,7 @@ private:
               "}");
         ASSERT_EQUALS("[test.cpp:8] -> [test.cpp:8]: (style) Condition '8<a' is always false\n", errout.str());
 
-        check("void f() {\n" // #4842
+        check("void f(int a) {\n" // #4842
               "  int x = 0;\n"
               "  if (a) { return; }\n" // <- this is just here to fool simplifyKnownVariabels
               "  if (!x) {}\n"
