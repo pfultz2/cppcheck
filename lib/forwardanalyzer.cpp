@@ -23,6 +23,7 @@
 #include "config.h"
 #include "errortypes.h"
 #include "mathlib.h"
+#include "programmemory.h"
 #include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
@@ -389,6 +390,57 @@ struct ForwardTraversal {
         return bail;
     }
 
+    Progress executeLoop(Token* endBlock, const Token* initTok, Token* condTok, Token* stepTok) {
+        if (!initTok || !condTok || !stepTok)
+            return Progress::Continue;
+        std::vector<const Token*> loopVars;
+        visitAstNodes(condTok, [&](const Token* tok) {
+            if (tok->exprId() > 0) {
+                if (analyzer->analyze(tok, Analyzer::Direction::Forward).isRead())
+                    return ChildrenToVisit::none;
+                if (tok->varId() > 0){
+                    loopVars.push_back(tok);
+                    return ChildrenToVisit::none;
+                }
+            }
+            return ChildrenToVisit::op1_and_op2;
+        });
+        if (std::any_of(loopVars.begin(), loopVars.end(), [&](const Token* tok) {
+            return isExpressionChanged(tok, endBlock->link(), endBlock, settings, true);
+        }))
+            return Progress::Continue;
+        ProgramMemory pm;
+        ProgramExecution pe;
+        pe.settings = settings;
+        pe.fallback = [&](const Token* tok) {
+            std::vector<MathLib::bigint> r = analyzer->evaluate(Analyzer::Evaluate::Integral, tok);
+            if (r.empty())
+                return ValueFlow::Value::unknown();
+            return ValueFlow::Value(r.front());
+        };
+        if (execute(initTok, pm, pe).isUninitValue())
+            return Progress::Continue;
+        // Execute up to a 100 times
+        for(int i = 0; i < 100; ++i) {
+            // Check condition
+            ValueFlow::Value v = execute(condTok, pm, pe);
+            if (!v.isIntValue())
+                return Break();
+            if (v.isIntValue() && v.intvalue == 0)
+                return Progress::Skip;
+            if (updateRecursive(condTok) == Progress::Break)
+                return Break();
+            // TODO: Inject loop variables
+            if (updateInnerLoop(endBlock, stepTok, condTok) == Progress::Break)
+                return Break();
+            if (updateRecursive(stepTok) == Progress::Break)
+                return Break();
+            if (execute(stepTok, pm, pe).isUninitValue())
+                return Break();
+        }
+        return Progress::Break;
+    }
+
     bool reentersLoop(Token* endBlock, const Token* condTok, const Token* stepTok) {
         if (!condTok)
             return true;
@@ -487,6 +539,12 @@ struct ForwardTraversal {
         // condition is false, we don't enter the loop
         if (checkElse)
             return Progress::Continue;
+        // Execute loop for incremental changes
+        if (!exit && allAnalysis.isIncremental() && !condAnalysis.isModified()) {
+            Progress p = executeLoop(endBlock, initTok, condTok, stepTok);
+            if (p != Progress::Continue)
+                return p;
+        }
         if (checkThen || isDoWhile) {
             // Since we are re-entering the loop then assume the condition is true to update the state
             if (exit)

@@ -118,6 +118,13 @@ private:
     Map mValues;
 };
 
+struct ProgramExecution {
+    const Settings* settings = nullptr;
+    std::function<ValueFlow::Value(const Token* tok)> fallback = nullptr;
+};
+
+ValueFlow::Value execute(const Token* expr, ProgramMemory& pm, const ProgramExecution& pe);
+
 void programMemoryParseCondition(ProgramMemory& pm, const Token* tok, const Token* endTok, const Settings* settings, bool then);
 
 struct ProgramMemoryState {
