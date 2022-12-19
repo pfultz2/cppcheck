@@ -307,8 +307,7 @@ struct ReverseTraversal {
                 else if (elseAction.isModified() && !thenAction.isModified())
                     analyzer->assume(condTok, !hasElse);
                 // Bail if one of the branches are read to avoid FPs due to over constraints
-                else if (thenAction.isIdempotent() || elseAction.isIdempotent() || thenAction.isRead() ||
-                         elseAction.isRead())
+                else if (thenAction.isIdempotent() || elseAction.isIdempotent())
                     break;
                 if (thenAction.isInvalid() || elseAction.isInvalid())
                     break;
