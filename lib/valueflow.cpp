@@ -701,6 +701,7 @@ static void setTokenValue(Token* tok,
             }
             setTokenValue(next, std::move(v), settings);
         }
+
         return;
     }
 
@@ -2211,7 +2212,7 @@ class SelectValueFromVarIdMapRange {
         using pointer = value_type *;
         using reference = value_type &;
 
-        explicit Iterator(const M::const_iterator & it)
+        explicit Iterator(const M::const_iterator &it)
             : mIt(it) {}
 
         reference operator*() const {
@@ -4813,8 +4814,7 @@ static void valueFlowLifetime(TokenList *tokenlist, SymbolDatabase* /*db*/, Erro
         // container lifetimes
         else if (astIsContainer(tok)) {
             Token * parent = astParentSkipParens(tok);
-            if (!Token::Match(parent, ". %name% (") &&
-                !Token::simpleMatch(parent, "("))
+            if (!Token::Match(parent, ". %name% ("))
                 continue;
 
             ValueFlow::Value master;
@@ -4824,12 +4824,8 @@ static void valueFlowLifetime(TokenList *tokenlist, SymbolDatabase* /*db*/, Erro
             if (astIsIterator(parent->tokAt(2))) {
                 master.errorPath.emplace_back(parent->tokAt(2), "Iterator to container is created here.");
                 master.lifetimeKind = ValueFlow::Value::LifetimeKind::Iterator;
-            } else if (astIsIterator(parent)) {
-                master.errorPath.emplace_back(parent, "Iterator to container is created here.");
-                master.lifetimeKind = ValueFlow::Value::LifetimeKind::Iterator;
-            }
-            else if ((astIsPointer(parent->tokAt(2)) && !isContainerOfPointers(tok->valueType()->containerTypeToken, settings)) ||
-                     Token::Match(parent->next(), "data|c_str")) {
+            } else if ((astIsPointer(parent->tokAt(2)) && !isContainerOfPointers(tok->valueType()->containerTypeToken, settings)) ||
+                       Token::Match(parent->next(), "data|c_str")) {
                 master.errorPath.emplace_back(parent->tokAt(2), "Pointer to container is created here.");
                 master.lifetimeKind = ValueFlow::Value::LifetimeKind::Object;
             } else {
@@ -4866,10 +4862,7 @@ static void valueFlowLifetime(TokenList *tokenlist, SymbolDatabase* /*db*/, Erro
                     ValueFlow::Value value = master;
                     value.tokvalue = rt.token;
                     value.errorPath.insert(value.errorPath.begin(), rt.errors.cbegin(), rt.errors.cend());
-                    if (Token::simpleMatch(parent, "("))
-                        setTokenValue(parent, value, settings);
-                    else
-                        setTokenValue(parent->tokAt(2), value, settings);
+                    setTokenValue(parent->tokAt(2), std::move(value), settings);
 
                     if (!rt.token->variable()) {
                         LifetimeStore ls = LifetimeStore{
@@ -8131,19 +8124,6 @@ static void valueFlowSmartPointer(TokenList *tokenlist, ErrorLogger * errorLogge
     }
 }
 
-static Library::Container::Yield findIteratorYield(Token* tok, const Token** ftok, const Settings *settings)
-{
-    auto yield = astContainerYield(tok, ftok);
-    if (*ftok)
-        return yield;
-
-    if (!tok->astParent())
-        return yield;
-
-    //begin/end free functions
-    return astFunctionYield(tok->astParent()->previous(), settings, ftok);
-}
-
 static void valueFlowIterators(TokenList *tokenlist, const Settings *settings)
 {
     for (Token *tok = tokenlist->front(); tok; tok = tok->next()) {
@@ -8154,7 +8134,7 @@ static void valueFlowIterators(TokenList *tokenlist, const Settings *settings)
         if (!astIsContainer(tok))
             continue;
         const Token* ftok = nullptr;
-        const Library::Container::Yield yield = findIteratorYield(tok, &ftok, settings);
+        const Library::Container::Yield yield = astContainerYield(tok, &ftok);
         if (ftok) {
             ValueFlow::Value v(0);
             v.setKnown();
