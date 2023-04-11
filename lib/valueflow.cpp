@@ -126,6 +126,9 @@
 #include <unordered_set>
 #include <vector>
 
+#include <iostream>
+#include <chrono>
+
 static void bailoutInternal(const std::string& type, TokenList *tokenlist, ErrorLogger *errorLogger, const Token *tok, const std::string &what, const std::string &file, int line, std::string function)
 {
     if (function.find("operator") != std::string::npos)
@@ -7279,6 +7282,11 @@ bool productParams(const std::unordered_map<Key, std::list<ValueFlow::Value>>& v
         });
     }
 
+    if (args.size() > 8) {
+        std::cout << args.size() << std::endl;
+        args.resize(4);
+    }
+
     for (const auto& arg:args) {
         if (arg.empty())
             continue;
@@ -9112,66 +9120,53 @@ void ValueFlow::setValues(TokenList *tokenlist, SymbolDatabase* symboldatabase, 
         }
     }
 
+#define RUN(...) \
+    if (std::time(nullptr) < stopTime) \
+        __VA_ARGS__;
+
+// #define RUN(...) { \
+//     auto start = std::chrono::high_resolution_clock::now(); \
+//     if (std::time(nullptr) < stopTime) \
+//         __VA_ARGS__; \
+//     auto finish = std::chrono::high_resolution_clock::now(); \
+//     std::cout << #__VA_ARGS__ << ": " << std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count() << std::endl; \
+// }
+
     std::size_t values = 0;
-    std::size_t n = settings->valueFlowMaxIterations;
+    // std::size_t n = settings->valueFlowMaxIterations;
+    std::size_t n = 1;
     while (n > 0 && values != getTotalValues(tokenlist)) {
         values = getTotalValues(tokenlist);
 
-        if (std::time(nullptr) < stopTime)
-            valueFlowImpossibleValues(tokenlist, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowSymbolicOperators(symboldatabase, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowCondition(SymbolicConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions);
-        if (std::time(nullptr) < stopTime)
-            valueFlowSymbolicInfer(symboldatabase, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowArrayBool(tokenlist, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowArrayElement(tokenlist, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowRightShift(tokenlist, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowAfterAssign(tokenlist, symboldatabase, errorLogger, settings, skippedFunctions);
-        if (std::time(nullptr) < stopTime)
-            valueFlowAfterSwap(tokenlist, symboldatabase, errorLogger, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowCondition(SimpleConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions);
-        if (std::time(nullptr) < stopTime)
-            valueFlowInferCondition(tokenlist, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowSwitchVariable(tokenlist, symboldatabase, errorLogger, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowForLoop(tokenlist, symboldatabase, errorLogger, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowSubFunction(tokenlist, symboldatabase, errorLogger, *settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowFunctionReturn(tokenlist, errorLogger, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowLifetime(tokenlist, symboldatabase, errorLogger, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowFunctionDefaultParameter(tokenlist, symboldatabase, settings);
-        if (std::time(nullptr) < stopTime)
-            valueFlowUninit(tokenlist, symboldatabase, settings);
+            RUN(valueFlowImpossibleValues(tokenlist, settings));
+            RUN(valueFlowSymbolicOperators(symboldatabase, settings));
+            RUN(valueFlowCondition(SymbolicConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions));
+            RUN(valueFlowSymbolicInfer(symboldatabase, settings));
+            RUN(valueFlowArrayBool(tokenlist, settings));
+            RUN(valueFlowArrayElement(tokenlist, settings));
+            RUN(valueFlowRightShift(tokenlist, settings));
+            RUN(valueFlowAfterAssign(tokenlist, symboldatabase, errorLogger, settings, skippedFunctions));
+            RUN(valueFlowAfterSwap(tokenlist, symboldatabase, errorLogger, settings));
+            RUN(valueFlowCondition(SimpleConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions));
+            RUN(valueFlowInferCondition(tokenlist, settings));
+            RUN(valueFlowSwitchVariable(tokenlist, symboldatabase, errorLogger, settings));
+            RUN(valueFlowForLoop(tokenlist, symboldatabase, errorLogger, settings));
+            RUN(valueFlowSubFunction(tokenlist, symboldatabase, errorLogger, *settings));
+            RUN(valueFlowFunctionReturn(tokenlist, errorLogger, settings));
+            RUN(valueFlowLifetime(tokenlist, symboldatabase, errorLogger, settings));
+            RUN(valueFlowFunctionDefaultParameter(tokenlist, symboldatabase, settings));
+            RUN(valueFlowUninit(tokenlist, symboldatabase, settings));
 
         if (tokenlist->isCPP()) {
-            if (std::time(nullptr) < stopTime)
-                valueFlowAfterMove(tokenlist, symboldatabase, settings);
-            if (std::time(nullptr) < stopTime)
-                valueFlowSmartPointer(tokenlist, errorLogger, settings);
-            if (std::time(nullptr) < stopTime)
-                valueFlowIterators(tokenlist, settings);
-            if (std::time(nullptr) < stopTime)
-                valueFlowCondition(IteratorConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions);
-            if (std::time(nullptr) < stopTime)
-                valueFlowIteratorInfer(tokenlist, settings);
-            if (std::time(nullptr) < stopTime)
-                valueFlowContainerSize(tokenlist, symboldatabase, errorLogger, settings, skippedFunctions);
-            if (std::time(nullptr) < stopTime)
-                valueFlowCondition(ContainerConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions);
+                RUN(valueFlowAfterMove(tokenlist, symboldatabase, settings));
+                RUN(valueFlowSmartPointer(tokenlist, errorLogger, settings));
+                RUN(valueFlowIterators(tokenlist, settings));
+                RUN(valueFlowCondition(IteratorConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions));
+                RUN(valueFlowIteratorInfer(tokenlist, settings));
+                RUN(valueFlowContainerSize(tokenlist, symboldatabase, errorLogger, settings, skippedFunctions));
+                RUN(valueFlowCondition(ContainerConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions));
         }
-        if (std::time(nullptr) < stopTime)
-            valueFlowSafeFunctions(tokenlist, symboldatabase, settings);
+            RUN(valueFlowSafeFunctions(tokenlist, symboldatabase, settings));
         n--;
     }
 
