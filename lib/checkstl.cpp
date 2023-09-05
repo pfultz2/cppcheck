@@ -2775,30 +2775,36 @@ namespace {
         {
             if (!valid())
                 return "";
+            if(varsChanged.empty())
+                return "";
             bool loopVarChanged = isLoopVarChanged();
-            if (!loopVarChanged && varsChanged.empty()) {
+            if (!loopVarChanged) {
                 if (hasGotoOrBreak())
                     return "";
-                bool alwaysTrue = true;
-                bool alwaysFalse = true;
                 auto hasReturn = [](const Token* tok) {
                     return Token::simpleMatch(tok, "return");
                 };
-                findTokens(hasReturn, [&](const Token* tok) {
-                    const Token* returnTok = tok->astOperand1();
-                    if (!returnTok || !returnTok->hasKnownIntValue() || !astIsBool(returnTok)) {
-                        alwaysTrue = false;
-                        alwaysFalse = false;
-                        return;
-                    }
-                    (returnTok->values().front().intvalue ? alwaysTrue : alwaysFalse) &= true;
-                    (returnTok->values().front().intvalue ? alwaysFalse : alwaysTrue) &= false;
-                });
-                if (alwaysTrue == alwaysFalse)
-                    return "";
-                if (alwaysTrue)
-                    return "std::any_of";
-                return "std::all_of or std::none_of";
+                if(findToken(hasReturn)) {
+                    bool alwaysTrue = true;
+                    bool alwaysFalse = true;
+                    findTokens(hasReturn, [&](const Token* tok) {
+                        const Token* returnTok = tok->astOperand1();
+                        if (!returnTok || !returnTok->hasKnownIntValue() || !astIsBool(returnTok)) {
+                            alwaysTrue = false;
+                            alwaysFalse = false;
+                            return;
+                        }
+                        (returnTok->values().front().intvalue ? alwaysTrue : alwaysFalse) &= true;
+                        (returnTok->values().front().intvalue ? alwaysFalse : alwaysTrue) &= false;
+                    });
+                    if (alwaysTrue == alwaysFalse)
+                        return "";
+                    if (alwaysTrue)
+                        return "std::any_of";
+                    return "std::all_of or std::none_of";
+                }
+            } else {
+                return "std::transform";
             }
             return "";
         }
