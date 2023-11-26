@@ -44,6 +44,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <queue>
 #include <sstream> // IWYU pragma: keep
 #include <stack>
 #include <string>
@@ -1563,6 +1564,135 @@ static bool isExpression(const Token* tok)
     return true;
 }
 
+template <class Iterator, class Output, class Predicate>
+void groupBy(Iterator start, Iterator last, Output out, Predicate pred)
+{
+    while(start != last)
+    {
+        auto it = std::partition(start, last, [&](auto&& x) { return pred(x, *start); });
+        out(start, it);
+        start = it;
+    }
+}
+
+struct ExprIdGraph
+{
+    std::map<nonneg int, std::vector<Token*>> usages;
+    std::unordered_map<nonneg int, const Token*> references;
+
+    using usageIterator = std::vector<Token*>::const_iterator;
+
+    const Token* followReference(Token* tok)
+    {
+        if (tok->varId() == 0)
+            return tok;
+        auto it = references.find(tok->varId());
+        if (it != references.end())
+            return it->second;
+        const Token* ref = followReferences(tok);
+        if(!ref)
+            ref = tok;
+        references[tok->varId()] = ref;
+        return ref;
+    }
+
+    void setExprIdForVar(Token* tok, nonneg int id = 0)
+    {
+        if (id > 0) {
+            setExprId(tok, id);
+        } else {
+            const Token* ref = followReference(tok);
+            assert(ref->exprId() > 0);
+            setExprId(tok, ref->exprId());
+        }
+        assert(tok->exprId() > 0);
+    }
+
+    void setExprId(Token* tok, nonneg int exprid)
+    {
+        tok->exprId(exprid);
+        // Dont record usage of variable declaration
+        if(tok->variable() && tok->variable()->nameToken() == tok)
+            return;
+        usages[exprid].push_back(tok);
+    }
+
+    void updateExprId(nonneg int oldId, nonneg int newId)
+    {
+        if (oldId == newId)
+            return;
+        auto it = usages.find(oldId);
+        if (it == usages.end())
+            return;
+        auto& uses = usages[newId];
+        uses.insert(uses.end(), it->second.begin(), it->second.end());
+        usages.erase(it);
+    }
+
+    std::queue<nonneg int> findTerminals() const
+    {
+        std::queue<nonneg int> result;
+        for(const auto& p:usages) {
+            if (p.second.empty())
+                continue;
+            nonneg int id = p.first;
+            const Token* tok = p.second.front();
+            if((tok->astOperand1() && tok->astOperand1()->exprId() != 0) || (tok->astOperand2() && tok->astOperand2()->exprId() != 0))
+                continue;
+            result.push(id);
+        }
+        return result;
+    }
+
+    static std::string getParentName(const Token* tok)
+    {
+        if(!tok->astParent())
+            return "";
+        return tok->astParent()->str();
+    }
+
+    template<class F>
+    void getUsageGroups(nonneg int exprid, F f) const
+    {
+        auto uses = usages.at(exprid);
+        if(uses.size() < 2)
+            return;
+        groupBy(uses.begin(), uses.end(), f, [](const Token* tok1, const Token* tok2) {
+            return getParentName(tok1) == getParentName(tok2);
+        });
+    }
+
+    template<class F>
+    void getLikelyMatches(nonneg int exprid, F f) const
+    {
+        getUsageGroups(exprid, [&](usageIterator start, usageIterator last) {
+            for(auto it=start;it!=last;it++) {
+                const Token* tok1 = *it;
+                const Token* parent1 = tok1->astParent();
+                if (!parent1)
+                    continue;
+                std::for_each(it, last, [&](const Token* tok2) {
+                    const Token* parent2 = tok2->astParent();
+                    if (!parent2)
+                        return;
+                    if(parent1->exprId() == parent2->exprId())
+                        return;
+                    f(parent1, parent2);
+                });
+            }
+        });
+    }
+
+    void markUniqueExpressions() const {
+        for(const auto& p:usages) {
+            if(p.second.size() != 1)
+                continue;
+            Token* tok = p.second.front();
+            tok->setUniqueExprId();
+        }
+    }
+};
+
 static std::string getIncompleteNameID(const Token* tok)
 {
     std::string result = tok->str() + "@";
@@ -1612,6 +1742,7 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
 
     for (const Scope * scope : exprScopes) {
         nonneg int thisId = 0;
+        ExprIdGraph graph;
         std::unordered_map<std::string, std::vector<Token*>> exprs;
 
         std::unordered_map<std::string, nonneg int> unknownIds;
@@ -1634,16 +1765,16 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
                 sid = unknownIds.at(name);
             }
             assert(sid > 0);
-            tok->exprId(sid);
+            graph.setExprIdForVar(tok, sid);
         }
 
         // Assign IDs
         for (Token* tok = const_cast<Token*>(scope->bodyStart); tok != scope->bodyEnd; tok = tok->next()) {
             if (tok->varId() > 0) {
-                tok->exprId(tok->varId());
+                graph.setExprIdForVar(tok);
             } else if (isExpression(tok)) {
                 exprs[tok->str()].push_back(tok);
-                tok->exprId(id++);
+                graph.setExprId(tok, id++);
 
                 if (id == std::numeric_limits<nonneg int>::max() / 4) {
                     throw InternalError(nullptr, "Ran out of expression ids.", InternalError::INTERNAL);
@@ -1651,49 +1782,77 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
             } else if (isCPP() && Token::simpleMatch(tok, "this")) {
                 if (thisId == 0)
                     thisId = id++;
-                tok->exprId(thisId);
+                graph.setExprIdForVar(tok, thisId);
             }
         }
 
         // Apply CSE
-        for (const auto& p:exprs) {
-            const std::vector<Token*>& tokens = p.second;
-            const std::size_t N = tokens.size();
-            for (std::size_t i = 0; i < N; ++i) {
-                Token* const tok1 = tokens[i];
-                for (std::size_t j = i + 1; j < N; ++j) {
-                    Token* const tok2 = tokens[j];
-                    if (tok1->exprId() == tok2->exprId())
-                        continue;
-                    if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
-                        continue;
-                    nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
-                    tok1->exprId(cid);
-                    tok2->exprId(cid);
-                }
-            }
+        std::queue<nonneg int> exprQueue;
+        while (!exprQueue.empty()) {
+            nonneg int eid = exprQueue.front();
+            exprQueue.pop();
+            graph.getLikelyMatches(eid, [&](const Token* tok1, const Token* tok2) {
+                if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
+                    return;
+                nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
+                graph.updateExprId(tok1->exprId(), cid);
+                graph.updateExprId(tok2->exprId(), cid);
+                exprQueue.push(cid);
+            });
         }
+        // for(nonneg int exprid:graph.terminals) {
+        //     graph.getUsageGroups(exprid, [&](ExprIdGraph::usageIterator start, ExprIdGraph::usageIterator last) {
+        //         std::for_each(start, last, [&](Token* tok1) {
+        //             std::for_each(start, last, [&](Token* tok2) {
+        //                 if (tok1->exprId() == tok2->exprId())
+        //                     return;
+        //                 if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
+        //                     return;
+        //                 nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
+
+        //             });
+        //         });
+        //     });
+        // }
+        // for (const auto& p:exprs) {
+        //     const std::vector<Token*>& tokens = p.second;
+        //     const std::size_t N = tokens.size();
+        //     for (std::size_t i = 0; i < N; ++i) {
+        //         Token* const tok1 = tokens[i];
+        //         for (std::size_t j = i + 1; j < N; ++j) {
+        //             Token* const tok2 = tokens[j];
+        //             if (tok1->exprId() == tok2->exprId())
+        //                 continue;
+        //             if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
+        //                 continue;
+        //             nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
+        //             tok1->exprId(cid);
+        //             tok2->exprId(cid);
+        //         }
+        //     }
+        // }
         // Mark expressions that are unique
-        std::unordered_map<nonneg int, Token*> exprMap;
-        for (Token* tok = const_cast<Token*>(scope->bodyStart); tok != scope->bodyEnd; tok = tok->next()) {
-            if (tok->exprId() == 0)
-                continue;
-            auto p = exprMap.emplace(tok->exprId(), tok);
-            // Already exists so set it to null
-            if (!p.second) {
-                p.first->second = nullptr;
-            }
-        }
-        for (const auto& p : exprMap) {
-            if (!p.second)
-                continue;
-            if (p.second->variable()) {
-                const Variable* var = p.second->variable();
-                if (var->nameToken() != p.second)
-                    continue;
-            }
-            p.second->setUniqueExprId();
-        }
+        graph.markUniqueExpressions();
+        // std::unordered_map<nonneg int, Token*> exprMap;
+        // for (Token* tok = const_cast<Token*>(scope->bodyStart); tok != scope->bodyEnd; tok = tok->next()) {
+        //     if (tok->exprId() == 0)
+        //         continue;
+        //     auto p = exprMap.emplace(tok->exprId(), tok);
+        //     // Already exists so set it to null
+        //     if (!p.second) {
+        //         p.first->second = nullptr;
+        //     }
+        // }
+        // for (const auto& p : exprMap) {
+        //     if (!p.second)
+        //         continue;
+        //     if (p.second->variable()) {
+        //         const Variable* var = p.second->variable();
+        //         if (var->nameToken() != p.second)
+        //             continue;
+        //     }
+        //     p.second->setUniqueExprId();
+        // }
     }
 }
 
