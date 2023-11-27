@@ -1807,7 +1807,6 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
         std::queue<nonneg int> exprQueue;
         std::vector<Token*> nonVarTerminals;
         graph.findTerminals([&](Token* tok) {
-            std::cout << "Terminal: " << tok->expressionString() << std::endl;
             if(tok->varId() == 0)
                 nonVarTerminals.push_back(tok);
             else
