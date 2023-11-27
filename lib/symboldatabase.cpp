@@ -1836,59 +1836,8 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
                 exprQueue.push(cid);
             });
         }
-        // for(nonneg int exprid:graph.terminals) {
-        //     graph.getUsageGroups(exprid, [&](ExprIdGraph::usageIterator start, ExprIdGraph::usageIterator last) {
-        //         std::for_each(start, last, [&](Token* tok1) {
-        //             std::for_each(start, last, [&](Token* tok2) {
-        //                 if (tok1->exprId() == tok2->exprId())
-        //                     return;
-        //                 if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
-        //                     return;
-        //                 nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
-
-        //             });
-        //         });
-        //     });
-        // }
-        // for (const auto& p:exprs) {
-        //     const std::vector<Token*>& tokens = p.second;
-        //     const std::size_t N = tokens.size();
-        //     for (std::size_t i = 0; i < N; ++i) {
-        //         Token* const tok1 = tokens[i];
-        //         for (std::size_t j = i + 1; j < N; ++j) {
-        //             Token* const tok2 = tokens[j];
-        //             if (tok1->exprId() == tok2->exprId())
-        //                 continue;
-        //             if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
-        //                 continue;
-        //             nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
-        //             tok1->exprId(cid);
-        //             tok2->exprId(cid);
-        //         }
-        //     }
-        // }
         // Mark expressions that are unique
         graph.markUniqueExpressions();
-        // std::unordered_map<nonneg int, Token*> exprMap;
-        // for (Token* tok = const_cast<Token*>(scope->bodyStart); tok != scope->bodyEnd; tok = tok->next()) {
-        //     if (tok->exprId() == 0)
-        //         continue;
-        //     auto p = exprMap.emplace(tok->exprId(), tok);
-        //     // Already exists so set it to null
-        //     if (!p.second) {
-        //         p.first->second = nullptr;
-        //     }
-        // }
-        // for (const auto& p : exprMap) {
-        //     if (!p.second)
-        //         continue;
-        //     if (p.second->variable()) {
-        //         const Variable* var = p.second->variable();
-        //         if (var->nameToken() != p.second)
-        //             continue;
-        //     }
-        //     p.second->setUniqueExprId();
-        // }
     }
 }
 
