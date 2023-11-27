@@ -1712,6 +1712,52 @@ struct ExprIdGraph
     }
 };
 
+static bool isSameExprId(bool cpp, const Token* tok1, const Token* tok2, const Library& library)
+{
+    if(!tok1 && !tok2)
+        return true;
+    if(!tok1 || !tok2)
+        return false;
+    if (cpp) {
+        if (tok1->str() == "." && tok1->astOperand1() && tok1->astOperand1()->str() == "this")
+            tok1 = tok1->astOperand2();
+        if (tok2->str() == "." && tok2->astOperand1() && tok2->astOperand1()->str() == "this")
+            tok2 = tok2->astOperand2();
+    }
+    if(tok1->exprId() == 0 || tok2->exprId() == 0)
+        return isSameExpression(cpp, true, tok1, tok2, library, false, false);
+    if(tok1->exprId() == tok2->exprId())
+        return true;
+    if(tok1->str() != tok2->str())
+        return false;
+    if(Token::Match(tok1, "++|--"))
+        return false;
+
+    bool noncommutativeEquals =
+        isSameExprId(cpp, tok1->astOperand1(), tok2->astOperand1(), library);
+    noncommutativeEquals = noncommutativeEquals &&
+                           isSameExprId(cpp, tok1->astOperand2(), tok2->astOperand2(), library);
+
+    if (noncommutativeEquals)
+        return true;
+
+    // in c++, a+b might be different to b+a, depending on the type of a and b
+    if (cpp && tok1->str() == "+" && tok1->isBinaryOp()) {
+        const ValueType* vt1 = tok1->astOperand1()->valueType();
+        const ValueType* vt2 = tok1->astOperand2()->valueType();
+        if (!(vt1 && (vt1->type >= ValueType::VOID || vt1->pointer) && vt2 && (vt2->type >= ValueType::VOID || vt2->pointer)))
+            return false;
+    }
+
+    const bool commutative = tok1->isBinaryOp() && Token::Match(tok1, "%or%|%oror%|+|*|&|&&|^|==|!=");
+    bool commutativeEquals = commutative &&
+                             isSameExprId(cpp, tok1->astOperand2(), tok2->astOperand1(), library);
+    commutativeEquals = commutativeEquals &&
+                        isSameExprId(cpp, tok1->astOperand1(), tok2->astOperand2(), library);
+
+    return commutativeEquals;
+}
+
 static std::string getIncompleteNameID(const Token* tok)
 {
     std::string result = tok->str() + "@";
@@ -1828,7 +1874,7 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
             nonneg int eid = exprQueue.front();
             exprQueue.pop();
             graph.getLikelyMatches(eid, [&](const Token* tok1, const Token* tok2) {
-                if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
+                if (!isSameExprId(isCPP(), tok1, tok2, mSettings.library))
                     return;
                 nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
                 graph.updateExprId(tok1->exprId(), cid);
