@@ -1564,14 +1564,26 @@ static bool isExpression(const Token* tok)
     return true;
 }
 
-template <class Iterator, class Output, class Predicate>
-void groupBy(Iterator start, Iterator last, Output out, Predicate pred)
+template <class Iterator, class F, class Output>
+void groupBy(Iterator start, Iterator last, F f, Output out)
 {
     while(start != last)
     {
-        auto it = std::partition(start, last, [&](auto&& x) { return pred(x, *start); });
+        auto it = std::partition(start, last, [&](auto&& x) { return f(x) == f(*start); });
         out(start, it);
         start = it;
+    }
+}
+
+template<class Iterator, class F>
+void crossProductComm(Iterator start, Iterator last, F f)
+{
+    for(auto it=start;it!=last;it++) {
+        using T = typename Iterator::value_type;
+        const T& x = *it;
+        std::for_each(std::next(it), last, [&](const T& y) {
+            f(x, y);
+        });
     }
 }
 
@@ -1622,30 +1634,37 @@ struct ExprIdGraph
         if (it == usages.end())
             return;
         auto& uses = usages[newId];
+        for(Token* tok:it->second)
+            tok->exprId(newId);
         uses.insert(uses.end(), it->second.begin(), it->second.end());
         usages.erase(it);
     }
 
-    std::queue<nonneg int> findTerminals() const
+    template<class F>
+    void findTerminals(F f) const
     {
-        std::queue<nonneg int> result;
         for(const auto& p:usages) {
             if (p.second.empty())
                 continue;
             nonneg int id = p.first;
-            const Token* tok = p.second.front();
+            Token* tok = p.second.front();
             if((tok->astOperand1() && tok->astOperand1()->exprId() != 0) || (tok->astOperand2() && tok->astOperand2()->exprId() != 0))
                 continue;
-            result.push(id);
+            f(tok);
         }
-        return result;
     }
 
+    static std::string getName(const Token* tok)
+    {
+        if(!tok)
+            return "";
+        return tok->str();
+    }
     static std::string getParentName(const Token* tok)
     {
-        if(!tok->astParent())
+        if(!tok)
             return "";
-        return tok->astParent()->str();
+        return getName(tok->astParent());
     }
 
     template<class F>
@@ -1654,29 +1673,28 @@ struct ExprIdGraph
         auto uses = usages.at(exprid);
         if(uses.size() < 2)
             return;
-        groupBy(uses.begin(), uses.end(), f, [](const Token* tok1, const Token* tok2) {
-            return getParentName(tok1) == getParentName(tok2);
-        });
+        groupBy(uses.begin(), uses.end(), &getParentName, f);
     }
 
     template<class F>
     void getLikelyMatches(nonneg int exprid, F f) const
     {
         getUsageGroups(exprid, [&](usageIterator start, usageIterator last) {
-            for(auto it=start;it!=last;it++) {
-                const Token* tok1 = *it;
+            if(start == last)
+                return;
+            if(!(*start)->astParent())
+                return;
+            crossProductComm(start, last, [&](const Token* tok1, const Token* tok2) {
                 const Token* parent1 = tok1->astParent();
-                if (!parent1)
-                    break;
-                std::for_each(it, last, [&](const Token* tok2) {
-                    const Token* parent2 = tok2->astParent();
-                    if (!parent2)
-                        return;
-                    if(parent1->exprId() == parent2->exprId())
-                        return;
-                    f(parent1, parent2);
-                });
-            }
+                const Token* parent2 = tok2->astParent();
+                if(!parent1)
+                    return;
+                if(!parent2)
+                    return;
+                if(parent1->exprId() == parent2->exprId())
+                    return;
+                f(parent1, parent2);
+            });
         });
     }
 
@@ -1787,6 +1805,24 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
 
         // Apply CSE
         std::queue<nonneg int> exprQueue;
+        std::vector<Token*> nonVarTerminals;
+        graph.findTerminals([&](Token* tok) {
+            std::cout << "Terminal: " << tok->expressionString() << std::endl;
+            if(tok->varId() == 0)
+                nonVarTerminals.push_back(tok);
+            else
+                exprQueue.push(tok->exprId());
+        });
+        groupBy(nonVarTerminals.begin(), nonVarTerminals.end(), &ExprIdGraph::getName, [&](std::vector<Token*>::iterator start, std::vector<Token*>::iterator last) {
+            crossProductComm(start, last, [&](Token* tok1, Token* tok2) {
+                if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
+                    return;
+                nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
+                graph.updateExprId(tok1->exprId(), cid);
+                graph.updateExprId(tok2->exprId(), cid);
+                exprQueue.push(cid);
+            });
+        });
         while (!exprQueue.empty()) {
             nonneg int eid = exprQueue.front();
             exprQueue.pop();
