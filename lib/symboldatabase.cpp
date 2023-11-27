@@ -1578,7 +1578,6 @@ void groupBy(Iterator start, Iterator last, Output out, Predicate pred)
 struct ExprIdGraph
 {
     std::map<nonneg int, std::vector<Token*>> usages;
-    std::map<nonneg int, Token*> decl;
     std::unordered_map<nonneg int, const Token*> references;
 
     using usageIterator = std::vector<Token*>::const_iterator;
@@ -1612,12 +1611,7 @@ struct ExprIdGraph
     void setExprId(Token* tok, nonneg int exprid)
     {
         tok->exprId(exprid);
-        // Dont record usage of variable declaration
-        if(!Token::Match(tok, "%var% =|{|(") && tok->variable() && tok->variable()->nameToken() == tok) {
-            decl[exprid] = tok;
-        } else {
-            usages[exprid].push_back(tok);
-        }
+        usages[exprid].push_back(tok);
     }
 
     void updateExprId(nonneg int oldId, nonneg int newId)
@@ -1691,9 +1685,8 @@ struct ExprIdGraph
             if(p.second.size() != 1)
                 continue;
             Token* tok = p.second.front();
-            auto it = decl.find(tok->exprId());
-            if (it != decl.end())
-                it->second->setUniqueExprId();
+            if (tok->variable() && tok->variable()->nameToken() != tok)
+                continue;
             tok->setUniqueExprId();
         }
     }
