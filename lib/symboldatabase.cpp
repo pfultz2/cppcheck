@@ -1578,6 +1578,7 @@ void groupBy(Iterator start, Iterator last, Output out, Predicate pred)
 struct ExprIdGraph
 {
     std::map<nonneg int, std::vector<Token*>> usages;
+    std::map<nonneg int, Token*> decl;
     std::unordered_map<nonneg int, const Token*> references;
 
     using usageIterator = std::vector<Token*>::const_iterator;
@@ -1612,9 +1613,11 @@ struct ExprIdGraph
     {
         tok->exprId(exprid);
         // Dont record usage of variable declaration
-        if(tok->variable() && tok->variable()->nameToken() == tok)
-            return;
-        usages[exprid].push_back(tok);
+        if(!Token::Match(tok, "%var% =|{|(") && tok->variable() && tok->variable()->nameToken() == tok) {
+            decl[exprid] = tok;
+        } else {
+            usages[exprid].push_back(tok);
+        }
     }
 
     void updateExprId(nonneg int oldId, nonneg int newId)
@@ -1670,7 +1673,7 @@ struct ExprIdGraph
                 const Token* tok1 = *it;
                 const Token* parent1 = tok1->astParent();
                 if (!parent1)
-                    continue;
+                    break;
                 std::for_each(it, last, [&](const Token* tok2) {
                     const Token* parent2 = tok2->astParent();
                     if (!parent2)
@@ -1688,6 +1691,9 @@ struct ExprIdGraph
             if(p.second.size() != 1)
                 continue;
             Token* tok = p.second.front();
+            auto it = decl.find(tok->exprId());
+            if (it != decl.end())
+                it->second->setUniqueExprId();
             tok->setUniqueExprId();
         }
     }
