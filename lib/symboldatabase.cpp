@@ -1670,6 +1670,8 @@ struct ExprIdGraph
     template<class F>
     void getUsageGroups(nonneg int exprid, F f) const
     {
+        if(usages.count(exprid) == 0)
+            return;
         auto uses = usages.at(exprid);
         if(uses.size() < 2)
             return;
