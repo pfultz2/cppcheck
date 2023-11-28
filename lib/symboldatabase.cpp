@@ -1712,7 +1712,7 @@ struct ExprIdGraph
     }
 };
 
-static bool isSameExprId(bool cpp, const Token* tok1, const Token* tok2, const Library& library)
+static bool isSameExprId(bool cpp, const Token* tok1, const Token* tok2, const Library& library, int depth = 0)
 {
     if(!tok1 && !tok2)
         return true;
@@ -1732,11 +1732,14 @@ static bool isSameExprId(bool cpp, const Token* tok1, const Token* tok2, const L
         return false;
     if(Token::Match(tok1, "++|--"))
         return false;
+    if (depth > 0)
+        return false;
+    depth++;
 
     bool noncommutativeEquals =
-        isSameExprId(cpp, tok1->astOperand1(), tok2->astOperand1(), library);
+        isSameExprId(cpp, tok1->astOperand1(), tok2->astOperand1(), library, depth);
     noncommutativeEquals = noncommutativeEquals &&
-                           isSameExprId(cpp, tok1->astOperand2(), tok2->astOperand2(), library);
+                           isSameExprId(cpp, tok1->astOperand2(), tok2->astOperand2(), library, depth);
 
     if (noncommutativeEquals)
         return true;
@@ -1751,9 +1754,9 @@ static bool isSameExprId(bool cpp, const Token* tok1, const Token* tok2, const L
 
     const bool commutative = tok1->isBinaryOp() && Token::Match(tok1, "%or%|%oror%|+|*|&|&&|^|==|!=");
     bool commutativeEquals = commutative &&
-                             isSameExprId(cpp, tok1->astOperand2(), tok2->astOperand1(), library);
+                             isSameExprId(cpp, tok1->astOperand2(), tok2->astOperand1(), library, depth);
     commutativeEquals = commutativeEquals &&
-                        isSameExprId(cpp, tok1->astOperand1(), tok2->astOperand2(), library);
+                        isSameExprId(cpp, tok1->astOperand1(), tok2->astOperand2(), library, depth);
 
     return commutativeEquals;
 }
@@ -1854,6 +1857,7 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
         // Apply CSE
         std::queue<nonneg int> exprQueue;
         std::vector<Token*> nonVarTerminals;
+        std::set<int> ids;
         graph.findTerminals([&](Token* tok) {
             if(tok->varId() == 0)
                 nonVarTerminals.push_back(tok);
@@ -1867,21 +1871,30 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
                 nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
                 graph.updateExprId(tok1->exprId(), cid);
                 graph.updateExprId(tok2->exprId(), cid);
-                exprQueue.push(cid);
+                auto p = ids.insert(cid);
+                if (p.second)
+                    exprQueue.push(cid);
             });
         });
+        int comparisons = 0;
         while (!exprQueue.empty()) {
             nonneg int eid = exprQueue.front();
             exprQueue.pop();
             graph.getLikelyMatches(eid, [&](const Token* tok1, const Token* tok2) {
+                comparisons++;
+                // if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
                 if (!isSameExprId(isCPP(), tok1, tok2, mSettings.library))
                     return;
                 nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
                 graph.updateExprId(tok1->exprId(), cid);
                 graph.updateExprId(tok2->exprId(), cid);
+                auto p = ids.insert(cid);
+                if (p.second)
+                    exprQueue.push(cid);
                 exprQueue.push(cid);
             });
         }
+        std::cout << "Total compaisons: " << comparisons << std::endl;
         // Mark expressions that are unique
         graph.markUniqueExpressions();
     }
