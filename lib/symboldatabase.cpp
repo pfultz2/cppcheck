@@ -1882,8 +1882,8 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
             exprQueue.pop();
             graph.getLikelyMatches(eid, [&](const Token* tok1, const Token* tok2) {
                 comparisons++;
-                // if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
-                if (!isSameExprId(isCPP(), tok1, tok2, mSettings.library))
+                if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
+                // if (!isSameExprId(isCPP(), tok1, tok2, mSettings.library))
                     return;
                 nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
                 graph.updateExprId(tok1->exprId(), cid);
