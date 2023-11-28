@@ -1656,6 +1656,7 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
         }
 
         // Apply CSE
+        int comparisons = 0;
         for (const auto& p:exprs) {
             const std::vector<Token*>& tokens = p.second;
             const std::size_t N = tokens.size();
@@ -1665,6 +1666,7 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
                     Token* const tok2 = tokens[j];
                     if (tok1->exprId() == tok2->exprId())
                         continue;
+                    comparisons++;
                     if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
                         continue;
                     nonneg int const cid = std::min(tok1->exprId(), tok2->exprId());
@@ -1673,6 +1675,7 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
                 }
             }
         }
+        std::cout << "Total comparisons: " << comparisons << std::endl;
         // Mark expressions that are unique
         std::unordered_map<nonneg int, Token*> exprMap;
         for (Token* tok = const_cast<Token*>(scope->bodyStart); tok != scope->bodyEnd; tok = tok->next()) {
