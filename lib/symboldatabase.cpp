@@ -1640,6 +1640,15 @@ struct ExprIdGraph
         usages.erase(it);
     }
 
+    static bool hasExpression(const Token* tok)
+    {
+        if(tok->exprId() == 0)
+            return false;
+        if(tok->isExpandedMacro())
+            return false;
+        return true;
+    }
+
     template<class F>
     void findTerminals(F f) const
     {
@@ -1648,7 +1657,9 @@ struct ExprIdGraph
                 continue;
             nonneg int id = p.first;
             Token* tok = p.second.front();
-            if((tok->astOperand1() && tok->astOperand1()->exprId() != 0) || (tok->astOperand2() && tok->astOperand2()->exprId() != 0))
+            if (tok->isExpandedMacro())
+                continue;
+            if((tok->astOperand1() && hasExpression(tok->astOperand1())) || (tok->astOperand2() && hasExpression(tok->astOperand2())))
                 continue;
             f(tok);
         }
@@ -1771,6 +1782,7 @@ static std::string getIncompleteNameID(const Token* tok)
 
 void SymbolDatabase::createSymbolDatabaseExprIds()
 {
+    std::cout << "createSymbolDatabaseExprIds\n";
     nonneg int base = 0;
     // Find highest varId
     for (const Variable *var : mVariableList) {
@@ -1881,7 +1893,9 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
             nonneg int eid = exprQueue.front();
             exprQueue.pop();
             graph.getLikelyMatches(eid, [&](const Token* tok1, const Token* tok2) {
+                assert(tok1->str() == tok2->str());
                 comparisons++;
+                // assert(isSameExpression(isCPP(), false, tok1, tok2, mSettings.library, false, false) == isSameExprId(isCPP(), tok1, tok2, mSettings.library));
                 if (!isSameExpression(isCPP(), true, tok1, tok2, mSettings.library, false, false))
                 // if (!isSameExprId(isCPP(), tok1, tok2, mSettings.library))
                     return;
@@ -1894,7 +1908,7 @@ void SymbolDatabase::createSymbolDatabaseExprIds()
                 exprQueue.push(cid);
             });
         }
-        std::cout << "Total compaisons: " << comparisons << std::endl;
+        std::cout << "Total comparisons: " << comparisons << std::endl;
         // Mark expressions that are unique
         graph.markUniqueExpressions();
     }
