@@ -546,8 +546,6 @@ namespace {
         Progress updateRange(Token* start, const Token* end, int depth = 20) {
             if (depth < 0)
                 return Break(Analyzer::Terminate::Bail);
-            while(Token::simpleMatch(end, "}") && Token::Match(end->previous(), "}|;"))
-                end = end->previous();
             std::size_t i = 0;
             for (Token* tok = start; precedes(tok, end); tok = tok->next()) {
                 Token* next = nullptr;
