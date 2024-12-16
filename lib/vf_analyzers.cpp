@@ -737,7 +737,14 @@ private:
                 addErrorPath(tok, "Assuming condition is " + s);
             }
         }
-        if (!(flags & Assume::Absolute))
+        bool absolute = (flags & Assume::Absolute) || std::none_of(tok->values().begin(), tok->values().end(), [&](const ValueFlow::Value& v) {
+            if(!v.isIntValue())
+                return false;
+            if(astIsBool(tok) && v.isImpossible())
+                return false;
+            return true;
+        });
+        if (!absolute)
             makeConditional();
     }
 
