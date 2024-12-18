@@ -984,7 +984,7 @@ namespace {
             void add(const Reference& r) {
                 if (!r.tok)
                     return;
-                expressions.insert(std::make_pair(r.tok->exprId(), r));
+                expressions.emplace(r.tok->exprId(), r);
             }
 
             std::vector<Reference> invalidTokens() const {
@@ -1094,10 +1094,13 @@ static const ValueFlow::Value* getInnerLifetime(const Token* tok,
             if (val.isInconclusive())
                 return nullptr;
             if (val.capturetok)
-                return getInnerLifetime(val.capturetok, id, errorPath, depth - 1);
+                if (const ValueFlow::Value* v = getInnerLifetime(val.capturetok, id, errorPath, depth - 1))
+                    return v;
             if (errorPath)
                 errorPath->insert(errorPath->end(), val.errorPath.cbegin(), val.errorPath.cend());
-            return getInnerLifetime(val.tokvalue, id, errorPath, depth - 1);
+            if (const ValueFlow::Value* v = getInnerLifetime(val.tokvalue, id, errorPath, depth - 1))
+                return v;
+            continue;
         }
         if (!val.tokvalue->variable())
             continue;
