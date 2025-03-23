@@ -1427,7 +1427,15 @@ struct SubExpressionAnalyzer : ExpressionAnalyzer {
     }
     bool internalMatch(const Token* tok) const override
     {
-        return tok->exprId() == expr->exprId() && !(astIsLHS(tok) && submatch(tok->astParent(), 0, false));
+        // return tok->exprId() == expr->exprId() && !(astIsLHS(tok) && submatch(tok->astParent(), 0, false));
+        if(tok->exprId() != expr->exprId())
+            return false;
+        const Token* top = tok;
+        while(top->astParent() && (top->astParent()->isUnaryOp("&") || top->astParent()->isUnaryOp("*")))
+            top = top->astParent();
+        if(!top)
+            return true;
+        return !(astIsLHS(top) && submatch(top->astParent(), 0, false));
         // int indirect = 0;
         // if(!matchCore(tok, &indirect))
         //     return false;
