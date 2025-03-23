@@ -1380,22 +1380,58 @@ struct SubExpressionAnalyzer : ExpressionAnalyzer {
         : ExpressionAnalyzer(e, std::move(val), s), partialReads(p)
     {}
 
-    virtual bool submatch(const Token* tok, bool exact = true) const = 0;
+    virtual bool submatch(const Token* tok, int indirect, bool exact = true) const = 0;
+
+    bool matchCore(const Token* tok, int* indirect = nullptr) const
+    {
+        if(!tok)
+            return false;
+        // if(indirect)
+        //     *indirect = 0;
+        // return tok->exprId() == expr->exprId();
+
+        int i = 0;
+        while(tok->exprId() != expr->exprId() && (tok->isUnaryOp("&") || tok->isUnaryOp("*"))) {
+            if(tok->str() == "*")
+                i--;
+            if(tok->str() == "&")
+                i++;
+            tok = tok->astOperand1();
+        }
+        if(tok->exprId() != expr->exprId())
+            return false;
+        if(indirect)
+            *indirect = i;
+        return true;
+    }
 
     bool isAlias(const Token* tok, bool& inconclusive) const override
     {
-        if (tok->exprId() == expr->exprId() && tok->astParent() && submatch(tok->astParent(), false))
-            return false;
+        // if (tok->exprId() == expr->exprId() && tok->astParent() && submatch(tok->astParent(), 0, false))
+        //     return false;
+        int indirect = 0;
+        if(matchCore(tok, &indirect)) {
+            if (tok->astParent() && submatch(tok->astParent(), indirect, false))
+                return false;
+        }
         return ExpressionAnalyzer::isAlias(tok, inconclusive);
     }
 
     bool match(const Token* tok) const override
     {
-        return tok->astOperand1() && tok->astOperand1()->exprId() == expr->exprId() && submatch(tok);
+        // return tok->astOperand1() && tok->astOperand1()->exprId() == expr->exprId() && submatch(tok, 0);
+        int indirect = 0;
+        if(!matchCore(tok->astOperand1(), &indirect))
+            return false;
+        return submatch(tok, indirect);
     }
     bool internalMatch(const Token* tok) const override
     {
-        return tok->exprId() == expr->exprId() && !(astIsLHS(tok) && submatch(tok->astParent(), false));
+        return tok->exprId() == expr->exprId() && !(astIsLHS(tok) && submatch(tok->astParent(), 0, false));
+        // int indirect = 0;
+        // if(!matchCore(tok, &indirect))
+        //     return false;
+        // return !(astIsLHS(tok) && submatch(tok->astParent(), indirect, false));
     }
     void internalUpdate(Token* tok, const ValueFlow::Value& v, Direction /*d*/) override
     {
@@ -1415,12 +1451,17 @@ struct MemberExpressionAnalyzer : SubExpressionAnalyzer {
         : SubExpressionAnalyzer(e, std::move(val), p, s), varname(std::move(varname))
     {}
 
-    bool submatch(const Token* tok, bool exact) const override
+    bool submatch(const Token* tok, int indirect, bool exact) const override
     {
         if (!Token::Match(tok, ". %var%"))
             return false;
         if (!exact)
             return true;
+        indirect += getIndirect(tok);
+        if(indirect < 0 || indirect > 1)
+            return false;
+        if(indirect == 1 && tok->originalName() != "->")
+            return false;
         return tok->strAt(1) == varname;
     }
 };
