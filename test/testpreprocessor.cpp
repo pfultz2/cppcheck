@@ -195,6 +195,7 @@ private:
         TEST_CASE(remarkComment1);
         TEST_CASE(remarkComment2);
         TEST_CASE(remarkComment3);
+        TEST_CASE(remarkComment4);
 
         // Using -D to predefine symbols
         TEST_CASE(predefine1);
@@ -1693,7 +1694,7 @@ private:
             const std::map<std::string, std::string> actual = PreprocessorHelper::getcode(settings0, *this, filedata);
 
             // Compare results..
-            ASSERT_EQUALS(1, (int)actual.size());
+            ASSERT_EQUALS(1, actual.size());
             ASSERT_EQUALS("\n\n\n\nB", actual.at(""));
         }
 
@@ -1707,7 +1708,7 @@ private:
             const std::map<std::string, std::string> actual = PreprocessorHelper::getcode(settings0, *this, filedata);
 
             // Compare results..
-            ASSERT_EQUALS(1, (int)actual.size());
+            ASSERT_EQUALS(1, actual.size());
             ASSERT_EQUALS("\n\n$1", actual.at(""));
         }
 
@@ -1721,7 +1722,7 @@ private:
             const std::map<std::string, std::string> actual = PreprocessorHelper::getcode(settings0, *this, filedata);
 
             // Compare results..
-            ASSERT_EQUALS(1, (int)actual.size());
+            ASSERT_EQUALS(1, actual.size());
             ASSERT_EQUALS("\n\n$1", actual.at(""));
         }
 
@@ -1735,7 +1736,7 @@ private:
             const std::map<std::string, std::string> actual = PreprocessorHelper::getcode(settings0, *this, filedata);
 
             // Compare results..
-            ASSERT_EQUALS(1, (int)actual.size());
+            ASSERT_EQUALS(1, actual.size());
             ASSERT_EQUALS("\n\n$1", actual.at(""));
         }
 
@@ -1750,7 +1751,7 @@ private:
             const std::map<std::string, std::string> actual = PreprocessorHelper::getcode(settings0, *this, filedata);
 
             // Compare results..
-            ASSERT_EQUALS(1, (int)actual.size());
+            ASSERT_EQUALS(1, actual.size());
             ASSERT_EQUALS("\n\n\n\n$1", actual.at(""));
         }
     }
@@ -1827,7 +1828,7 @@ private:
         const std::map<std::string, std::string> actual = PreprocessorHelper::getcode(settings0, *this, filedata);
 
         // Compare results..
-        ASSERT_EQUALS(4, (int)actual.size());
+        ASSERT_EQUALS(4, actual.size());
         ASSERT(actual.find("") != actual.end());
         ASSERT(actual.find("BAR") != actual.end());
         ASSERT(actual.find("FOO") != actual.end());
@@ -1844,7 +1845,7 @@ private:
         const std::map<std::string, std::string> actual = PreprocessorHelper::getcode(settings0, *this, filedata);
 
         // Compare results..
-        ASSERT_EQUALS(1, (int)actual.size());
+        ASSERT_EQUALS(1, actual.size());
         ASSERT_EQUALS("char a [ ] = \"#endfile\" ;\nchar b [ ] = \"#endfile\" ;", actual.at(""));
     }
 
@@ -1938,6 +1939,12 @@ private:
         ASSERT_EQUALS(1, remarkComments.size());
         ASSERT_EQUALS(2, remarkComments[0].lineNumber);
         ASSERT_EQUALS("assignment with 1 ", remarkComments[0].str);
+    }
+
+    void remarkComment4() {
+        const char code[] = "//REMARK /";
+        const auto remarkComments = PreprocessorHelper::getRemarkComments(code, *this);
+        ASSERT_EQUALS(0, remarkComments.size());
     }
 
     void predefine1() {

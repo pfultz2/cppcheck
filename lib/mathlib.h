@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,8 @@
 #include <boost/multiprecision/cpp_int.hpp>
 #endif
 
+class Token;
+
 /// @addtogroup Core
 /// @{
 
@@ -50,7 +52,7 @@ public:
     /** @brief value class */
     class value {
     private:
-        long long mIntValue{};
+        bigint mIntValue{};
         double mDoubleValue{};
         enum class Type : std::uint8_t { INT, LONG, LONGLONG, FLOAT } mType;
         bool mIsUnsigned{};
@@ -68,7 +70,7 @@ public:
         }
 
         double getDoubleValue() const {
-            return isFloat() ? mDoubleValue : (double)mIntValue;
+            return isFloat() ? mDoubleValue : static_cast<double>(mIntValue);
         }
 
         static value calc(char op, const value &v1, const value &v2);
@@ -81,13 +83,19 @@ public:
     static const int bigint_bits;
 
     /** @brief for conversion of numeric literals - for atoi-like conversions please use strToInt() */
-    static bigint toBigNumber(const std::string & str);
+    static bigint toBigNumber(const Token * tok);
     /** @brief for conversion of numeric literals - for atoi-like conversions please use strToInt() */
-    static biguint toBigUNumber(const std::string & str);
+    static bigint toBigNumber(const std::string & str, const Token *tok = nullptr);
+    /** @brief for conversion of numeric literals - for atoi-like conversions please use strToInt() */
+    static biguint toBigUNumber(const Token * tok);
+    /** @brief for conversion of numeric literals - for atoi-like conversions please use strToInt() */
+    static biguint toBigUNumber(const std::string & str, const Token *tok = nullptr);
 
     template<class T> static std::string toString(T value) = delete;
     /** @brief for conversion of numeric literals */
-    static double toDoubleNumber(const std::string & str);
+    static double toDoubleNumber(const Token * tok);
+    /** @brief for conversion of numeric literals */
+    static double toDoubleNumber(const std::string & str, const Token * tok = nullptr);
 
     static bool isInt(const std::string & str);
     static bool isFloat(const std::string &str);
@@ -149,6 +157,8 @@ MathLib::value operator^(const MathLib::value &v1, const MathLib::value &v2);
 MathLib::value operator<<(const MathLib::value &v1, const MathLib::value &v2);
 MathLib::value operator>>(const MathLib::value &v1, const MathLib::value &v2);
 
+template<> CPPCHECKLIB std::string MathLib::toString<MathLib::bigint>(MathLib::bigint value);
+template<> CPPCHECKLIB std::string MathLib::toString<MathLib::biguint>(MathLib::biguint value);
 template<> CPPCHECKLIB std::string MathLib::toString<double>(double value);
 
 /// @}

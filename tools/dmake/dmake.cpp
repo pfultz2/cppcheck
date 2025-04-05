@@ -31,8 +31,6 @@
 #include <string>
 #include <vector>
 
-#include "config.h"
-
 #include "../cli/filelister.h"
 #include "../lib/filesettings.h"
 #include "../lib/pathmatch.h"
@@ -149,13 +147,19 @@ static void compilefiles(std::ostream &fout, const std::vector<std::string> &fil
 {
     for (const std::string &file : files) {
         const bool external(startsWith(file,"externals/") || startsWith(file,"../externals/"));
+        const bool tinyxml2(startsWith(file,"externals/tinyxml2/") || startsWith(file,"../externals/tinyxml2/"));
         fout << objfile(file) << ": " << file;
         std::vector<std::string> depfiles;
         getDeps(file, depfiles);
         std::sort(depfiles.begin(), depfiles.end());
         for (const std::string &depfile : depfiles)
             fout << " " << depfile;
-        fout << "\n\t$(CXX) " << args << " $(CPPFLAGS) $(CXXFLAGS)" << (external?" -w":"") << " -c -o $@ " << builddir(file) << "\n\n";
+        std::string additional;
+        if (external)
+            additional += " -w"; // do not show any warnings for external
+        if (tinyxml2)
+            additional += " -D_LARGEFILE_SOURCE"; // required for fseeko() and ftello() (on Cygwin)
+        fout << "\n\t$(CXX) " << args << " $(CPPFLAGS) $(CXXFLAGS)" << additional << " -c -o $@ " << builddir(file) << "\n\n";
     }
 }
 
@@ -455,28 +459,27 @@ int main(int argc, char **argv)
     }
 
     // TODO: add files without source via parsing
-    std::vector<std::string> libfiles_h;
+    std::set<std::string> libfiles_h;
     for (const std::string &libfile : libfiles) {
         std::string fname(libfile.substr(4));
         fname.erase(fname.find(".cpp"));
-        libfiles_h.emplace_back(fname + ".h");
+        libfiles_h.emplace(fname + ".h");
     }
-    libfiles_h.emplace_back("analyzer.h");
-    libfiles_h.emplace_back("calculate.h");
-    libfiles_h.emplace_back("config.h");
-    libfiles_h.emplace_back("filesettings.h");
-    libfiles_h.emplace_back("findtoken.h");
-    libfiles_h.emplace_back("json.h");
-    libfiles_h.emplace_back("matchcompiler.h");
-    libfiles_h.emplace_back("precompiled.h");
-    libfiles_h.emplace_back("smallvector.h");
-    libfiles_h.emplace_back("sourcelocation.h");
-    libfiles_h.emplace_back("tokenrange.h");
-    libfiles_h.emplace_back("valueptr.h");
-    libfiles_h.emplace_back("version.h");
-    libfiles_h.emplace_back("vf_analyze.h");
-    libfiles_h.emplace_back("xml.h");
-    std::sort(libfiles_h.begin(), libfiles_h.end());
+    libfiles_h.emplace("analyzer.h");
+    libfiles_h.emplace("calculate.h");
+    libfiles_h.emplace("config.h");
+    libfiles_h.emplace("filesettings.h");
+    libfiles_h.emplace("findtoken.h");
+    libfiles_h.emplace("json.h");
+    libfiles_h.emplace("matchcompiler.h");
+    libfiles_h.emplace("precompiled.h");
+    libfiles_h.emplace("smallvector.h");
+    libfiles_h.emplace("sourcelocation.h");
+    libfiles_h.emplace("tokenrange.h");
+    libfiles_h.emplace("valueptr.h");
+    libfiles_h.emplace("version.h");
+    libfiles_h.emplace("vf_analyze.h");
+    libfiles_h.emplace("xml.h");
 
     std::vector<std::string> clifiles_h;
     for (const std::string &clifile : clifiles) {
@@ -487,13 +490,12 @@ int main(int argc, char **argv)
         clifiles_h.emplace_back(fname + ".h");
     }
 
-    std::vector<std::string> testfiles_h;
-    testfiles_h.emplace_back("fixture.h");
-    testfiles_h.emplace_back("helpers.h");
-    testfiles_h.emplace_back("options.h");
-    testfiles_h.emplace_back("precompiled.h");
-    testfiles_h.emplace_back("redirect.h");
-    std::sort(testfiles_h.begin(), testfiles_h.end());
+    std::set<std::string> testfiles_h;
+    testfiles_h.emplace("fixture.h");
+    testfiles_h.emplace("helpers.h");
+    testfiles_h.emplace("options.h");
+    testfiles_h.emplace("precompiled.h");
+    testfiles_h.emplace("redirect.h");
 
     // TODO: write filter files
     // Visual Studio projects
@@ -566,7 +568,7 @@ int main(int argc, char **argv)
     fout << "# To compile with rules, use 'make HAVE_RULES=yes'\n";
     makeConditionalVariable(fout, "HAVE_RULES", "");
 
-    makeMatchcompiler(fout, emptyString, emptyString);
+    makeMatchcompiler(fout, "", "");
 
     // avoid undefined variable
     fout << "ifndef CPPFLAGS\n"
@@ -654,16 +656,11 @@ int main(int argc, char **argv)
          << "endif # WINNT\n"
          << "\n";
 
-    // tinymxl2 requires __STRICT_ANSI__ to be undefined to compile under CYGWIN.
     fout << "ifdef CYGWIN\n"
          << "    ifeq ($(VERBOSE),1)\n"
          << "        $(info CYGWIN found)\n"
          << "    endif\n"
          << "\n"
-         << "    # Set the flag to address compile time warnings\n"
-         << "    # with tinyxml2 and Cygwin.\n"
-         << "    CPPFLAGS+=-U__STRICT_ANSI__\n"
-         << "    \n"
          << "    # Increase stack size for Cygwin builds to avoid segmentation fault in limited recursive tests.\n"
          << "    CXXFLAGS+=-Wl,--stack,8388608\n"
          << "endif # CYGWIN\n"
@@ -677,7 +674,7 @@ int main(int argc, char **argv)
 
     // Makefile settings..
     if (release) {
-        makeConditionalVariable(fout, "CXXFLAGS", "-std=c++0x -O2 -DNDEBUG -Wall -Wno-sign-compare -Wno-multichar");
+        makeConditionalVariable(fout, "CXXFLAGS", "-O2 -DNDEBUG -Wall -Wno-sign-compare -Wno-multichar");
     } else {
         makeConditionalVariable(fout, "CXXFLAGS",
                                 "-pedantic "
@@ -699,14 +696,9 @@ int main(int argc, char **argv)
     }
 
     fout << "ifeq (g++, $(findstring g++,$(CXX)))\n"
-         << "    override CXXFLAGS += -std=gnu++0x -pipe\n"
-         << "else ifeq (clang++, $(findstring clang++,$(CXX)))\n"
-         << "    override CXXFLAGS += -std=c++0x\n"
-         << "else ifeq ($(CXX), c++)\n"
-         << "    ifeq ($(shell uname -s), Darwin)\n"
-         << "        override CXXFLAGS += -std=c++0x\n"
-         << "    endif\n"
+         << "    override CXXFLAGS += -pipe\n"
          << "endif\n"
+         << "override CXXFLAGS += -std=c++11"
          << "\n";
 
     fout << "ifeq ($(HAVE_RULES),yes)\n"
@@ -746,8 +738,15 @@ int main(int argc, char **argv)
     fout << "cppcheck: $(EXTOBJ) $(LIBOBJ) $(CLIOBJ)\n";
     fout << "\t$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $^ $(LIBS) $(LDFLAGS) $(RDYNAMIC)\n\n";
     fout << "all:\tcppcheck testrunner\n\n";
-    // TODO: generate from clifiles
-    fout << "testrunner: $(EXTOBJ) $(TESTOBJ) $(LIBOBJ) cli/executor.o cli/processexecutor.o cli/singleexecutor.o cli/threadexecutor.o cli/cmdlineparser.o cli/cppcheckexecutor.o cli/cppcheckexecutorseh.o cli/signalhandler.o cli/stacktrace.o cli/filelister.o\n";
+    std::string testrunner_clifiles_o;
+    for (const std::string &clifile: clifiles) {
+        if (clifile == "cli/main.cpp")
+            continue;
+        testrunner_clifiles_o += ' ';
+        const std::string o = clifile.substr(0, clifile.length()-3) + 'o';
+        testrunner_clifiles_o += o;
+    }
+    fout << "testrunner: $(EXTOBJ) $(TESTOBJ) $(LIBOBJ)" << testrunner_clifiles_o << "\n";
     fout << "\t$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $^ $(LIBS) $(LDFLAGS) $(RDYNAMIC)\n\n";
     fout << "test:\tall\n";
     fout << "\t./testrunner\n\n";
@@ -838,7 +837,7 @@ int main(int argc, char **argv)
     compilefiles(fout, libfiles_prio, "${INCLUDE_FOR_LIB}");
     compilefiles(fout, clifiles, "${INCLUDE_FOR_CLI}");
     compilefiles(fout, testfiles, "${INCLUDE_FOR_TEST}");
-    compilefiles(fout, extfiles, emptyString);
+    compilefiles(fout, extfiles, "");
     compilefiles(fout, toolsfiles, "${INCLUDE_FOR_LIB}");
 
     write_ossfuzz_makefile(libfiles_prio, extfiles);

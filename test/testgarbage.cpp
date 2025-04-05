@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -254,6 +254,7 @@ private:
         TEST_CASE(garbageCode225);
         TEST_CASE(garbageCode226);
         TEST_CASE(garbageCode227);
+        TEST_CASE(garbageCode228);
 
         TEST_CASE(garbageCodeFuzzerClientMode1); // test cases created with the fuzzer client, mode 1
 
@@ -271,7 +272,7 @@ private:
         TEST_CASE(nonGarbageCode1); // #8346
     }
 
-#define checkCodeInternal(code, filename) checkCodeInternal_(code, filename, __FILE__, __LINE__)
+#define checkCodeInternal(...) checkCodeInternal_(__FILE__, __LINE__, __VA_ARGS__)
     template<size_t size>
     std::string checkCode(const char (&code)[size], bool cpp = true) {
         // double the tests - run each example as C as well as C++
@@ -285,7 +286,7 @@ private:
     }
 
     template<size_t size>
-    std::string checkCodeInternal_(const char (&code)[size], bool cpp, const char* file, int line) {
+    std::string checkCodeInternal_(const char* file, int line, const char (&code)[size], bool cpp) {
         // tokenize..
         SimpleTokenizer tokenizer(settings, *this);
         ASSERT_LOC(tokenizer.tokenize(code, cpp), file, line);
@@ -298,9 +299,9 @@ private:
         return tokenizer.tokens()->stringifyList(false, false, false, true, false, nullptr, nullptr);
     }
 
-#define getSyntaxError(code) getSyntaxError_(code, __FILE__, __LINE__)
+#define getSyntaxError(...) getSyntaxError_(__FILE__, __LINE__, __VA_ARGS__)
     template<size_t size>
-    std::string getSyntaxError_(const char (&code)[size], const char* file, int line) {
+    std::string getSyntaxError_(const char* file, int line, const char (&code)[size]) {
         SimpleTokenizer tokenizer(settings, *this);
         try {
             ASSERT_LOC(tokenizer.tokenize(code), file, line);
@@ -1760,6 +1761,10 @@ private:
     }
     void garbageCode227() { // #12615
         ASSERT_NO_THROW(checkCode("f(&S::operator=);"));
+    }
+    void garbageCode228() {
+        ASSERT_NO_THROW(checkCode("void f() { enum { A = [=]() mutable { return 0; }() }; }"));
+        ASSERT_NO_THROW(checkCode("enum { A = [=](void) mutable -> int { return 0; }() };"));
     }
 
     void syntaxErrorFirstToken() {

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,11 +27,13 @@
 #include "symboldatabase.h"
 #include "token.h"
 #include "valueflow.h"
+#include "vfvalue.h"
 
 #include "vf_settokenvalue.h"
 
 #include <climits>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <limits>
 #include <utility>
@@ -44,7 +46,7 @@ namespace ValueFlow
         if (!vt || !vt->isIntegral() || vt->pointer)
             return false;
 
-        int bits;
+        std::uint8_t bits;
         switch (vt->type) {
         case ValueType::Type::BOOL:
             bits = 1;
@@ -94,7 +96,7 @@ namespace ValueFlow
         return true;
     }
 
-    long long truncateIntValue(long long value, size_t value_size, const ValueType::Sign dst_sign)
+    MathLib::bigint truncateIntValue(MathLib::bigint value, size_t value_size, const ValueType::Sign dst_sign)
     {
         if (value_size == 0)
             return value;
@@ -120,7 +122,7 @@ namespace ValueFlow
     {
         if ((tok->isNumber() && MathLib::isInt(tok->str())) || (tok->tokType() == Token::eChar)) {
             try {
-                MathLib::bigint signedValue = MathLib::toBigNumber(tok->str());
+                MathLib::bigint signedValue = MathLib::toBigNumber(tok);
                 const ValueType* vt = tok->valueType();
                 if (vt && vt->sign == ValueType::UNSIGNED && signedValue < 0 && getSizeOf(*vt, settings) < sizeof(MathLib::bigint)) {
                     MathLib::bigint minValue{}, maxValue{};
@@ -137,7 +139,7 @@ namespace ValueFlow
         } else if (tok->isNumber() && MathLib::isFloat(tok->str())) {
             Value value;
             value.valueType = Value::ValueType::FLOAT;
-            value.floatValue = MathLib::toDoubleNumber(tok->str());
+            value.floatValue = MathLib::toDoubleNumber(tok);
             if (!tok->isTemplateArg())
                 value.setKnown();
             setTokenValue(tok, std::move(value), settings);
@@ -291,7 +293,7 @@ namespace ValueFlow
                     const Token* num = brac->astOperand2();
                     if (num && ((num->isNumber() && MathLib::isInt(num->str())) || num->tokType() == Token::eChar)) {
                         try {
-                            const MathLib::biguint dim = MathLib::toBigUNumber(num->str());
+                            const MathLib::biguint dim = MathLib::toBigUNumber(num);
                             sz *= dim;
                             brac = brac->astParent();
                             continue;
@@ -335,7 +337,7 @@ namespace ValueFlow
         if (value.isFloatValue()) {
             value.valueType = Value::ValueType::INT;
             if (value.floatValue >= std::numeric_limits<int>::min() && value.floatValue <= std::numeric_limits<int>::max()) {
-                value.intvalue = value.floatValue;
+                value.intvalue = static_cast<MathLib::bigint>(value.floatValue);
             } else { // don't perform UB
                 value.intvalue = 0;
             }

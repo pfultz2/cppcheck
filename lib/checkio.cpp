@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -181,7 +181,7 @@ void CheckIO::checkFileUsage()
             } else if (Token::Match(tok, "%var% =") &&
                        (tok->strAt(2) != "fopen" && tok->strAt(2) != "freopen" && tok->strAt(2) != "tmpfile" &&
                         (windows ? (tok->str() != "_wfopen" && tok->str() != "_wfreopen") : true))) {
-                const std::map<int, Filepointer>::iterator i = filepointers.find(tok->varId());
+                const auto i = filepointers.find(tok->varId());
                 if (i != filepointers.end()) {
                     i->second.mode = OpenMode::UNKNOWN_OM;
                     i->second.lastOperation = Filepointer::Operation::UNKNOWN_OP;
@@ -289,7 +289,7 @@ void CheckIO::checkFileUsage()
                 switch (operation) {
                 case Filepointer::Operation::OPEN:
                     if (fileNameTok) {
-                        for (std::map<int, Filepointer>::const_iterator it = filepointers.cbegin(); it != filepointers.cend(); ++it) {
+                        for (auto it = filepointers.cbegin(); it != filepointers.cend(); ++it) {
                             const Filepointer &fptr = it->second;
                             if (fptr.filename == fileNameTok->str() && (fptr.mode == OpenMode::RW_MODE || fptr.mode == OpenMode::WRITE_MODE))
                                 incompatibleFileOpenError(tok, fileNameTok->str());
@@ -445,7 +445,7 @@ void CheckIO::invalidScanf()
                     format = false;
                 }
 
-                else if (std::isalpha((unsigned char)formatstr[i]) || formatstr[i] == '[') {
+                else if (std::isalpha(static_cast<unsigned char>(formatstr[i])) || formatstr[i] == '[') {
                     if (formatstr[i] == 's' || formatstr[i] == '[' || formatstr[i] == 'S' || (formatstr[i] == 'l' && formatstr[i+1] == 's'))  // #3490 - field width limits are only necessary for string input
                         invalidScanfError(tok);
                     format = false;
@@ -509,7 +509,7 @@ static bool findFormat(nonneg int arg, const Token *firstArg,
           argTok->variable()->dimension(0) != 0))) {
         formatArgTok = argTok->nextArgument();
         if (!argTok->values().empty()) {
-            const std::list<ValueFlow::Value>::const_iterator value = std::find_if(
+            const auto value = std::find_if(
                 argTok->values().cbegin(), argTok->values().cend(), std::mem_fn(&ValueFlow::Value::isTokValue));
             if (value != argTok->values().cend() && value->isTokValue() && value->tokvalue &&
                 value->tokvalue->tokType() == Token::eString) {
@@ -615,7 +615,7 @@ void CheckIO::checkFormatString(const Token * const tok,
     bool percent = false;
     const Token* argListTok2 = argListTok;
     std::set<int> parameterPositionsUsed;
-    for (std::string::const_iterator i = formatString.cbegin(); i != formatString.cend(); ++i) {
+    for (auto i = formatString.cbegin(); i != formatString.cend(); ++i) {
         if (*i == '%') {
             percent = !percent;
         } else if (percent && *i == '[') {
@@ -645,7 +645,7 @@ void CheckIO::checkFormatString(const Token * const tok,
             std::string width;
             int parameterPosition = 0;
             bool hasParameterPosition = false;
-            while (i != formatString.cend() && *i != '[' && !std::isalpha((unsigned char)*i)) {
+            while (i != formatString.cend() && *i != '[' && !std::isalpha(static_cast<unsigned char>(*i))) {
                 if (*i == '*') {
                     skip = true;
                     if (scan)
@@ -2022,4 +2022,42 @@ void CheckIO::invalidScanfFormatWidthError(const Token* tok, nonneg int numForma
                << varname << "[" << arrlen << "]', use %" << (specifier == "c" ? arrlen : (arrlen - 1)) << specifier << " to prevent overflowing it.";
         reportError(tok, Severity::error, "invalidScanfFormatWidth", errmsg.str(), CWE687, Certainty::normal);
     }
+}
+
+void CheckIO::runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger)
+{
+    CheckIO checkIO(&tokenizer, &tokenizer.getSettings(), errorLogger);
+
+    checkIO.checkWrongPrintfScanfArguments();
+    checkIO.checkCoutCerrMisusage();
+    checkIO.checkFileUsage();
+    checkIO.invalidScanf();
+}
+
+void CheckIO::getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const
+{
+    CheckIO c(nullptr, settings, errorLogger);
+    c.coutCerrMisusageError(nullptr,  "cout");
+    c.fflushOnInputStreamError(nullptr,  "stdin");
+    c.ioWithoutPositioningError(nullptr);
+    c.readWriteOnlyFileError(nullptr);
+    c.writeReadOnlyFileError(nullptr);
+    c.useClosedFileError(nullptr);
+    c.seekOnAppendedFileError(nullptr);
+    c.incompatibleFileOpenError(nullptr, "tmp");
+    c.invalidScanfError(nullptr);
+    c.wrongPrintfScanfArgumentsError(nullptr, "printf",3,2);
+    c.invalidScanfArgTypeError_s(nullptr,  1, "s", nullptr);
+    c.invalidScanfArgTypeError_int(nullptr,  1, "d", nullptr, false);
+    c.invalidScanfArgTypeError_float(nullptr,  1, "f", nullptr);
+    c.invalidPrintfArgTypeError_s(nullptr,  1, nullptr);
+    c.invalidPrintfArgTypeError_n(nullptr,  1, nullptr);
+    c.invalidPrintfArgTypeError_p(nullptr,  1, nullptr);
+    c.invalidPrintfArgTypeError_uint(nullptr,  1, "u", nullptr);
+    c.invalidPrintfArgTypeError_sint(nullptr,  1, "i", nullptr);
+    c.invalidPrintfArgTypeError_float(nullptr,  1, "f", nullptr);
+    c.invalidLengthModifierError(nullptr,  1, "I");
+    c.invalidScanfFormatWidthError(nullptr,  10, 5, nullptr, "s");
+    c.invalidScanfFormatWidthError(nullptr,  99, -1, nullptr, "s");
+    c.wrongPrintfScanfPosixParameterPositionError(nullptr,  "printf", 2, 1);
 }

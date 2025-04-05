@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -387,7 +387,7 @@ void Variables::modified(nonneg int varid, const Token* tok)
 Variables::VariableUsage *Variables::find(nonneg int varid)
 {
     if (varid) {
-        const std::map<nonneg int, VariableUsage>::iterator i = mVarUsage.find(varid);
+        const auto i = mVarUsage.find(varid);
         if (i != mVarUsage.end())
             return &i->second;
     }
@@ -522,7 +522,7 @@ static const Token* doAssignment(Variables &variables, const Token *tok, bool de
                             else {
                                 // no other assignment in this scope
                                 if (var1->_assignments.find(scope) == var1->_assignments.end() ||
-                                    scope->type == Scope::eSwitch) {
+                                    scope->type == ScopeType::eSwitch) {
                                     // nothing to replace
                                     // cppcheck-suppress duplicateBranch - remove when TODO below is address
                                     if (var1->_assignments.empty())
@@ -732,7 +732,7 @@ void CheckUnusedVar::checkFunctionVariableUsage_iterateScopes(const Scope* const
                     variables.addVar(&*i, type, true);
                     break;
                 } else if (defValTok->str() == ";" || defValTok->str() == "," || defValTok->str() == ")") {
-                    variables.addVar(&*i, type, i->isStatic() && i->scope()->type != Scope::eFunction);
+                    variables.addVar(&*i, type, i->isStatic() && i->scope()->type != ScopeType::eFunction);
                     break;
                 }
             }
@@ -771,7 +771,7 @@ void CheckUnusedVar::checkFunctionVariableUsage_iterateScopes(const Scope* const
 
     // Check variable usage
     const Token *tok;
-    if (scope->type == Scope::eFunction)
+    if (scope->type == ScopeType::eFunction)
         tok = scope->bodyStart->next();
     else
         tok = scope->classDef->next();
@@ -1298,7 +1298,7 @@ void CheckUnusedVar::checkFunctionVariableUsage()
                         typeName.erase(typeName.begin(), typeName.begin() + 2);
                     switch (mSettings->library.getTypeCheck("unusedvar", typeName)) {
                     case Library::TypeCheck::def:
-                        bailoutTypeName = typeName;
+                        bailoutTypeName = std::move(typeName);
                         break;
                     case Library::TypeCheck::check:
                         break;
@@ -1318,7 +1318,7 @@ void CheckUnusedVar::checkFunctionVariableUsage()
                 expr = tok->previous();
 
             // Is variable in lhs a union member?
-            if (tok->previous() && tok->previous()->variable() && tok->previous()->variable()->nameToken()->scope()->type == Scope::eUnion)
+            if (tok->previous() && tok->previous()->variable() && tok->previous()->variable()->nameToken()->scope()->type == ScopeType::eUnion)
                 continue;
 
             FwdAnalysis fwdAnalysis(*mSettings);
@@ -1473,7 +1473,7 @@ void CheckUnusedVar::checkStructMemberUsage()
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
 
     for (const Scope &scope : symbolDatabase->scopeList) {
-        if (scope.type != Scope::eStruct && scope.type != Scope::eClass && scope.type != Scope::eUnion)
+        if (scope.type != ScopeType::eStruct && scope.type != ScopeType::eClass && scope.type != ScopeType::eUnion)
             continue;
 
         if (scope.bodyStart->fileIndex() != 0 || scope.className.empty())
@@ -1534,6 +1534,40 @@ void CheckUnusedVar::checkStructMemberUsage()
         if (bailout)
             continue;
 
+        // Bailout if struct is used in structured binding
+        for (const Variable *var : symbolDatabase->variableList()) {
+            if (!var || !Token::Match(var->typeStartToken(), "auto &|&&| [ %varid%", var->declarationId()))
+                continue;
+
+            const Token *tok = var->nameToken()->linkAt(-1);
+            if (Token::Match(tok, "] %assign%"))
+            {
+                tok = tok->next()->astOperand2();
+                const ValueType *valueType = tok->valueType();
+
+                if (valueType && valueType->typeScope == &scope) {
+                    bailout = true;
+                    break;
+                }
+            }
+
+            if (Token::simpleMatch(tok, "] :")) {
+                tok = tok->next()->astOperand2();
+                const ValueType *valueType = tok->valueType();
+
+                if (!valueType || !valueType->containerTypeToken)
+                    continue;
+
+                const Type *type = valueType->containerTypeToken->type();
+                if (type && type->classScope == &scope) {
+                    bailout = true;
+                    break;
+                }
+            }
+        }
+        if (bailout)
+            continue;
+
         for (const Variable &var : scope.varlist) {
             // only warn for variables without side effects
             if (!var.typeStartToken()->isStandardType() && !var.isPointer() && !astIsContainer(var.nameToken()) && !isRecordTypeWithoutSideEffects(var.type()))
@@ -1566,9 +1600,9 @@ void CheckUnusedVar::checkStructMemberUsage()
             }
             if (!use) {
                 std::string prefix = "struct";
-                if (scope.type == Scope::ScopeType::eClass)
+                if (scope.type == ScopeType::eClass)
                     prefix = "class";
-                else if (scope.type == Scope::ScopeType::eUnion)
+                else if (scope.type == ScopeType::eUnion)
                     prefix = "union";
                 unusedStructMemberError(var.nameToken(), scope.className, var.name(), prefix);
             }
@@ -1772,4 +1806,23 @@ bool CheckUnusedVar::isFunctionWithoutSideEffects(const Function& func, const To
     }
 
     return !sideEffectReturnFound;
+}
+
+void CheckUnusedVar::runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger)
+{
+    CheckUnusedVar checkUnusedVar(&tokenizer, &tokenizer.getSettings(), errorLogger);
+
+    // Coding style checks
+    checkUnusedVar.checkStructMemberUsage();
+    checkUnusedVar.checkFunctionVariableUsage();
+}
+
+void CheckUnusedVar::getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const
+{
+    CheckUnusedVar c(nullptr, settings, errorLogger);
+    c.unusedVariableError(nullptr, "varname");
+    c.allocatedButUnusedVariableError(nullptr, "varname");
+    c.unreadVariableError(nullptr, "varname", false);
+    c.unassignedVariableError(nullptr, "varname");
+    c.unusedStructMemberError(nullptr, "structname", "variable");
 }

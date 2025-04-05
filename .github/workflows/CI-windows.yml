@@ -27,7 +27,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-2019, windows-2022]
-        qt_ver: [5.15.2, 6.8.1]
+        qt_ver: [5.15.2, 6.8.2]
       fail-fast: false
 
     runs-on: ${{ matrix.os }}
@@ -54,14 +54,14 @@ jobs:
         run: |
           ; TODO: enable rules?
           ; specify Release build so matchcompiler is used
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_COMPILE_WARNING_AS_ERROR=On -DBUILD_GUI=On  -DWITH_QCHART=On -DBUILD_ONLINE_HELP=On -DCMAKE_INSTALL_PREFIX=cppcheck-cmake-install || exit /b !errorlevel!
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_COMPILE_WARNING_AS_ERROR=On -DBUILD_GUI=On -DWITH_QCHART=On -DBUILD_TRIAGE=On -DBUILD_ONLINE_HELP=On -DCMAKE_INSTALL_PREFIX=cppcheck-cmake-install || exit /b !errorlevel!
 
       - name: Run CMake for GUI release (Qt 6)
         if: startsWith(matrix.qt_ver, '6')
         run: |
           ; TODO: enable rules?
           ; specify Release build so matchcompiler is used
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_COMPILE_WARNING_AS_ERROR=On -DBUILD_GUI=On -DUSE_QT6=On -DWITH_QCHART=On -DBUILD_ONLINE_HELP=On -DCMAKE_INSTALL_PREFIX=cppcheck-cmake-install || exit /b !errorlevel!
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_COMPILE_WARNING_AS_ERROR=On -DBUILD_GUI=On -DUSE_QT6=On -DWITH_QCHART=On -DBUILD_TRIAGE=On -DBUILD_ONLINE_HELP=On -DCMAKE_INSTALL_PREFIX=cppcheck-cmake-install || exit /b !errorlevel!
 
       - name: Run CMake build
         run: |
@@ -127,9 +127,11 @@ jobs:
       - name: Install PCRE
         if: steps.cache-pcre.outputs.cache-hit != 'true'
         run: |
+          @echo on
           7z x pcre-%PCRE_VERSION%.zip || exit /b !errorlevel!
           cd pcre-%PCRE_VERSION% || exit /b !errorlevel!
-          cmake . -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DPCRE_BUILD_PCRECPP=Off -DPCRE_BUILD_TESTS=Off -DPCRE_BUILD_PCREGREP=Off || exit /b !errorlevel!
+          git apply --ignore-space-change ..\externals\pcre.patch || exit /b !errorlevel!
+          cmake . -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DPCRE_BUILD_PCRECPP=Off -DPCRE_BUILD_TESTS=Off -DPCRE_BUILD_PCREGREP=Off -DCMAKE_POLICY_VERSION_MINIMUM=3.5 || exit /b !errorlevel!
           nmake || exit /b !errorlevel!
           copy pcre.h ..\externals || exit /b !errorlevel!
           copy pcre.lib ..\externals\pcre64.lib || exit /b !errorlevel!
@@ -203,9 +205,20 @@ jobs:
       - name: Run test/cli (--cppcheck-build-dir)
         if: matrix.config == 'release'
         run: |
-          python -m pytest -Werror --strict-markers -vv test/cli || exit /b !errorlevel!
+          python -m pytest -Werror --strict-markers -vv -n auto test/cli || exit /b !errorlevel!
         env:
           TEST_CPPCHECK_INJECT_BUILDDIR: injected
+
+      # TODO: test with Release configuration?
+      - name: Test SEH wrapper
+        if: matrix.config == 'release'
+        run: |
+          cmake -S . -B build.cmake.seh -DBUILD_TESTS=On || exit /b !errorlevel!
+          cmake --build build.cmake.seh --target test-sehwrapper || exit /b !errorlevel!
+          :: TODO: how to run this without copying the file?
+          copy build.cmake.seh\bin\Debug\test-sehwrapper.exe . || exit /b !errorlevel!
+          python3 -m pytest -Werror --strict-markers -vv test/seh/test-sehwrapper.py || exit /b !errorlevel!
+          del test-sehwrapper.exe || exit /b !errorlevel!
 
       - name: Test addons
         if: matrix.config == 'release'
@@ -238,10 +251,11 @@ jobs:
           ..\..\cppcheck --dump naming_test.cpp || exit /b !errorlevel!
           python3 ..\naming.py --var='[a-z].*' --function='[a-z].*' naming_test.cpp.dump || exit /b !errorlevel!
 
+      # TODO: run with "-n auto" when misra_test.py can be run in parallel
       - name: test addons (Python)
         if: matrix.config == 'release'
         run: |
-          python -m pytest -Werror --strict-markers -vv addons/test || exit /b !errorlevel!
+          python -m pytest -Werror --strict-markers -vv -n 1 addons/test || exit /b !errorlevel!
         env:
           PYTHONPATH: ./addons
 

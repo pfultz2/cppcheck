@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -114,6 +114,18 @@ private:
         TEST_CASE(expressionString);
 
         TEST_CASE(hasKnownIntValue);
+
+        TEST_CASE(update_property_info);
+        TEST_CASE(update_property_info_evariable);
+        TEST_CASE(update_property_info_ekeyword_c);
+        TEST_CASE(update_property_info_ekeyword_cpp);
+        TEST_CASE(update_property_info_ebracket_link);
+        TEST_CASE(update_property_info_ecomparisonop_link);
+        TEST_CASE(update_property_info_etype_c);
+        TEST_CASE(update_property_info_etype_cpp);
+        TEST_CASE(update_property_info_replace); // #13743
+
+        TEST_CASE(varid_reset);
     }
 
     void nextprevious() const {
@@ -139,13 +151,13 @@ private:
     }
 
 #define MatchCheck(...) MatchCheck_(__FILE__, __LINE__, __VA_ARGS__)
-    bool MatchCheck_(const char* file, int line, const std::string& code, const std::string& pattern, unsigned int varid = 0) {
+    bool MatchCheck_(const char* file, int line, const std::string& code, const std::string& pattern) {
         SimpleTokenizer tokenizer(settingsDefault, *this);
         const std::string code2 = ";" + code + ";";
         try {
             ASSERT_LOC(tokenizer.tokenize(code2), file, line);
         } catch (...) {}
-        return Token::Match(tokenizer.tokens()->next(), pattern.c_str(), varid);
+        return Token::Match(tokenizer.tokens()->next(), pattern.c_str());
     }
 
     void multiCompare() const {
@@ -815,8 +827,7 @@ private:
         std::vector<std::string> other_ops;
         append_vector(other_ops, extendedOps);
 
-        std::vector<std::string>::const_iterator other_op, other_ops_end = other_ops.cend();
-        for (other_op = other_ops.cbegin(); other_op != other_ops_end; ++other_op) {
+        for (auto other_op = other_ops.cbegin(); other_op != other_ops.cend(); ++other_op) {
             ASSERT_EQUALS_MSG(false, MatchCheck(*other_op, "%op%"), "Failing other operator: " + *other_op);
         }
     }
@@ -837,16 +848,14 @@ private:
         append_vector(other_ops, extendedOps);
         append_vector(other_ops, assignmentOps);
 
-        std::vector<std::string>::const_iterator other_op, other_ops_end = other_ops.cend();
-        for (other_op = other_ops.cbegin(); other_op != other_ops_end; ++other_op) {
+        for (auto other_op = other_ops.cbegin(); other_op != other_ops.cend(); ++other_op) {
             ASSERT_EQUALS_MSG(false, MatchCheck(*other_op, "%cop%"), "Failing other operator: " + *other_op);
         }
     }
 
 
     void isArithmeticalOp() const {
-        std::vector<std::string>::const_iterator test_op, test_ops_end = arithmeticalOps.cend();
-        for (test_op = arithmeticalOps.cbegin(); test_op != test_ops_end; ++test_op) {
+        for (auto test_op = arithmeticalOps.cbegin(); test_op != arithmeticalOps.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
@@ -861,8 +870,7 @@ private:
         append_vector(other_ops, extendedOps);
         append_vector(other_ops, assignmentOps);
 
-        std::vector<std::string>::const_iterator other_op, other_ops_end = other_ops.cend();
-        for (other_op = other_ops.cbegin(); other_op != other_ops_end; ++other_op) {
+        for (auto other_op = other_ops.cbegin(); other_op != other_ops.cend(); ++other_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*other_op);
@@ -878,8 +886,7 @@ private:
         append_vector(test_ops, logicalOps);
         append_vector(test_ops, assignmentOps);
 
-        std::vector<std::string>::const_iterator test_op, test_ops_end = test_ops.cend();
-        for (test_op = test_ops.cbegin(); test_op != test_ops_end; ++test_op) {
+        for (auto test_op = test_ops.cbegin(); test_op != test_ops.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
@@ -890,8 +897,7 @@ private:
         std::vector<std::string> other_ops;
         append_vector(other_ops, extendedOps);
 
-        std::vector<std::string>::const_iterator other_op, other_ops_end = other_ops.cend();
-        for (other_op = other_ops.cbegin(); other_op != other_ops_end; ++other_op) {
+        for (auto other_op = other_ops.cbegin(); other_op != other_ops.cend(); ++other_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*other_op);
@@ -906,8 +912,7 @@ private:
         append_vector(test_ops, comparisonOps);
         append_vector(test_ops, logicalOps);
 
-        std::vector<std::string>::const_iterator test_op, test_ops_end = test_ops.cend();
-        for (test_op = test_ops.cbegin(); test_op != test_ops_end; ++test_op) {
+        for (auto test_op = test_ops.cbegin(); test_op != test_ops.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
@@ -919,8 +924,7 @@ private:
         append_vector(other_ops, extendedOps);
         append_vector(other_ops, assignmentOps);
 
-        std::vector<std::string>::const_iterator other_op, other_ops_end = other_ops.cend();
-        for (other_op = other_ops.cbegin(); other_op != other_ops_end; ++other_op) {
+        for (auto other_op = other_ops.cbegin(); other_op != other_ops.cend(); ++other_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*other_op);
@@ -936,8 +940,7 @@ private:
         append_vector(test_ops, logicalOps);
         append_vector(test_ops, extendedOps);
 
-        std::vector<std::string>::const_iterator test_op, test_ops_end = test_ops.cend();
-        for (test_op = test_ops.cbegin(); test_op != test_ops_end; ++test_op) {
+        for (auto test_op = test_ops.cbegin(); test_op != test_ops.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
@@ -945,8 +948,7 @@ private:
         }
 
         // Negative test against assignment operators
-        std::vector<std::string>::const_iterator other_op, other_ops_end = assignmentOps.cend();
-        for (other_op = assignmentOps.cbegin(); other_op != other_ops_end; ++other_op) {
+        for (auto other_op = assignmentOps.cbegin(); other_op != assignmentOps.cend(); ++other_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*other_op);
@@ -955,8 +957,7 @@ private:
     }
 
     void isAssignmentOp() const {
-        std::vector<std::string>::const_iterator test_op, test_ops_end = assignmentOps.cend();
-        for (test_op = assignmentOps.cbegin(); test_op != test_ops_end; ++test_op) {
+        for (auto test_op = assignmentOps.cbegin(); test_op != assignmentOps.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
@@ -971,8 +972,7 @@ private:
         append_vector(other_ops, logicalOps);
         append_vector(other_ops, extendedOps);
 
-        std::vector<std::string>::const_iterator other_op, other_ops_end = other_ops.cend();
-        for (other_op = other_ops.cbegin(); other_op != other_ops_end; ++other_op) {
+        for (auto other_op = other_ops.cbegin(); other_op != other_ops.cend(); ++other_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*other_op);
@@ -981,26 +981,25 @@ private:
     }
 
     void operators() const {
-        std::vector<std::string>::const_iterator test_op;
-        for (test_op = extendedOps.cbegin(); test_op != extendedOps.cend(); ++test_op) {
+        for (auto test_op = extendedOps.cbegin(); test_op != extendedOps.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
             ASSERT_EQUALS(Token::eExtendedOp, tok.tokType());
         }
-        for (test_op = logicalOps.cbegin(); test_op != logicalOps.cend(); ++test_op) {
+        for (auto test_op = logicalOps.cbegin(); test_op != logicalOps.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
             ASSERT_EQUALS(Token::eLogicalOp, tok.tokType());
         }
-        for (test_op = bitOps.cbegin(); test_op != bitOps.cend(); ++test_op) {
+        for (auto test_op = bitOps.cbegin(); test_op != bitOps.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
             ASSERT_EQUALS(Token::eBitOp, tok.tokType());
         }
-        for (test_op = comparisonOps.cbegin(); test_op != comparisonOps.cend(); ++test_op) {
+        for (auto test_op = comparisonOps.cbegin(); test_op != comparisonOps.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
@@ -1045,8 +1044,7 @@ private:
         standard_types.emplace_back("double");
         standard_types.emplace_back("size_t");
 
-        std::vector<std::string>::const_iterator test_op, test_ops_end = standard_types.cend();
-        for (test_op = standard_types.cbegin(); test_op != test_ops_end; ++test_op) {
+        for (auto test_op = standard_types.cbegin(); test_op != standard_types.cend(); ++test_op) {
             TokensFrontBack tokensFrontBack(list);
             Token tok(tokensFrontBack);
             tok.str(*test_op);
@@ -1238,6 +1236,283 @@ private:
         ASSERT_EQUALS(true, token.addValue(v2));
         ASSERT_EQUALS(false, token.hasKnownIntValue());
     }
+
+#define assert_tok(...) _assert_tok(__FILE__, __LINE__, __VA_ARGS__)
+    void _assert_tok(const char* file, int line, const Token* tok, Token::Type t, bool l = false, bool std = false, bool ctrl = false) const
+    {
+        ASSERT_LOC_MSG(tok, "tok", file, line);
+        ASSERT_EQUALS_ENUM_LOC_MSG(t, tok->tokType(), "tokType", file, line);
+        ASSERT_EQUALS_LOC_MSG(l, tok->isLong(), "isLong", file, line);
+        ASSERT_EQUALS_LOC_MSG(std, tok->isStandardType(), "isStandardType", file, line);
+        ASSERT_EQUALS_LOC_MSG(ctrl, tok->isControlFlowKeyword(), "isControlFlowKeyword", file, line);
+    }
+
+    void _assert_tok(const char* file, int line, const std::string& s, Token::Type t, bool l = false, bool std = false, bool ctrl = false) const
+    {
+        TokensFrontBack tokensFrontBack(list);
+        Token tok(tokensFrontBack);
+        tok.str(s);
+        _assert_tok(file, line, &tok, t, l, std, ctrl);
+    }
+
+    void update_property_info() const
+    {
+        assert_tok("", Token::Type::eNone);
+        assert_tok("true", Token::Type::eBoolean);
+        assert_tok("false", Token::Type::eBoolean);
+        assert_tok("\"\"", Token::Type::eString);
+        assert_tok("L\"\"", Token::Type::eString, /*l=*/ true);
+        assert_tok("'a'", Token::Type::eChar);
+        assert_tok("L'a'", Token::Type::eChar, /*l=*/ true);
+        // eVariable has separate test
+        // eKeyword with specific languages and standards has separate tests
+        assert_tok("sizeof", Token::Type::eKeyword);
+        assert_tok("goto", Token::Type::eKeyword, /*l=*/ false, /*std=*/ false, /*ctrl=*/ true);
+        assert_tok("asm", Token::Type::eKeyword);
+        assert_tok("a", Token::Type::eName);
+        assert_tok("_a", Token::Type::eName);
+        assert_tok("$a", Token::Type::eName);
+        assert_tok("bool2", Token::Type::eName);
+        assert_tok("0", Token::Type::eNumber);
+        assert_tok("-0", Token::Type::eNumber);
+        assert_tok("+0", Token::Type::eNumber);
+        assert_tok("0xa", Token::Type::eNumber);
+        assert_tok("010", Token::Type::eNumber);
+        assert_tok("0b0", Token::Type::eNumber);
+        assert_tok("0.0", Token::Type::eNumber);
+        assert_tok("0x0.3p10", Token::Type::eNumber);
+        assert_tok("0z", Token::Type::eNumber); // TODO: not a valid number
+        assert_tok("0_km", Token::Type::eName); // user literal
+        assert_tok("=", Token::Type::eAssignmentOp);
+        assert_tok("<<=", Token::Type::eAssignmentOp);
+        assert_tok(">>=", Token::Type::eAssignmentOp);
+        assert_tok("+=", Token::Type::eAssignmentOp);
+        assert_tok("-=", Token::Type::eAssignmentOp);
+        assert_tok("*=", Token::Type::eAssignmentOp);
+        assert_tok("/=", Token::Type::eAssignmentOp);
+        assert_tok("%=", Token::Type::eAssignmentOp);
+        assert_tok("&=", Token::Type::eAssignmentOp);
+        assert_tok("|=", Token::Type::eAssignmentOp);
+        assert_tok("^=", Token::Type::eAssignmentOp);
+        assert_tok(",", Token::Type::eExtendedOp);
+        assert_tok("[", Token::Type::eExtendedOp);
+        assert_tok("]", Token::Type::eExtendedOp);
+        assert_tok("(", Token::Type::eExtendedOp);
+        assert_tok(")", Token::Type::eExtendedOp);
+        assert_tok("?", Token::Type::eExtendedOp);
+        assert_tok(":", Token::Type::eExtendedOp);
+        assert_tok("<<", Token::Type::eArithmeticalOp);
+        assert_tok(">>", Token::Type::eArithmeticalOp);
+        assert_tok("+", Token::Type::eArithmeticalOp);
+        assert_tok("-", Token::Type::eArithmeticalOp);
+        assert_tok("*", Token::Type::eArithmeticalOp);
+        assert_tok("/", Token::Type::eArithmeticalOp);
+        assert_tok("%", Token::Type::eArithmeticalOp);
+        assert_tok("&", Token::Type::eBitOp);
+        assert_tok("|", Token::Type::eBitOp);
+        assert_tok("^", Token::Type::eBitOp);
+        assert_tok("~", Token::Type::eBitOp);
+        assert_tok("&&", Token::Type::eLogicalOp);
+        assert_tok("||", Token::Type::eLogicalOp);
+        assert_tok("!", Token::Type::eLogicalOp);
+        assert_tok("==", Token::Type::eComparisonOp);
+        assert_tok("!=", Token::Type::eComparisonOp);
+        assert_tok("<", Token::Type::eComparisonOp);
+        assert_tok("<=", Token::Type::eComparisonOp);
+        assert_tok(">", Token::Type::eComparisonOp);
+        assert_tok(">=", Token::Type::eComparisonOp);
+        // eComparisonOp with link has a separate test
+        assert_tok("<=>", Token::Type::eComparisonOp);
+        assert_tok("++", Token::Type::eIncDecOp);
+        assert_tok("--", Token::Type::eIncDecOp);
+        assert_tok("{", Token::Type::eBracket);
+        assert_tok("}", Token::Type::eBracket);
+        // < and > with link have a separate test
+        assert_tok("...", Token::Type::eEllipsis);
+        assert_tok(";", Token::Type::eOther);
+        // eType with specific languages and standards has separate tests
+        assert_tok("void", Token::Type::eType, /*l=*/ false, /*std=*/ true);
+    }
+
+    void update_property_info_evariable() const
+    {
+        {
+            TokensFrontBack tokensFrontBack(list);
+            Token tok(tokensFrontBack);
+            tok.str("var1");
+            tok.varId(17);
+            assert_tok(&tok, Token::Type::eVariable);
+        }
+    }
+
+    void update_property_info_ekeyword_c() const
+    {
+        {
+            const Settings s = settingsBuilder().c(Standards::cstd_t::C89).build();
+            TokenList list_c{&s};
+            list_c.setLang(Standards::Language::C);
+            TokensFrontBack tokensFrontBack(list_c);
+            Token tok(tokensFrontBack);
+            tok.str("alignas"); // not a C89 keyword
+            assert_tok(&tok, Token::Type::eName);
+        }
+        {
+            TokenList list_c{&settingsDefault};
+            list_c.setLang(Standards::Language::C);
+            TokensFrontBack tokensFrontBack(list_c);
+            Token tok(tokensFrontBack);
+            tok.str("alignas"); // a C23 keyword
+            assert_tok(&tok, Token::Type::eKeyword);
+        }
+        {
+            TokenList list_c{&settingsDefault};
+            list_c.setLang(Standards::Language::C);
+            TokensFrontBack tokensFrontBack(list_c);
+            Token tok(tokensFrontBack);
+            tok.str("and_eq"); // a C++ keyword
+            assert_tok(&tok, Token::Type::eName);
+        }
+    }
+
+    void update_property_info_ekeyword_cpp() const
+    {
+        {
+            const Settings s = settingsBuilder().cpp(Standards::cppstd_t::CPP03).build();
+            TokenList list_cpp{&s};
+            list_cpp.setLang(Standards::Language::CPP);
+            TokensFrontBack tokensFrontBack(list_cpp);
+            Token tok(tokensFrontBack);
+            tok.str("consteval"); // not a C++03 keyword
+            assert_tok(&tok, Token::Type::eName);
+        }
+        {
+            TokenList list_cpp{&settingsDefault};
+            list_cpp.setLang(Standards::Language::CPP);
+            TokensFrontBack tokensFrontBack(list_cpp);
+            Token tok(tokensFrontBack);
+            tok.str("consteval"); // a C++20 keyword
+            assert_tok(&tok, Token::Type::eKeyword);
+        }
+        {
+            TokenList list_cpp{&settingsDefault};
+            list_cpp.setLang(Standards::Language::CPP);
+            TokensFrontBack tokensFrontBack(list_cpp);
+            Token tok(tokensFrontBack);
+            tok.str("typeof_unqual"); // a C keyword
+            assert_tok(&tok, Token::Type::eName);
+        }
+    }
+
+    void update_property_info_ebracket_link() const
+    {
+        {
+            TokensFrontBack tokensFrontBack(list);
+            Token tok(tokensFrontBack);
+            tok.str("<");
+
+            Token tok2(tokensFrontBack);
+            tok.link(&tok2);
+            assert_tok(&tok, Token::Type::eBracket);
+        }
+
+        {
+            TokensFrontBack tokensFrontBack(list);
+            Token tok(tokensFrontBack);
+
+            Token tok2(tokensFrontBack);
+            tok.link(&tok2);
+
+            tok.str("<");
+            assert_tok(&tok, Token::Type::eBracket);
+        }
+    }
+
+    void update_property_info_ecomparisonop_link() const
+    {
+        {
+            TokensFrontBack tokensFrontBack(list);
+            Token tok(tokensFrontBack);
+            tok.str("==");
+
+            Token tok2(tokensFrontBack);
+            tok.link(&tok2); // TODO: does not (and probably should not) update
+            assert_tok(&tok, Token::Type::eComparisonOp);
+        }
+
+        {
+            TokensFrontBack tokensFrontBack(list);
+            Token tok(tokensFrontBack);
+
+            Token tok2(tokensFrontBack);
+            tok.link(&tok2);
+
+            tok.str("==");
+            assert_tok(&tok, Token::Type::eOther); // TODO: this looks wrong
+        }
+    }
+
+    void update_property_info_etype_c() const
+    {
+        {
+            TokenList list_c{&settingsDefault};
+            list_c.setLang(Standards::Language::C);
+            TokensFrontBack tokensFrontBack(list_c);
+            Token tok(tokensFrontBack);
+            tok.str("char"); // not treated as keyword in TokenList::isKeyword()
+            assert_tok(&tok, Token::Type::eType, /*l=*/ false, /*std=*/ true);
+        }
+        {
+            TokenList list_c{&settingsDefault};
+            list_c.setLang(Standards::Language::C);
+            TokensFrontBack tokensFrontBack(list_c);
+            Token tok(tokensFrontBack);
+            tok.str("size_t"); // not treated as keyword in TokenList::isKeyword()
+            assert_tok(&tok, Token::Type::eType, /*l=*/ false, /*std=*/ true);
+        }
+    }
+
+    void update_property_info_etype_cpp() const
+    {
+        {
+            TokenList list_cpp{&settingsDefault};
+            list_cpp.setLang(Standards::Language::CPP);
+            TokensFrontBack tokensFrontBack(list_cpp);
+            Token tok(tokensFrontBack);
+            tok.str("bool"); // not treated as keyword in TokenList::isKeyword()
+            assert_tok(&tok, Token::Type::eType, /*l=*/ false, /*std=*/ true);
+        }
+        {
+            TokenList list_cpp{&settingsDefault};
+            list_cpp.setLang(Standards::Language::CPP);
+            TokensFrontBack tokensFrontBack(list_cpp);
+            Token tok(tokensFrontBack);
+            tok.str("size_t");
+            assert_tok(&tok, Token::Type::eType, /*l=*/ false, /*std=*/ true);
+        }
+    }
+
+    void update_property_info_replace() const // #13743
+    {
+        TokensFrontBack tokensFrontBack(list);
+        Token tok(tokensFrontBack);
+        tok.str("size_t");
+        assert_tok(&tok, Token::Type::eType, false, true);
+        tok.str("long");
+        assert_tok(&tok, Token::Type::eType, false, true);
+    }
+
+    void varid_reset() const
+    {
+        TokenList list_c{&settingsDefault};
+        list_c.setLang(Standards::Language::C);
+        TokensFrontBack tokensFrontBack(list_c);
+        Token tok(tokensFrontBack);
+        tok.str("int"); // not treated as keyword in TokenList::isKeyword()
+        assert_tok(&tok, Token::Type::eType, /*l=*/ false, /*std=*/ true);
+        tok.varId(0);
+        assert_tok(&tok, Token::Type::eType, /*l=*/ false, /*std=*/ true);
+    }
+#undef assert_tok
 };
 
 REGISTER_TEST(TestToken)

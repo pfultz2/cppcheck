@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,6 @@
 
 #include "check.h"
 #include "color.h"
-#include "config.h"
 #include "errorlogger.h"
 #include "platform.h"
 #include "settings.h"
@@ -69,10 +68,10 @@ protected:
     virtual void teardownTestInternal() {}
     std::string getLocationStr(const char * filename, unsigned int linenr) const;
 
-    void assert_(const char * filename, unsigned int linenr, bool condition) const;
+    void assert_(const char * filename, unsigned int linenr, bool condition, const std::string& msg = "") const;
 
     template<typename T>
-    void assertEquals(const char* const filename, const unsigned int linenr, const T& expected, const T& actual, const std::string& msg = emptyString) const {
+    void assertEquals(const char* const filename, const unsigned int linenr, const T& expected, const T& actual, const std::string& msg = "") const {
         if (expected != actual) {
             std::ostringstream expectedStr;
             expectedStr << expected;
@@ -84,7 +83,7 @@ protected:
     }
 
     template<typename T>
-    void assertEqualsEnum(const char* const filename, const unsigned int linenr, const T& expected, const T& actual, const std::string& msg = emptyString) const {
+    void assertEqualsEnum(const char* const filename, const unsigned int linenr, const T& expected, const T& actual, const std::string& msg = "") const {
         if (std::is_unsigned<T>())
             assertEquals(filename, linenr, static_cast<std::uint64_t>(expected), static_cast<std::uint64_t>(actual), msg);
         else
@@ -99,13 +98,13 @@ protected:
             todoAssertEquals(filename, linenr, static_cast<std::int64_t>(wanted), static_cast<std::int64_t>(current), static_cast<std::int64_t>(actual));
     }
 
-    void assertEquals(const char * filename, unsigned int linenr, const std::string &expected, const std::string &actual, const std::string &msg = emptyString) const;
-    void assertEqualsWithoutLineNumbers(const char * filename, unsigned int linenr, const std::string &expected, const std::string &actual, const std::string &msg = emptyString) const;
-    void assertEquals(const char * filename, unsigned int linenr, const char expected[], const std::string& actual, const std::string &msg = emptyString) const;
-    void assertEquals(const char * filename, unsigned int linenr, const char expected[], const char actual[], const std::string &msg = emptyString) const;
-    void assertEquals(const char * filename, unsigned int linenr, const std::string& expected, const char actual[], const std::string &msg = emptyString) const;
-    void assertEquals(const char * filename, unsigned int linenr, long long expected, long long actual, const std::string &msg = emptyString) const;
-    void assertEqualsDouble(const char * filename, unsigned int linenr, double expected, double actual, double tolerance, const std::string &msg = emptyString) const;
+    void assertEquals(const char * filename, unsigned int linenr, const std::string &expected, const std::string &actual, const std::string &msg = "") const;
+    void assertEqualsWithoutLineNumbers(const char * filename, unsigned int linenr, const std::string &expected, const std::string &actual, const std::string &msg = "") const;
+    void assertEquals(const char * filename, unsigned int linenr, const char expected[], const std::string& actual, const std::string &msg = "") const;
+    void assertEquals(const char * filename, unsigned int linenr, const char expected[], const char actual[], const std::string &msg = "") const;
+    void assertEquals(const char * filename, unsigned int linenr, const std::string& expected, const char actual[], const std::string &msg = "") const;
+    void assertEquals(const char * filename, unsigned int linenr, long long expected, long long actual, const std::string &msg = "") const;
+    void assertEqualsDouble(const char * filename, unsigned int linenr, double expected, double actual, double tolerance, const std::string &msg = "") const;
 
     void todoAssertEquals(const char * filename, unsigned int linenr, const std::string &wanted,
                           const std::string &current, const std::string &actual) const;
@@ -216,7 +215,10 @@ protected:
 
         SettingsBuilder& library(const char lib[]);
 
-        SettingsBuilder& libraryxml(const char xmldata[], std::size_t len);
+        template<size_t size>
+        SettingsBuilder& libraryxml(const char (&xmldata)[size]) {
+            return libraryxml(xmldata, size-1);
+        }
 
         SettingsBuilder& platform(Platform::Type type);
 
@@ -238,6 +240,8 @@ protected:
             return std::move(settings);
         }
     private:
+        SettingsBuilder& libraryxml(const char xmldata[], std::size_t len);
+
         const TestFixture &fixture;
         Settings settings;
 
@@ -309,14 +313,18 @@ protected:
 // TODO: the asserts do not actually assert i.e. do stop executing the test
 #define ASSERT( CONDITION ) assert_(__FILE__, __LINE__, (CONDITION))
 #define ASSERT_LOC( CONDITION, FILE_, LINE_ ) assert_(FILE_, LINE_, (CONDITION))
+#define ASSERT_LOC_MSG( CONDITION, MSG, FILE_, LINE_ ) assert_(FILE_, LINE_, (CONDITION), MSG)
 // *INDENT-OFF*
 #define ASSERT_EQUALS( EXPECTED, ACTUAL ) do { try { assertEquals(__FILE__, __LINE__, (EXPECTED), (ACTUAL)); } catch (...) { assertNoThrowFail(__FILE__, __LINE__); } } while (false)
 // *INDENT-ON*
 #define ASSERT_EQUALS_WITHOUT_LINENUMBERS( EXPECTED, ACTUAL ) assertEqualsWithoutLineNumbers(__FILE__, __LINE__, EXPECTED, ACTUAL)
 #define ASSERT_EQUALS_DOUBLE( EXPECTED, ACTUAL, TOLERANCE ) assertEqualsDouble(__FILE__, __LINE__, EXPECTED, ACTUAL, TOLERANCE)
+#define ASSERT_EQUALS_LOC( EXPECTED, ACTUAL, FILE_, LINE_ ) assertEquals(FILE_, LINE_, EXPECTED, ACTUAL)
 #define ASSERT_EQUALS_LOC_MSG( EXPECTED, ACTUAL, MSG, FILE_, LINE_ ) assertEquals(FILE_, LINE_, EXPECTED, ACTUAL, MSG)
 #define ASSERT_EQUALS_MSG( EXPECTED, ACTUAL, MSG ) assertEquals(__FILE__, __LINE__, EXPECTED, ACTUAL, MSG)
 #define ASSERT_EQUALS_ENUM( EXPECTED, ACTUAL ) assertEqualsEnum(__FILE__, __LINE__, (EXPECTED), (ACTUAL))
+#define ASSERT_EQUALS_ENUM_LOC( EXPECTED, ACTUAL, FILE_, LINE_ ) assertEqualsEnum(FILE_, LINE_, (EXPECTED), (ACTUAL))
+#define ASSERT_EQUALS_ENUM_LOC_MSG( EXPECTED, ACTUAL, MSG, FILE_, LINE_ ) assertEqualsEnum(FILE_, LINE_, (EXPECTED), (ACTUAL), MSG)
 #define TODO_ASSERT_EQUALS_ENUM( WANTED, CURRENT, ACTUAL ) todoAssertEqualsEnum(__FILE__, __LINE__, WANTED, CURRENT, ACTUAL)
 #define ASSERT_THROW_EQUALS( CMD, EXCEPTION, EXPECTED ) do { try { (void)(CMD); assertThrowFail(__FILE__, __LINE__); } catch (const EXCEPTION&e) { assertEquals(__FILE__, __LINE__, EXPECTED, e.errorMessage); } catch (...) { assertThrowFail(__FILE__, __LINE__); } } while (false)
 #define ASSERT_THROW_EQUALS_2( CMD, EXCEPTION, EXPECTED ) do { try { (void)(CMD); assertThrowFail(__FILE__, __LINE__); } catch (const EXCEPTION&e) { assertEquals(__FILE__, __LINE__, EXPECTED, e.what()); } catch (...) { assertThrowFail(__FILE__, __LINE__); } } while (false)

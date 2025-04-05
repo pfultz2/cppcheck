@@ -48,7 +48,6 @@ Checks: >
         -modernize-replace-auto-ptr,
         -modernize-return-braced-init-list,
         -modernize-type-traits,
-        -modernize-use-auto,
         -modernize-use-designated-initializers,
         -modernize-use-nodiscard,
         -modernize-use-trailing-return-type,
@@ -71,7 +70,8 @@ Checks: >
         -readability-suspicious-call-argument,
         -readability-uppercase-literal-suffix
 WarningsAsErrors: '*'
-HeaderFilterRegex: '(cli|gui|lib|oss-fuzz|test|triage)\/[a-z]+\.h'
+HeaderFilterRegex: '(cli|gui|lib|oss-fuzz|test|triage)\/[a-z_]+\.h'
+ExcludeHeaderFilterRegex: 'ui_.*.h'
 CheckOptions:
   - key:             misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
     value:           '1'

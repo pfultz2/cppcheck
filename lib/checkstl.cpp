@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,10 +30,12 @@
 #include "tokenize.h"
 #include "utils.h"
 #include "valueflow.h"
+#include "vfvalue.h"
 
 #include "checknullpointer.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <iterator>
 #include <list>
 #include <map>
@@ -204,14 +206,14 @@ void CheckStl::outOfBounds()
 static std::string indexValueString(const ValueFlow::Value& indexValue, const std::string& containerName = emptyString)
 {
     if (indexValue.isIteratorStartValue())
-        return "at position " + std::to_string(indexValue.intvalue) + " from the beginning";
+        return "at position " + MathLib::toString(indexValue.intvalue) + " from the beginning";
     if (indexValue.isIteratorEndValue())
-        return "at position " + std::to_string(-indexValue.intvalue) + " from the end";
-    std::string indexString = std::to_string(indexValue.intvalue);
+        return "at position " + MathLib::toString(-indexValue.intvalue) + " from the end";
+    std::string indexString = MathLib::toString(indexValue.intvalue);
     if (indexValue.isSymbolicValue()) {
         indexString = containerName + ".size()";
         if (indexValue.intvalue != 0)
-            indexString += "+" + std::to_string(indexValue.intvalue);
+            indexString += "+" + MathLib::toString(indexValue.intvalue);
     }
     if (indexValue.bound == ValueFlow::Value::Bound::Lower)
         return "greater or equal to " + indexString;
@@ -243,11 +245,11 @@ void CheckStl::outOfBoundsError(const Token *tok, const std::string &containerNa
             errmsg = "Out of bounds access in expression '" + expression + "' because '$symbol' is empty.";
     } else if (indexValue) {
         if (containerSize->condition)
-            errmsg = ValueFlow::eitherTheConditionIsRedundant(containerSize->condition) + " or size of '$symbol' can be " + std::to_string(containerSize->intvalue) + ". Expression '" + expression + "' causes access out of bounds.";
+            errmsg = ValueFlow::eitherTheConditionIsRedundant(containerSize->condition) + " or size of '$symbol' can be " + MathLib::toString(containerSize->intvalue) + ". Expression '" + expression + "' causes access out of bounds.";
         else if (indexValue->condition)
             errmsg = ValueFlow::eitherTheConditionIsRedundant(indexValue->condition) + " or '" + index + "' can have the value " + indexValueString(*indexValue) + ". Expression '" + expression + "' causes access out of bounds.";
         else
-            errmsg = "Out of bounds access in '" + expression + "', if '$symbol' size is " + std::to_string(containerSize->intvalue) + " and '" + index + "' is " + indexValueString(*indexValue);
+            errmsg = "Out of bounds access in '" + expression + "', if '$symbol' size is " + MathLib::toString(containerSize->intvalue) + " and '" + index + "' is " + indexValueString(*indexValue);
     } else {
         // should not happen
         return;
@@ -302,7 +304,7 @@ bool CheckStl::isContainerSizeGE(const Token * containerToken, const Token *expr
             mul = expr->astOperand1();
         else
             return false;
-        return mul && (!mul->hasKnownIntValue() || mul->values().front().intvalue != 0);
+        return mul && (!mul->hasKnownIntValue() || mul->getKnownIntValue() != 0);
     }
     if (expr->str() == "+") {
         const Token *op;
@@ -711,7 +713,7 @@ static bool isSameIteratorContainerExpression(const Token* tok1,
     if (isSameExpression(false, tok1, tok2, settings, false, false)) {
         return !astIsContainerOwned(tok1) || !isTemporary(tok1, &settings.library);
     }
-    if (astContainerYield(tok2) == Library::Container::Yield::ITEM)
+    if (astContainerYield(tok2, settings.library) == Library::Container::Yield::ITEM)
         return true;
     if (kind == ValueFlow::Value::LifetimeKind::Address || kind == ValueFlow::Value::LifetimeKind::Iterator) {
         const auto address1 = getAddressContainer(tok1);
@@ -799,8 +801,12 @@ bool CheckStl::checkIteratorPair(const Token* tok1, const Token* tok2)
             return false;
     }
     const Token* iter1 = getIteratorExpression(tok1);
+    if (!iter1)
+        return false;
     const Token* iter2 = getIteratorExpression(tok2);
-    if (iter1 && iter2 && !isSameIteratorContainerExpression(iter1, iter2, *mSettings)) {
+    if (!iter2)
+        return false;
+    if (!isSameIteratorContainerExpression(iter1, iter2, *mSettings)) {
         mismatchingContainerExpressionError(iter1, iter2);
         return true;
     }
@@ -1130,7 +1136,6 @@ void CheckStl::invalidContainer()
 {
     logChecker("CheckStl::invalidContainer");
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
-    const Library& library = mSettings->library;
     InvalidContainerAnalyzer analyzer;
     analyzer.analyze(symbolDatabase);
     for (const Scope * scope : symbolDatabase->functionScopes) {
@@ -1183,7 +1188,7 @@ void CheckStl::invalidContainer()
                     const ValueFlow::Value* v = nullptr;
                     ErrorPath errorPath;
                     PathAnalysis::Info info =
-                        PathAnalysis{endToken, library}.forwardFind([&](const PathAnalysis::Info& info) {
+                        PathAnalysis{endToken}.forwardFind([&](const PathAnalysis::Info& info) {
                         if (!info.tok->variable())
                             return false;
                         if (info.tok->varId() == 0)
@@ -1195,7 +1200,7 @@ void CheckStl::invalidContainer()
                         if (Token::Match(info.tok->astParent(), "%assign%") && astIsLHS(info.tok))
                             skipVarIds.insert(info.tok->varId());
                         if (info.tok->variable()->isReference() && !isVariableDecl(info.tok) &&
-                            reaches(info.tok->variable()->nameToken(), tok, library, nullptr)) {
+                            reaches(info.tok->variable()->nameToken(), tok, nullptr)) {
 
                             ErrorPath ep;
                             bool addressOf = false;
@@ -1205,7 +1210,7 @@ void CheckStl::invalidContainer()
                                 // An argument always reaches
                                 if (var->isArgument() ||
                                     (!var->isReference() && !var->isRValueReference() && !isVariableDecl(tok) &&
-                                     reaches(var->nameToken(), tok, library, &ep))) {
+                                     reaches(var->nameToken(), tok, &ep))) {
                                     errorPath = std::move(ep);
                                     return true;
                                 }
@@ -1214,7 +1219,7 @@ void CheckStl::invalidContainer()
                         ErrorPath ep;
                         const ValueFlow::Value* val = getInnerLifetime(info.tok, r.tok->varId(), &ep);
                         // Check the iterator is created before the change
-                        if (val && val->tokvalue != tok && reaches(val->tokvalue, tok, library, &ep)) {
+                        if (val && val->tokvalue != tok && reaches(val->tokvalue, tok, &ep)) {
                             v = val;
                             errorPath = std::move(ep);
                             return true;
@@ -1279,11 +1284,11 @@ void CheckStl::stlOutOfBounds()
     for (const Scope &scope : symbolDatabase->scopeList) {
         const Token* tok = scope.classDef;
         // only interested in conditions
-        if ((!scope.isLoopScope() && scope.type != Scope::eIf) || !tok)
+        if ((!scope.isLoopScope() && scope.type != ScopeType::eIf) || !tok)
             continue;
 
         const Token *condition = nullptr;
-        if (scope.type == Scope::eFor) {
+        if (scope.type == ScopeType::eFor) {
             if (Token::simpleMatch(tok->next()->astOperand2(), ";") && Token::simpleMatch(tok->next()->astOperand2()->astOperand2(), ";"))
                 condition = tok->next()->astOperand2()->astOperand2()->astOperand1();
         } else if (Token::simpleMatch(tok, "do {") && Token::simpleMatch(tok->linkAt(1), "} while ("))
@@ -1408,7 +1413,7 @@ void CheckStl::erase()
     const SymbolDatabase* const symbolDatabase = mTokenizer->getSymbolDatabase();
 
     for (const Scope &scope : symbolDatabase->scopeList) {
-        if (scope.type == Scope::eFor && Token::simpleMatch(scope.classDef, "for (")) {
+        if (scope.type == ScopeType::eFor && Token::simpleMatch(scope.classDef, "for (")) {
             const Token *tok = scope.classDef->linkAt(1);
             if (!Token::Match(tok->tokAt(-3), "; ++| %var% ++| ) {"))
                 continue;
@@ -1416,7 +1421,7 @@ void CheckStl::erase()
             if (!tok->isName())
                 tok = tok->previous();
             eraseCheckLoopVar(scope, tok->variable());
-        } else if (scope.type == Scope::eWhile && Token::Match(scope.classDef, "while ( %var% !=")) {
+        } else if (scope.type == ScopeType::eWhile && Token::Match(scope.classDef, "while ( %var% !=")) {
             eraseCheckLoopVar(scope, scope.classDef->tokAt(2)->variable());
         }
     }
@@ -1532,7 +1537,7 @@ void CheckStl::if_find()
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
 
     for (const Scope &scope : symbolDatabase->scopeList) {
-        if ((scope.type != Scope::eIf && scope.type != Scope::eWhile) || !scope.classDef)
+        if ((scope.type != ScopeType::eIf && scope.type != ScopeType::eWhile) || !scope.classDef)
             continue;
 
         const Token *conditionStart = scope.classDef->next();
@@ -1837,7 +1842,7 @@ void CheckStl::redundantCondition()
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
 
     for (const Scope &scope : symbolDatabase->scopeList) {
-        if (scope.type != Scope::eIf)
+        if (scope.type != ScopeType::eIf)
             continue;
 
         const Token* tok = scope.classDef->tokAt(2);
@@ -1878,7 +1883,7 @@ void CheckStl::missingComparison()
     const SymbolDatabase* const symbolDatabase = mTokenizer->getSymbolDatabase();
 
     for (const Scope &scope : symbolDatabase->scopeList) {
-        if (scope.type != Scope::eFor || !scope.classDef)
+        if (scope.type != ScopeType::eFor || !scope.classDef)
             continue;
 
         for (const Token *tok2 = scope.classDef->tokAt(2); tok2 != scope.bodyStart; tok2 = tok2->next()) {
@@ -2004,7 +2009,7 @@ void CheckStl::string_c_str()
 
     // Try to detect common problems when using string::c_str()
     for (const Scope &scope : symbolDatabase->scopeList) {
-        if (scope.type != Scope::eFunction || !scope.function)
+        if (scope.type != ScopeType::eFunction || !scope.function)
             continue;
 
         enum : std::uint8_t {charPtr, stdString, stdStringConstRef, Other} returnType = Other;
@@ -2370,12 +2375,12 @@ void CheckStl::checkDereferenceInvalidIterator()
     // Iterate over "if", "while", and "for" conditions where there may
     // be an iterator that is dereferenced before being checked for validity.
     for (const Scope &scope : mTokenizer->getSymbolDatabase()->scopeList) {
-        if (!(scope.type == Scope::eIf || scope.isLoopScope()))
+        if (!(scope.type == ScopeType::eIf || scope.isLoopScope()))
             continue;
 
         const Token* const tok = scope.classDef;
         const Token* startOfCondition = tok->next();
-        if (scope.type == Scope::eDo)
+        if (scope.type == ScopeType::eDo)
             startOfCondition = startOfCondition->link()->tokAt(2);
         if (!startOfCondition) // ticket #6626 invalid code
             continue;
@@ -2384,7 +2389,7 @@ void CheckStl::checkDereferenceInvalidIterator()
             continue;
 
         // For "for" loops, only search between the two semicolons
-        if (scope.type == Scope::eFor) {
+        if (scope.type == ScopeType::eFor) {
             startOfCondition = Token::findsimplematch(tok->tokAt(2), ";", endOfCondition);
             if (!startOfCondition)
                 continue;
@@ -2486,7 +2491,7 @@ void CheckStl::checkDereferenceInvalidIterator2()
             if (cValue && cValue->intvalue == 0) {
                 if (Token::Match(tok->astParent(), "+|-") && astIsIntegral(tok->astSibling(), false)) {
                     if (tok->astSibling() && tok->astSibling()->hasKnownIntValue()) {
-                        if (tok->astSibling()->values().front().intvalue == 0)
+                        if (tok->astSibling()->getKnownIntValue() == 0)
                             continue;
                     } else {
                         advanceIndex = tok->astSibling();
@@ -2509,7 +2514,7 @@ void CheckStl::checkDereferenceInvalidIterator2()
                     outOfBoundsError(emptyAdvance,
                                      lValue.tokvalue->expressionString(),
                                      cValue,
-                                     advanceIndex ? advanceIndex->expressionString() : emptyString,
+                                     advanceIndex ? advanceIndex->expressionString() : "",
                                      nullptr);
                 else
                     outOfBoundsError(tok, lValue.tokvalue->expressionString(), cValue, tok->expressionString(), &value);
@@ -2593,7 +2598,9 @@ static const Token *singleStatement(const Token *start)
     return endStatement;
 }
 
-static const Token *singleAssignInScope(const Token *start, nonneg int varid, bool &input, bool &hasBreak, const Settings& settings)
+enum class LoopType : std::uint8_t { OTHER, RANGE, ITERATOR, INDEX };
+
+static const Token *singleAssignInScope(const Token *start, nonneg int varid, bool &input, bool &hasBreak, LoopType loopType, const Settings& settings)
 {
     const Token *endStatement = singleStatement(start);
     if (!endStatement)
@@ -2607,6 +2614,23 @@ static const Token *singleAssignInScope(const Token *start, nonneg int varid, bo
         return nullptr;
     input = Token::findmatch(assignTok->next(), "%varid%", endStatement, varid) || !Token::Match(start->next(), "%var% =");
     hasBreak = Token::simpleMatch(endStatement->previous(), "break");
+
+    if (loopType == LoopType::INDEX) { // check for container access
+        nonneg int containerId{};
+        for (const Token* tok = assignTok->next(); tok != endStatement; tok = tok->next()) {
+            if (tok->varId() == varid) {
+                if (!Token::simpleMatch(tok->astParent(), "["))
+                    return nullptr;
+                const Token* contTok = tok->astParent()->astOperand1();
+                if (!contTok->valueType() || !contTok->valueType()->container || contTok->varId() == 0)
+                    return nullptr;
+                if (containerId > 0 && containerId != contTok->varId()) // allow only one container
+                    return nullptr;
+                containerId = contTok->varId();
+            }
+        }
+        return containerId > 0 ? assignTok : nullptr;
+    }
     return assignTok;
 }
 
@@ -2647,7 +2671,7 @@ static const Token *singleIncrementInScope(const Token *start, nonneg int varid,
     return varTok;
 }
 
-static const Token *singleConditionalInScope(const Token *start, nonneg int varid, const Settings& settings)
+static const Token *singleConditionalInScope(const Token *start, nonneg int varid, LoopType loopType, const Settings& settings)
 {
     if (start->str() != "{")
         return nullptr;
@@ -2666,6 +2690,22 @@ static const Token *singleConditionalInScope(const Token *start, nonneg int vari
         return nullptr;
     if (isVariableChanged(start, bodyTok, varid, /*globalvar*/ false, settings))
         return nullptr;
+    if (loopType == LoopType::INDEX) { // check for container access
+        nonneg int containerId{};
+        for (const Token* tok = start->tokAt(2); tok != start->linkAt(2); tok = tok->next()) {
+            if (tok->varId() == varid) {
+                if (!Token::simpleMatch(tok->astParent(), "["))
+                    return nullptr;
+                const Token* contTok = tok->astParent()->astOperand1();
+                if (!contTok->valueType() || !contTok->valueType()->container || contTok->varId() == 0)
+                    return nullptr;
+                if (containerId > 0 && containerId != contTok->varId()) // allow only one container
+                    return nullptr;
+                containerId = contTok->varId();
+            }
+        }
+        return containerId > 0 ? bodyTok : nullptr;
+    }
     return bodyTok;
 }
 
@@ -2730,11 +2770,9 @@ static std::string flipMinMax(const std::string &algo)
     return algo;
 }
 
-static std::string minmaxCompare(const Token *condTok, nonneg int loopVar, nonneg int assignVar, bool invert = false)
+static std::string minmaxCompare(const Token *condTok, nonneg int loopVar, nonneg int assignVar, LoopType loopType, bool invert = false)
 {
-    if (!Token::Match(condTok, "<|<=|>=|>"))
-        return "std::accumulate";
-    if (!hasVarIds(condTok, loopVar, assignVar))
+    if (loopType == LoopType::RANGE && !hasVarIds(condTok, loopVar, assignVar))
         return "std::accumulate";
     std::string algo = "std::max_element";
     if (Token::Match(condTok, "<|<="))
@@ -2744,6 +2782,38 @@ static std::string minmaxCompare(const Token *condTok, nonneg int loopVar, nonne
     if (invert)
         algo = flipMinMax(algo);
     return algo;
+}
+
+static bool isTernaryAssignment(const Token* assignTok, nonneg int loopVarId, nonneg int assignVarId, LoopType loopType, std::string& algo)
+{
+    if (!Token::simpleMatch(assignTok->astOperand2(), "?"))
+        return false;
+    const Token* condTok = assignTok->astOperand2()->astOperand1();
+    if (!Token::Match(condTok, "<|<=|>=|>"))
+        return false;
+
+    const Token* colon = assignTok->astOperand2()->astOperand2();
+    if (loopType == LoopType::RANGE) {
+        if (!(condTok->astOperand1()->varId() && condTok->astOperand2()->varId() && colon->astOperand1()->varId() && colon->astOperand2()->varId()))
+            return false;
+    }
+    else if (loopType == LoopType::INDEX) {
+        int nVar = 0, nCont = 0;
+        for (const Token* tok : { condTok->astOperand1(), condTok->astOperand2(), colon->astOperand1(), colon->astOperand2() }) {
+            if (tok->varId())
+                ++nVar;
+            else if (tok->str() == "[" && tok->astOperand1()->varId() && tok->astOperand1()->valueType() && tok->astOperand1()->valueType()->container &&
+                     tok->astOperand2()->varId() == loopVarId)
+                ++nCont;
+        }
+        if (nVar != 2 || nCont != 2)
+            return false;
+    }
+    else
+        return false;
+
+    algo = minmaxCompare(condTok, loopVarId, assignVarId, loopType, colon->astOperand1()->varId() == assignVarId);
+    return true;
 }
 
 namespace {
@@ -2835,8 +2905,8 @@ namespace {
                         alwaysFalse = false;
                         return;
                     }
-                    (returnTok->values().front().intvalue ? alwaysTrue : alwaysFalse) &= true;
-                    (returnTok->values().front().intvalue ? alwaysFalse : alwaysTrue) &= false;
+                    (returnTok->getKnownIntValue() ? alwaysTrue : alwaysFalse) &= true;
+                    (returnTok->getKnownIntValue() ? alwaysFalse : alwaysTrue) &= false;
                 });
                 if (alwaysTrue == alwaysFalse)
                     return "";
@@ -2894,10 +2964,28 @@ void CheckStl::useStlAlgorithm()
         return !astIsContainer(tok); // don't warn for containers, where overloaded operators can be costly
     };
 
-    auto isConditionWithoutSideEffects = [this](const Token* tok) -> bool {
+    enum class ConditionOpType : std::uint8_t { OTHER, MIN, MAX };
+    auto isConditionWithoutSideEffects = [this](const Token* tok, ConditionOpType& type) -> bool {
         if (!Token::simpleMatch(tok, "{") || !Token::simpleMatch(tok->previous(), ")"))
             return false;
-        return isConstExpression(tok->linkAt(-1)->astOperand2(), mSettings->library);
+        const Token* condTok = tok->linkAt(-1)->astOperand2();
+        if (isConstExpression(condTok, mSettings->library)) {
+            if (condTok->str() == "<")
+                type = ConditionOpType::MIN;
+            else if (condTok->str() == ">")
+                type = ConditionOpType::MAX;
+            else
+                type = ConditionOpType::OTHER;
+            return true;
+        }
+        return false;
+    };
+
+    auto isAccumulation = [](const Token* tok, int varId) {
+        if (tok->str() != "=")
+            return true;
+        const Token* end = Token::findmatch(tok, "%varid%|;", varId); // TODO: lambdas?
+        return end && end->varId() != 0;
     };
 
     for (const Scope *function : mTokenizer->getSymbolDatabase()->functionScopes) {
@@ -2917,13 +3005,14 @@ void CheckStl::useStlAlgorithm()
             const Token *bodyTok = tok->linkAt(1)->next();
             const Token *splitTok = tok->next()->astOperand2();
             const Token* loopVar{};
-            bool isIteratorLoop = false;
+            LoopType loopType{};
             if (Token::simpleMatch(splitTok, ":")) {
                 loopVar = splitTok->previous();
                 if (loopVar->varId() == 0)
                     continue;
                 if (Token::simpleMatch(splitTok->astOperand2(), "{"))
                     continue;
+                loopType = LoopType::RANGE;
             }
             else { // iterator-based loop?
                 const Token* initTok = getInitTok(tok);
@@ -2932,18 +3021,19 @@ void CheckStl::useStlAlgorithm()
                 if (!initTok || !condTok || !stepTok)
                     continue;
                 loopVar = Token::Match(condTok, "%comp%") ? condTok->astOperand1() : nullptr;
-                if (!Token::Match(loopVar, "%var%") || !loopVar->valueType() || loopVar->valueType()->type != ValueType::Type::ITERATOR)
+                if (!Token::Match(loopVar, "%var%") || !loopVar->valueType() ||
+                    (loopVar->valueType()->type != ValueType::Type::ITERATOR && !loopVar->valueType()->isIntegral()))
                     continue;
                 if (!Token::simpleMatch(initTok, "=") || !Token::Match(initTok->astOperand1(), "%varid%", loopVar->varId()))
                     continue;
                 if (!stepTok->isIncDecOp())
                     continue;
-                isIteratorLoop = true;
+                loopType = (loopVar->valueType()->type == ValueType::Type::ITERATOR) ? LoopType::ITERATOR : LoopType::INDEX;
             }
 
             // Check for single assignment
             bool useLoopVarInAssign{}, hasBreak{};
-            const Token *assignTok = singleAssignInScope(bodyTok, loopVar->varId(), useLoopVarInAssign, hasBreak, *mSettings);
+            const Token *assignTok = singleAssignInScope(bodyTok, loopVar->varId(), useLoopVarInAssign, hasBreak, loopType, *mSettings);
             if (assignTok) {
                 if (!checkAssignee(assignTok->astOperand1()))
                     continue;
@@ -2963,10 +3053,12 @@ void CheckStl::useStlAlgorithm()
                         algo = "std::distance";
                     else if (accumulateBool(assignTok, assignVarId))
                         algo = "std::any_of, std::all_of, std::none_of, or std::accumulate";
-                    else if (Token::Match(assignTok, "= %var% <|<=|>=|> %var% ? %var% : %var%") && hasVarIds(assignTok->tokAt(6), loopVar->varId(), assignVarId))
-                        algo = minmaxCompare(assignTok->tokAt(2), loopVar->varId(), assignVarId, assignTok->tokAt(5)->varId() == assignVarId);
-                    else
+                    else if (isTernaryAssignment(assignTok, loopVar->varId(), assignVarId, loopType, algo))
+                        ;
+                    else if (isAccumulation(assignTok, assignVarId))
                         algo = "std::accumulate";
+                    else
+                        continue;
                 }
                 useStlAlgorithmError(assignTok, algo);
                 continue;
@@ -2974,7 +3066,7 @@ void CheckStl::useStlAlgorithm()
             // Check for container calls
             bool useLoopVarInMemCall;
             const Token *memberAccessTok = singleMemberCallInScope(bodyTok, loopVar->varId(), useLoopVarInMemCall, *mSettings);
-            if (memberAccessTok && !isIteratorLoop) {
+            if (memberAccessTok && loopType == LoopType::RANGE) {
                 const Token *memberCallTok = memberAccessTok->astOperand2();
                 const int contVarId = memberAccessTok->astOperand1()->varId();
                 if (contVarId == loopVar->varId())
@@ -3006,10 +3098,10 @@ void CheckStl::useStlAlgorithm()
             }
 
             // Check for conditionals
-            const Token *condBodyTok = singleConditionalInScope(bodyTok, loopVar->varId(), *mSettings);
+            const Token *condBodyTok = singleConditionalInScope(bodyTok, loopVar->varId(), loopType, *mSettings);
             if (condBodyTok) {
                 // Check for single assign
-                assignTok = singleAssignInScope(condBodyTok, loopVar->varId(), useLoopVarInAssign, hasBreak, *mSettings);
+                assignTok = singleAssignInScope(condBodyTok, loopVar->varId(), useLoopVarInAssign, hasBreak, loopType, *mSettings);
                 if (assignTok) {
                     if (!checkAssignee(assignTok->astOperand1()))
                         continue;
@@ -3021,14 +3113,27 @@ void CheckStl::useStlAlgorithm()
                         else
                             algo = "std::replace_if";
                     } else {
+                        ConditionOpType type{};
                         if (addByOne(assignTok, assignVarId))
                             algo = "std::count_if";
                         else if (accumulateBoolLiteral(assignTok, assignVarId))
                             algo = "std::any_of, std::all_of, std::none_of, or std::accumulate";
                         else if (assignTok->str() != "=")
                             algo = "std::accumulate";
-                        else if (hasBreak && isConditionWithoutSideEffects(condBodyTok))
-                            algo = "std::any_of, std::all_of, std::none_of";
+                        else if (isConditionWithoutSideEffects(condBodyTok, type)) {
+                            if (hasBreak)
+                                algo = "std::any_of, std::all_of, std::none_of";
+                            else if (assignTok->astOperand2()->varId() == loopVar->varId()) {
+                                if (type == ConditionOpType::MIN)
+                                    algo = "std::min_element";
+                                else if (type == ConditionOpType::MAX)
+                                    algo = "std::max_element";
+                                else
+                                    continue;
+                            }
+                            else
+                                continue;
+                        }
                         else
                             continue;
                     }
@@ -3070,7 +3175,7 @@ void CheckStl::useStlAlgorithm()
                     const Token *loopVar2 = Token::findmatch(condBodyTok, "%varid%", condBodyTok->link(), loopVar->varId());
                     std::string algo;
                     if (loopVar2 ||
-                        (isIteratorLoop && loopVar->variable() && precedes(loopVar->variable()->nameToken(), tok))) // iterator declared outside the loop
+                        (loopType == LoopType::ITERATOR && loopVar->variable() && precedes(loopVar->variable()->nameToken(), tok))) // iterator declared outside the loop
                         algo = "std::find_if";
                     else
                         algo = "std::any_of";
@@ -3134,7 +3239,7 @@ void CheckStl::knownEmptyContainer()
                 const Token* contTok = splitTok->astOperand2();
                 if (!isKnownEmptyContainer(contTok))
                     continue;
-                knownEmptyContainerError(contTok, emptyString);
+                knownEmptyContainerError(contTok, "");
             } else {
                 const std::vector<const Token *> args = getArguments(tok);
                 if (args.empty())
@@ -3299,3 +3404,80 @@ void CheckStl::checkMutexes()
     }
 }
 
+void CheckStl::runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger)
+{
+    if (!tokenizer.isCPP()) {
+        return;
+    }
+
+    CheckStl checkStl(&tokenizer, &tokenizer.getSettings(), errorLogger);
+    checkStl.erase();
+    checkStl.if_find();
+    checkStl.checkFindInsert();
+    checkStl.iterators();
+    checkStl.missingComparison();
+    checkStl.outOfBounds();
+    checkStl.outOfBoundsIndexExpression();
+    checkStl.redundantCondition();
+    checkStl.string_c_str();
+    checkStl.uselessCalls();
+    checkStl.useStlAlgorithm();
+
+    checkStl.stlOutOfBounds();
+    checkStl.negativeIndex();
+
+    checkStl.invalidContainer();
+    checkStl.mismatchingContainers();
+    checkStl.mismatchingContainerIterator();
+    checkStl.knownEmptyContainer();
+    checkStl.eraseIteratorOutOfBounds();
+
+    checkStl.stlBoundaries();
+    checkStl.checkDereferenceInvalidIterator();
+    checkStl.checkDereferenceInvalidIterator2();
+    checkStl.checkMutexes();
+
+    // Style check
+    checkStl.size();
+}
+
+void CheckStl::getErrorMessages(ErrorLogger* errorLogger, const Settings* settings) const
+{
+    CheckStl c(nullptr, settings, errorLogger);
+    c.outOfBoundsError(nullptr, "container", nullptr, "x", nullptr);
+    c.invalidIteratorError(nullptr, "iterator");
+    c.iteratorsError(nullptr, "container1", "container2");
+    c.iteratorsError(nullptr, nullptr, "container0", "container1");
+    c.iteratorsError(nullptr, nullptr, "container");
+    c.invalidContainerLoopError(nullptr, nullptr, ErrorPath{});
+    c.invalidContainerError(nullptr, nullptr, nullptr, ErrorPath{});
+    c.mismatchingContainerIteratorError(nullptr, nullptr, nullptr);
+    c.mismatchingContainersError(nullptr, nullptr);
+    c.mismatchingContainerExpressionError(nullptr, nullptr);
+    c.sameIteratorExpressionError(nullptr);
+    c.dereferenceErasedError(nullptr, nullptr, "iter", false);
+    c.stlOutOfBoundsError(nullptr, "i", "foo", false);
+    c.negativeIndexError(nullptr, ValueFlow::Value(-1));
+    c.stlBoundariesError(nullptr);
+    c.if_findError(nullptr, false);
+    c.if_findError(nullptr, true);
+    c.checkFindInsertError(nullptr);
+    c.string_c_strError(nullptr);
+    c.string_c_strReturn(nullptr);
+    c.string_c_strParam(nullptr, 0);
+    c.string_c_strThrowError(nullptr);
+    c.sizeError(nullptr);
+    c.missingComparisonError(nullptr, nullptr);
+    c.redundantIfRemoveError(nullptr);
+    c.uselessCallsReturnValueError(nullptr, "str", "find");
+    c.uselessCallsSwapError(nullptr, "str");
+    c.uselessCallsSubstrError(nullptr, SubstrErrorType::COPY);
+    c.uselessCallsEmptyError(nullptr);
+    c.uselessCallsRemoveError(nullptr, "remove");
+    c.dereferenceInvalidIteratorError(nullptr, "i");
+    c.eraseIteratorOutOfBoundsError(nullptr, nullptr);
+    c.useStlAlgorithmError(nullptr, "");
+    c.knownEmptyContainerError(nullptr, "");
+    c.globalLockGuardError(nullptr);
+    c.localMutexError(nullptr);
+}

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -42,9 +42,9 @@
 #include "json.h"
 
 // TODO: align the exclusion logic with PathMatch
-void ImportProject::ignorePaths(const std::vector<std::string> &ipaths)
+void ImportProject::ignorePaths(const std::vector<std::string> &ipaths, bool debug)
 {
-    for (std::list<FileSettings>::const_iterator it = fileSettings.cbegin(); it != fileSettings.cend();) {
+    for (auto it = fileSettings.cbegin(); it != fileSettings.cend();) {
         bool ignore = false;
         for (std::string i : ipaths) {
             if (it->filename().size() > i.size() && it->filename().compare(0,i.size(),i)==0) {
@@ -63,8 +63,11 @@ void ImportProject::ignorePaths(const std::vector<std::string> &ipaths)
                 }
             }
         }
-        if (ignore)
+        if (ignore) {
+            if (debug)
+                std::cout << "ignored path: " << it->filename() << std::endl;
             it = fileSettings.erase(it);
+        }
         else
             ++it;
     }
@@ -72,7 +75,7 @@ void ImportProject::ignorePaths(const std::vector<std::string> &ipaths)
 
 void ImportProject::ignoreOtherConfigs(const std::string &cfg)
 {
-    for (std::list<FileSettings>::const_iterator it = fileSettings.cbegin(); it != fileSettings.cend();) {
+    for (auto it = fileSettings.cbegin(); it != fileSettings.cend();) {
         if (it->cfg != cfg)
             it = fileSettings.erase(it);
         else
@@ -123,7 +126,7 @@ static bool simplifyPathWithVariables(std::string &s, std::map<std::string, std:
         if (expanded.find(var) != expanded.end())
             break;
         expanded.insert(var);
-        std::map<std::string, std::string, cppcheck::stricmp>::const_iterator it1 = variables.find(var);
+        auto it1 = utils::as_const(variables).find(var);
         // variable was not found within defined variables
         if (it1 == variables.end()) {
             const char *envValue = std::getenv(var.c_str());
@@ -178,7 +181,7 @@ void ImportProject::fsSetIncludePaths(FileSettings& fs, const std::string &basep
     }
 }
 
-ImportProject::Type ImportProject::import(const std::string &filename, Settings *settings)
+ImportProject::Type ImportProject::import(const std::string &filename, Settings *settings, Suppressions *supprs)
 {
     std::ifstream fin(filename);
     if (!fin.is_open())
@@ -204,7 +207,7 @@ ImportProject::Type ImportProject::import(const std::string &filename, Settings 
     } else if (endsWith(filename, ".vcxproj")) {
         std::map<std::string, std::string, cppcheck::stricmp> variables;
         std::vector<SharedItemsProject> sharedItemsProjects;
-        if (importVcxproj(filename, variables, emptyString, fileFilters, sharedItemsProjects)) {
+        if (importVcxproj(filename, variables, "", fileFilters, sharedItemsProjects)) {
             setRelativePaths(filename);
             return ImportProject::Type::VS_VCXPROJ;
         }
@@ -213,8 +216,8 @@ ImportProject::Type ImportProject::import(const std::string &filename, Settings 
             setRelativePaths(filename);
             return ImportProject::Type::BORLAND;
         }
-    } else if (settings && endsWith(filename, ".cppcheck")) {
-        if (importCppcheckGuiProject(fin, settings)) {
+    } else if (settings && supprs && endsWith(filename, ".cppcheck")) {
+        if (importCppcheckGuiProject(fin, *settings, *supprs)) {
             setRelativePaths(filename);
             return ImportProject::Type::CPPCHECK_GUI;
         }
@@ -290,7 +293,7 @@ void ImportProject::fsParseCommand(FileSettings& fs, const std::string& command)
             while (pos < command.size() && command[pos] == ' ')
                 ++pos;
         }
-        const std::string fval = readUntil(command, &pos, " =");
+        std::string fval = readUntil(command, &pos, " =");
         if (F=='D') {
             std::string defval = readUntil(command, &pos, " ");
             defs += fval;
@@ -304,7 +307,7 @@ void ImportProject::fsParseCommand(FileSettings& fs, const std::string& command)
         } else if (F=='U')
             fs.undefs.insert(fval);
         else if (F=='I') {
-            std::string i = fval;
+            std::string i = std::move(fval);
             if (i.size() > 1 && i[0] == '\"' && i.back() == '\"')
                 i = unescape(i.substr(1, i.size() - 2));
             if (std::find(fs.includePaths.cbegin(), fs.includePaths.cend(), i) == fs.includePaths.cend())
@@ -394,7 +397,7 @@ bool ImportProject::importCompileCommands(std::istream &istr)
             continue;
         }
 
-        const std::string file = Path::fromNativeSeparators(obj["file"].get<std::string>());
+        std::string file = Path::fromNativeSeparators(obj["file"].get<std::string>());
 
         // Accept file?
         if (!Path::acceptFile(file))
@@ -402,7 +405,7 @@ bool ImportProject::importCompileCommands(std::istream &istr)
 
         std::string path;
         if (Path::isAbsolute(file))
-            path = Path::simplifyPath(file);
+            path = Path::simplifyPath(std::move(file));
 #ifdef _WIN32
         else if (file[0] == '/' && directory.size() > 2 && std::isalpha(directory[0]) && directory[1] == ':')
             // directory: C:\foo\bar
@@ -462,7 +465,7 @@ bool ImportProject::importSln(std::istream &istr, const std::string &path, const
         if (!Path::isAbsolute(vcxproj))
             vcxproj = path + vcxproj;
         vcxproj = Path::fromNativeSeparators(std::move(vcxproj));
-        if (!importVcxproj(vcxproj, variables, emptyString, fileFilters, sharedItemsProjects)) {
+        if (!importVcxproj(vcxproj, variables, "", fileFilters, sharedItemsProjects)) {
             printError("failed to load '" + vcxproj + "' from Visual Studio solution");
             return false;
         }
@@ -1009,7 +1012,7 @@ bool ImportProject::importBcb6Prj(const std::string &projectFilename)
         }
 
         if (!arg.empty()) {
-            cflags.insert(arg);
+            cflags.insert(std::move(arg));
         }
 
         // cleanup: -t is "An alternate name for the -Wxxx switches; there is no difference"
@@ -1033,7 +1036,7 @@ bool ImportProject::importBcb6Prj(const std::string &projectFilename)
             { "-tWV","-WV" }
         };
 
-        for (std::map<std::string, std::string>::const_iterator i = synonyms.cbegin(); i != synonyms.cend(); ++i) {
+        for (auto i = synonyms.cbegin(); i != synonyms.cend(); ++i) {
             if (cflags.erase(i->first) > 0) {
                 cflags.insert(i->second);
             }
@@ -1235,7 +1238,7 @@ static std::string istream_to_string(std::istream &istr)
     return std::string(std::istreambuf_iterator<char>(istr), eos);
 }
 
-bool ImportProject::importCppcheckGuiProject(std::istream &istr, Settings *settings)
+bool ImportProject::importCppcheckGuiProject(std::istream &istr, Settings &settings, Suppressions &supprs)
 {
     tinyxml2::XMLDocument doc;
     const std::string xmldata = istream_to_string(istr);
@@ -1311,7 +1314,7 @@ bool ImportProject::importCppcheckGuiProject(std::istream &istr, Settings *setti
                 suppressions.push_back(std::move(s));
             }
         } else if (strcmp(name, CppcheckXml::VSConfigurationElementName) == 0)
-            guiProject.checkVsConfigs = readXmlStringList(node, emptyString, CppcheckXml::VSConfigurationName, nullptr);
+            guiProject.checkVsConfigs = readXmlStringList(node, "", CppcheckXml::VSConfigurationName, nullptr);
         else if (strcmp(name, CppcheckXml::PlatformElementName) == 0)
             guiProject.platform = empty_if_null(node->GetText());
         else if (strcmp(name, CppcheckXml::AnalyzeAllVsConfigsElementName) == 0)
@@ -1319,13 +1322,13 @@ bool ImportProject::importCppcheckGuiProject(std::istream &istr, Settings *setti
         else if (strcmp(name, CppcheckXml::Parser) == 0)
             temp.clang = true;
         else if (strcmp(name, CppcheckXml::AddonsElementName) == 0) {
-            const auto& addons = readXmlStringList(node, emptyString, CppcheckXml::AddonElementName, nullptr);
+            const auto& addons = readXmlStringList(node, "", CppcheckXml::AddonElementName, nullptr);
             temp.addons.insert(addons.cbegin(), addons.cend());
         }
         else if (strcmp(name, CppcheckXml::TagsElementName) == 0)
             node->Attribute(CppcheckXml::TagElementName); // FIXME: Write some warning
         else if (strcmp(name, CppcheckXml::ToolsElementName) == 0) {
-            const std::list<std::string> toolList = readXmlStringList(node, emptyString, CppcheckXml::ToolElementName, nullptr);
+            const std::list<std::string> toolList = readXmlStringList(node, "", CppcheckXml::ToolElementName, nullptr);
             for (const std::string &toolName : toolList) {
                 if (toolName == CppcheckXml::ClangTidy)
                     temp.clangTidy = true;
@@ -1387,31 +1390,31 @@ bool ImportProject::importCppcheckGuiProject(std::istream &istr, Settings *setti
             return false;
         }
     }
-    settings->basePaths = temp.basePaths;
-    settings->relativePaths |= temp.relativePaths;
-    settings->buildDir = temp.buildDir;
-    settings->includePaths = temp.includePaths;
-    settings->userDefines = temp.userDefines;
-    settings->userUndefs = temp.userUndefs;
-    settings->addons = temp.addons;
-    settings->clang = temp.clang;
-    settings->clangTidy = temp.clangTidy;
+    settings.basePaths = temp.basePaths;
+    settings.relativePaths |= temp.relativePaths;
+    settings.buildDir = temp.buildDir;
+    settings.includePaths = temp.includePaths;
+    settings.userDefines = temp.userDefines;
+    settings.userUndefs = temp.userUndefs;
+    settings.addons = temp.addons;
+    settings.clang = temp.clang;
+    settings.clangTidy = temp.clangTidy;
 
-    if (!settings->premiumArgs.empty())
-        settings->premiumArgs += temp.premiumArgs;
+    if (!settings.premiumArgs.empty())
+        settings.premiumArgs += temp.premiumArgs;
     else if (!temp.premiumArgs.empty())
-        settings->premiumArgs = temp.premiumArgs.substr(1);
+        settings.premiumArgs = temp.premiumArgs.substr(1);
 
     for (const std::string &p : paths)
         guiProject.pathNames.push_back(Path::fromNativeSeparators(p));
-    settings->supprs.nomsg.addSuppressions(std::move(suppressions));
-    settings->checkHeaders = temp.checkHeaders;
-    settings->checkUnusedTemplates = temp.checkUnusedTemplates;
-    settings->maxCtuDepth = temp.maxCtuDepth;
-    settings->maxTemplateRecursion = temp.maxTemplateRecursion;
-    settings->inlineSuppressions |= temp.inlineSuppressions;
-    settings->safeChecks = temp.safeChecks;
-    settings->setCheckLevel(temp.checkLevel);
+    supprs.nomsg.addSuppressions(std::move(suppressions)); // TODO: check result
+    settings.checkHeaders = temp.checkHeaders;
+    settings.checkUnusedTemplates = temp.checkUnusedTemplates;
+    settings.maxCtuDepth = temp.maxCtuDepth;
+    settings.maxTemplateRecursion = temp.maxTemplateRecursion;
+    settings.inlineSuppressions |= temp.inlineSuppressions;
+    settings.safeChecks = temp.safeChecks;
+    settings.setCheckLevel(temp.checkLevel);
 
     return true;
 }
@@ -1419,7 +1422,7 @@ bool ImportProject::importCppcheckGuiProject(std::istream &istr, Settings *setti
 void ImportProject::selectOneVsConfig(Platform::Type platform)
 {
     std::set<std::string> filenames;
-    for (std::list<FileSettings>::const_iterator it = fileSettings.cbegin(); it != fileSettings.cend();) {
+    for (auto it = fileSettings.cbegin(); it != fileSettings.cend();) {
         if (it->cfg.empty()) {
             ++it;
             continue;
@@ -1446,7 +1449,7 @@ void ImportProject::selectOneVsConfig(Platform::Type platform)
 // cppcheck-suppress unusedFunction - used by GUI only
 void ImportProject::selectVsConfigurations(Platform::Type platform, const std::vector<std::string> &configurations)
 {
-    for (std::list<FileSettings>::const_iterator it = fileSettings.cbegin(); it != fileSettings.cend();) {
+    for (auto it = fileSettings.cbegin(); it != fileSettings.cend();) {
         if (it->cfg.empty()) {
             ++it;
             continue;

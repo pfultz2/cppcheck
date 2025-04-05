@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,8 +17,10 @@
  */
 
 #include "config.h"
-#include "mathlib.h"
 #include "fixture.h"
+#include "mathlib.h"
+#include "token.h"
+#include "tokenlist.h"
 
 #include <limits>
 #include <string>
@@ -323,11 +325,11 @@ private:
         ASSERT_EQUALS(-1, MathLib::toBigNumber("-10.0E-1"));
 
         // from char
-        ASSERT_EQUALS((int)('A'), MathLib::toBigNumber("'A'"));
-        ASSERT_EQUALS((int)('\x10'), MathLib::toBigNumber("'\\x10'"));
-        ASSERT_EQUALS((int)('\100'), MathLib::toBigNumber("'\\100'"));
-        ASSERT_EQUALS((int)('\200'), MathLib::toBigNumber("'\\200'"));
-        ASSERT_EQUALS((int)(L'A'), MathLib::toBigNumber("L'A'"));
+        ASSERT_EQUALS(static_cast<int>('A'), MathLib::toBigNumber("'A'"));
+        ASSERT_EQUALS(static_cast<int>('\x10'), MathLib::toBigNumber("'\\x10'"));
+        ASSERT_EQUALS(static_cast<int>('\100'), MathLib::toBigNumber("'\\100'"));
+        ASSERT_EQUALS(static_cast<int>('\200'), MathLib::toBigNumber("'\\200'"));
+        ASSERT_EQUALS(static_cast<int>(L'A'), MathLib::toBigNumber("L'A'"));
 
         ASSERT_EQUALS(-8552249625308161526, MathLib::toBigNumber("0x89504e470d0a1a0a"));
         ASSERT_EQUALS(-8481036456200365558, MathLib::toBigNumber("0x8a4d4e470d0a1a0a"));
@@ -404,6 +406,17 @@ private:
 
         ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigNumber("1invalid"), INTERNAL, "Internal Error. MathLib::toBigNumber: input was not completely consumed: 1invalid");
         ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigNumber("1 invalid"), INTERNAL, "Internal Error. MathLib::toBigNumber: input was not completely consumed: 1 invalid");
+
+        {
+            TokenList list{&settingsDefault};
+            list.appendFileIfNew("test.c");
+            TokensFrontBack tokensFrontBack(list);
+            auto *tok = new Token(tokensFrontBack);
+            tok->str("invalid");
+            ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigNumber(tok), INTERNAL, "Internal Error. MathLib::toBigNumber: invalid_argument: invalid");
+            ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigNumber("invalid", tok), INTERNAL, "Internal Error. MathLib::toBigNumber: invalid_argument: invalid");
+            TokenList::deleteTokens(tok);
+        }
 
         // TODO: test binary
         // TODO: test floating point
@@ -488,11 +501,11 @@ private:
         ASSERT_EQUALS(-1, MathLib::toBigUNumber("-10.0E-1"));
 
         // from char
-        ASSERT_EQUALS((int)('A'), MathLib::toBigUNumber("'A'"));
-        ASSERT_EQUALS((int)('\x10'), MathLib::toBigUNumber("'\\x10'"));
-        ASSERT_EQUALS((int)('\100'), MathLib::toBigUNumber("'\\100'"));
-        ASSERT_EQUALS((int)('\200'), MathLib::toBigUNumber("'\\200'"));
-        ASSERT_EQUALS((int)(L'A'), MathLib::toBigUNumber("L'A'"));
+        ASSERT_EQUALS(static_cast<int>('A'), MathLib::toBigUNumber("'A'"));
+        ASSERT_EQUALS(static_cast<int>('\x10'), MathLib::toBigUNumber("'\\x10'"));
+        ASSERT_EQUALS(static_cast<int>('\100'), MathLib::toBigUNumber("'\\100'"));
+        ASSERT_EQUALS(static_cast<int>('\200'), MathLib::toBigUNumber("'\\200'"));
+        ASSERT_EQUALS(static_cast<int>(L'A'), MathLib::toBigUNumber("L'A'"));
 
         ASSERT_EQUALS(9894494448401390090ULL, MathLib::toBigUNumber("0x89504e470d0a1a0a"));
         ASSERT_EQUALS(9965707617509186058ULL, MathLib::toBigUNumber("0x8a4d4e470d0a1a0a"));
@@ -569,6 +582,17 @@ private:
 
         ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigUNumber("1invalid"), INTERNAL, "Internal Error. MathLib::toBigUNumber: input was not completely consumed: 1invalid");
         ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigUNumber("1 invalid"), INTERNAL, "Internal Error. MathLib::toBigUNumber: input was not completely consumed: 1 invalid");
+
+        {
+            TokenList list{&settingsDefault};
+            list.appendFileIfNew("test.c");
+            TokensFrontBack tokensFrontBack(list);
+            auto *tok = new Token(tokensFrontBack);
+            tok->str("invalid");
+            ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigUNumber(tok), INTERNAL, "Internal Error. MathLib::toBigUNumber: invalid_argument: invalid");
+            ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigUNumber("invalid", tok), INTERNAL, "Internal Error. MathLib::toBigUNumber: invalid_argument: invalid");
+            TokenList::deleteTokens(tok);
+        }
 
         // TODO: test binary
         // TODO: test floating point
@@ -649,11 +673,11 @@ private:
         ASSERT_EQUALS_DOUBLE(0.0625, MathLib::toDoubleNumber("0x.1P0"), 0.000001);
 
         // from char
-        ASSERT_EQUALS_DOUBLE((double)('A'),    MathLib::toDoubleNumber("'A'"), 0.000001);
-        ASSERT_EQUALS_DOUBLE((double)('\x10'), MathLib::toDoubleNumber("'\\x10'"), 0.000001);
-        ASSERT_EQUALS_DOUBLE((double)('\100'), MathLib::toDoubleNumber("'\\100'"), 0.000001);
-        ASSERT_EQUALS_DOUBLE((double)('\200'), MathLib::toDoubleNumber("'\\200'"), 0.000001);
-        ASSERT_EQUALS_DOUBLE((double)(L'A'),   MathLib::toDoubleNumber("L'A'"), 0.000001);
+        ASSERT_EQUALS_DOUBLE(static_cast<double>('A'),    MathLib::toDoubleNumber("'A'"), 0.000001);
+        ASSERT_EQUALS_DOUBLE(static_cast<double>('\x10'), MathLib::toDoubleNumber("'\\x10'"), 0.000001);
+        ASSERT_EQUALS_DOUBLE(static_cast<double>('\100'), MathLib::toDoubleNumber("'\\100'"), 0.000001);
+        ASSERT_EQUALS_DOUBLE(static_cast<double>('\200'), MathLib::toDoubleNumber("'\\200'"), 0.000001);
+        ASSERT_EQUALS_DOUBLE(static_cast<double>(L'A'),   MathLib::toDoubleNumber("L'A'"), 0.000001);
 
         ASSERT_THROW_INTERNAL_EQUALS(MathLib::toDoubleNumber("invalid"), INTERNAL, "Internal Error. MathLib::toDoubleNumber: conversion failed: invalid");
 
@@ -688,6 +712,17 @@ private:
         //ASSERT_THROW_INTERNAL_EQUALS(MathLib::toDoubleNumber("1.0LL"), INTERNAL, "Internal Error. MathLib::toDoubleNumber: input was not completely consumed: 1.0LL");
         //ASSERT_THROW_INTERNAL_EQUALS(MathLib::toDoubleNumber("1.0ll"), INTERNAL, "Internal Error. MathLib::toDoubleNumber: input was not completely consumed: 1.0ll");
         //ASSERT_THROW_INTERNAL_EQUALS(MathLib::toDoubleNumber("1.0LL"), INTERNAL, "Internal Error. MathLib::toDoubleNumber: input was not completely consumed: 1.0LL");
+
+        {
+            TokenList list{&settingsDefault};
+            list.appendFileIfNew("test.c");
+            TokensFrontBack tokensFrontBack(list);
+            auto *tok = new Token(tokensFrontBack);
+            tok->str("invalid");
+            ASSERT_THROW_INTERNAL_EQUALS(MathLib::toDoubleNumber(tok), INTERNAL, "Internal Error. MathLib::toDoubleNumber: conversion failed: invalid");
+            ASSERT_THROW_INTERNAL_EQUALS(MathLib::toDoubleNumber("invalid", tok), INTERNAL, "Internal Error. MathLib::toDoubleNumber: conversion failed: invalid");
+            TokenList::deleteTokens(tok);
+        }
 
         // verify: string --> double --> string conversion
         // TODO: add L, min/max

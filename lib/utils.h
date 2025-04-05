@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,10 +30,10 @@
 #include <functional>
 #include <initializer_list>
 #include <limits>
-#include <list>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 struct SelectMapKeys {
@@ -403,13 +403,29 @@ static inline T* empty_if_null(T* p)
  * @param sep The seperator
  * @return The list of seperate strings (including empty ones). The whole input string if no seperator found.
  */
-CPPCHECKLIB std::list<std::string> splitString(const std::string& str, char sep);
+CPPCHECKLIB std::vector<std::string> splitString(const std::string& str, char sep);
 
 namespace utils {
     template<class T>
     constexpr typename std::add_const<T>::type & as_const(T& t) noexcept
     {
+        // NOLINTNEXTLINE(bugprone-return-const-ref-from-parameter) - potential false positive
         return t;
+    }
+
+    // Thread-unsafe memoization
+    template<class F, class R=decltype(std::declval<F>()())>
+    static inline std::function<R()> memoize(F f)
+    {
+        bool init = false;
+        R result{};
+        return [=]() mutable -> R {
+            if (init)
+                return result;
+            result = f();
+            init = true;
+            return result;
+        };
     }
 }
 

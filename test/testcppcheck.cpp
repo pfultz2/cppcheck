@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 #include "fixture.h"
 #include "helpers.h"
 #include "settings.h"
+#include "suppressions.h"
 
 #include "simplecpp.h"
 
@@ -36,6 +37,7 @@ public:
     TestCppcheck() : TestFixture("TestCppcheck") {}
 
 private:
+    const std::string templateFormat{"{file}:{line}:{column}: {severity}:{inconclusive:inconclusive:} {message} [{id}]"};
 
     class ErrorLogger2 : public ErrorLogger {
     public:
@@ -57,10 +59,10 @@ private:
         TEST_CASE(checkWithFS);
         TEST_CASE(suppress_error_library);
         TEST_CASE(unique_errors);
+        TEST_CASE(unique_errors_2);
         TEST_CASE(isPremiumCodingStandardId);
         TEST_CASE(getDumpFileContentsRawTokens);
         TEST_CASE(getDumpFileContentsLibrary);
-        TEST_CASE(getClangFlagsIncludeFile);
     }
 
     void getErrorMessages() const {
@@ -70,7 +72,7 @@ private:
 
         // Check if there are duplicate error ids in errorLogger.id
         std::string duplicate;
-        for (std::list<std::string>::const_iterator it = errorLogger.ids.cbegin();
+        for (auto it = errorLogger.ids.cbegin();
              it != errorLogger.ids.cend();
              ++it) {
             if (std::find(errorLogger.ids.cbegin(), it, *it) != it) {
@@ -110,8 +112,11 @@ private:
                         "  return 0;\n"
                         "}");
 
+        /*const*/ Settings s;
+        s.templateFormat = templateFormat;
+        Suppressions supprs;
         ErrorLogger2 errorLogger;
-        CppCheck cppcheck(errorLogger, false, {});
+        CppCheck cppcheck(s, supprs, errorLogger, false, {});
         ASSERT_EQUALS(1, cppcheck.check(FileWithDetails(file.path())));
         // TODO: how to properly disable these warnings?
         errorLogger.ids.erase(std::remove_if(errorLogger.ids.begin(), errorLogger.ids.end(), [](const std::string& id) {
@@ -130,8 +135,11 @@ private:
                         "  return 0;\n"
                         "}");
 
+        /*const*/ Settings s;
+        s.templateFormat = templateFormat;
+        Suppressions supprs;
         ErrorLogger2 errorLogger;
-        CppCheck cppcheck(errorLogger, false, {});
+        CppCheck cppcheck(s, supprs, errorLogger, false, {});
         FileSettings fs{file.path()};
         ASSERT_EQUALS(1, cppcheck.check(fs));
         // TODO: how to properly disable these warnings?
@@ -151,11 +159,11 @@ private:
                         "  return 0;\n"
                         "}");
 
-        ErrorLogger2 errorLogger;
-        CppCheck cppcheck(errorLogger, false, {});
         const char xmldata[] = R"(<def format="2"><markup ext=".cpp" reporterrors="false"/></def>)";
-        const Settings s = settingsBuilder().libraryxml(xmldata, sizeof(xmldata)).build();
-        cppcheck.settings() = s;
+        const Settings s = settingsBuilder().libraryxml(xmldata).build();
+        Suppressions supprs;
+        ErrorLogger2 errorLogger;
+        CppCheck cppcheck(s, supprs, errorLogger, false, {});
         ASSERT_EQUALS(0, cppcheck.check(FileWithDetails(file.path())));
         // TODO: how to properly disable these warnings?
         errorLogger.ids.erase(std::remove_if(errorLogger.ids.begin(), errorLogger.ids.end(), [](const std::string& id) {
@@ -164,7 +172,7 @@ private:
         ASSERT_EQUALS(0, errorLogger.ids.size());
     }
 
-    // TODO: hwo to actually get duplicated findings
+    // TODO: how to actually get duplicated findings
     void unique_errors() const
     {
         ScopedFile file("inc.h",
@@ -177,8 +185,12 @@ private:
         ScopedFile test_file_b("b.cpp",
                                "#include \"inc.h\"");
 
+        /*const*/ Settings s;
+        // this is the "simple" format
+        s.templateFormat = templateFormat; // TODO: remove when we only longer rely on toString() in unique message handling
+        Suppressions supprs;
         ErrorLogger2 errorLogger;
-        CppCheck cppcheck(errorLogger, false, {});
+        CppCheck cppcheck(s, supprs, errorLogger, false, {});
         ASSERT_EQUALS(1, cppcheck.check(FileWithDetails(test_file_a.path())));
         ASSERT_EQUALS(1, cppcheck.check(FileWithDetails(test_file_b.path())));
         // TODO: how to properly disable these warnings?
@@ -188,42 +200,100 @@ private:
         // the internal errorlist is cleared after each check() call
         ASSERT_EQUALS(2, errorLogger.errmsgs.size());
         auto it = errorLogger.errmsgs.cbegin();
+        ASSERT_EQUALS("a.cpp", it->file0);
         ASSERT_EQUALS("nullPointer", it->id);
         ++it;
+        ASSERT_EQUALS("b.cpp", it->file0);
         ASSERT_EQUALS("nullPointer", it->id);
+    }
+
+    void unique_errors_2() const
+    {
+        ScopedFile test_file("c.cpp",
+                             "void f()\n"
+                             "{\n"
+                             "const long m[9] = {};\n"
+                             "long a=m[9], b=m[9];\n"
+                             "(void)a;\n"
+                             "(void)b;\n"
+                             "}");
+
+        /*const*/ Settings s;
+        // this is the "simple" format
+        s.templateFormat = templateFormat; // TODO: remove when we only longer rely on toString() in unique message handling?
+        Suppressions supprs;
+        ErrorLogger2 errorLogger;
+        CppCheck cppcheck(s, supprs, errorLogger, false, {});
+        ASSERT_EQUALS(1, cppcheck.check(FileWithDetails(test_file.path())));
+        // TODO: how to properly disable these warnings?
+        errorLogger.errmsgs.erase(std::remove_if(errorLogger.errmsgs.begin(), errorLogger.errmsgs.end(), [](const ErrorMessage& msg) {
+            return msg.id == "logChecker";
+        }), errorLogger.errmsgs.end());
+        // the internal errorlist is cleared after each check() call
+        ASSERT_EQUALS(2, errorLogger.errmsgs.size());
+        auto it = errorLogger.errmsgs.cbegin();
+        ASSERT_EQUALS("c.cpp", it->file0);
+        ASSERT_EQUALS(1, it->callStack.size());
+        {
+            auto stack = it->callStack.cbegin();
+            ASSERT_EQUALS(4, stack->line);
+            ASSERT_EQUALS(9, stack->column);
+        }
+        ASSERT_EQUALS("arrayIndexOutOfBounds", it->id);
+        ++it;
+        ASSERT_EQUALS("c.cpp", it->file0);
+        ASSERT_EQUALS(1, it->callStack.size());
+        {
+            auto stack = it->callStack.cbegin();
+            ASSERT_EQUALS(4, stack->line);
+            ASSERT_EQUALS(17, stack->column);
+        }
+        ASSERT_EQUALS("arrayIndexOutOfBounds", it->id);
     }
 
     void isPremiumCodingStandardId() const {
+        Suppressions supprs;
         ErrorLogger2 errorLogger;
-        CppCheck cppcheck(errorLogger, false, {});
 
-        cppcheck.settings().premiumArgs = "";
-        ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("misra-c2012-0.0"));
-        ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("misra-c2023-0.0"));
-        ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-misra-c2012-0.0"));
-        ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-misra-c2023-0.0"));
-        ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-misra-c++2008-0.0.0"));
-        ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-misra-c++2023-0.0.0"));
-        ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-cert-int50-cpp"));
-        ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-autosar-0-0-0"));
+        {
+            Settings s;
+            s.premiumArgs = "";
+            CppCheck cppcheck(s, supprs, errorLogger, false, {});
 
-        cppcheck.settings().premiumArgs = "--misra-c-2012 --cert-c++-2016 --autosar";
-        ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("misra-c2012-0.0"));
-        ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("misra-c2023-0.0"));
-        ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-misra-c2012-0.0"));
-        ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-misra-c2023-0.0"));
-        ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-misra-c++2008-0.0.0"));
-        ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-misra-c++2023-0.0.0"));
-        ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-cert-int50-cpp"));
-        ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-autosar-0-0-0"));
+            ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("misra-c2012-0.0"));
+            ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("misra-c2023-0.0"));
+            ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-misra-c2012-0.0"));
+            ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-misra-c2023-0.0"));
+            ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-misra-c++2008-0.0.0"));
+            ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-misra-c++2023-0.0.0"));
+            ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-cert-int50-cpp"));
+            ASSERT_EQUALS(false, cppcheck.isPremiumCodingStandardId("premium-autosar-0-0-0"));
+        }
+
+        {
+            Settings s;
+            s.premiumArgs = "--misra-c-2012 --cert-c++-2016 --autosar";
+
+            CppCheck cppcheck(s, supprs, errorLogger, false, {});
+
+            ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("misra-c2012-0.0"));
+            ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("misra-c2023-0.0"));
+            ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-misra-c2012-0.0"));
+            ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-misra-c2023-0.0"));
+            ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-misra-c++2008-0.0.0"));
+            ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-misra-c++2023-0.0.0"));
+            ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-cert-int50-cpp"));
+            ASSERT_EQUALS(true, cppcheck.isPremiumCodingStandardId("premium-autosar-0-0-0"));
+        }
     }
 
     void getDumpFileContentsRawTokens() const {
+        Settings s = settingsBuilder().build();
+        s.relativePaths = true;
+        s.basePaths.emplace_back("/some/path");
+        Suppressions supprs;
         ErrorLogger2 errorLogger;
-        CppCheck cppcheck(errorLogger, false, {});
-        cppcheck.settings() = settingsBuilder().build();
-        cppcheck.settings().relativePaths = true;
-        cppcheck.settings().basePaths.emplace_back("/some/path");
+        CppCheck cppcheck(s, supprs, errorLogger, false, {});
         std::vector<std::string> files{"/some/path/test.cpp"};
         simplecpp::TokenList tokens1(files);
         const std::string expected = "  <rawtokens>\n"
@@ -233,22 +303,26 @@ private:
     }
 
     void getDumpFileContentsLibrary() const {
+        Suppressions supprs;
         ErrorLogger2 errorLogger;
-        CppCheck cppcheck(errorLogger, false, {});
-        cppcheck.settings().libraries.emplace_back("std.cfg");
-        std::vector<std::string> files{ "/some/path/test.cpp" };
-        const std::string expected1 = "  <library lib=\"std.cfg\"/>\n";
-        ASSERT_EQUALS(expected1, cppcheck.getLibraryDumpData());
-        cppcheck.settings().libraries.emplace_back("posix.cfg");
-        const std::string expected2 = "  <library lib=\"std.cfg\"/>\n  <library lib=\"posix.cfg\"/>\n";
-        ASSERT_EQUALS(expected2, cppcheck.getLibraryDumpData());
-    }
 
-    void getClangFlagsIncludeFile() const {
-        ErrorLogger2 errorLogger;
-        CppCheck cppcheck(errorLogger, false, {});
-        cppcheck.settings().userIncludes.emplace_back("1.h");
-        ASSERT_EQUALS("-x c --include 1.h ", cppcheck.getClangFlags(Standards::Language::C));
+        {
+            Settings s;
+            s.libraries.emplace_back("std.cfg");
+            CppCheck cppcheck(s, supprs, errorLogger, false, {});
+            //std::vector<std::string> files{ "/some/path/test.cpp" };
+            const std::string expected = "  <library lib=\"std.cfg\"/>\n";
+            ASSERT_EQUALS(expected, cppcheck.getLibraryDumpData());
+        }
+
+        {
+            Settings s;
+            s.libraries.emplace_back("std.cfg");
+            s.libraries.emplace_back("posix.cfg");
+            CppCheck cppcheck(s, supprs, errorLogger, false, {});
+            const std::string expected = "  <library lib=\"std.cfg\"/>\n  <library lib=\"posix.cfg\"/>\n";
+            ASSERT_EQUALS(expected, cppcheck.getLibraryDumpData());
+        }
     }
 
     // TODO: test suppressions

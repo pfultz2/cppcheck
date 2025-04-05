@@ -33,7 +33,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"
         # "Release" uses -O3 by default
         add_compile_options(-O2)
     endif()
-    if(WARNINGS_ARE_ERRORS)
+    if(CMAKE_COMPILE_WARNING_AS_ERROR)
         add_compile_options(-Werror)
     endif()
     add_compile_options(-pedantic) # TODO: is this implied by -Weverything?
@@ -86,7 +86,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     #add_compile_options_safe(-Wunused-macros)
     #add_compile_options_safe(-Wpedantic)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL 14 OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 14)
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
         # TODO: verify this regression still exists in clang-15
         if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
             # work around performance regression - see https://github.com/llvm/llvm-project/issues/53555
@@ -108,7 +108,6 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # TODO: fix and enable these warnings - or move to suppression list below
     add_compile_options_safe(-Wno-documentation-unknown-command) # TODO: Clang currently does not support all commands
     add_compile_options_safe(-Wno-unused-exception-parameter)
-    add_compile_options_safe(-Wno-old-style-cast)
     add_compile_options_safe(-Wno-sign-conversion)
     add_compile_options_safe(-Wno-shadow-field-in-constructor)
     add_compile_options_safe(-Wno-covered-switch-default)
@@ -119,7 +118,6 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options_safe(-Wno-shadow-uncaptured-local)
     add_compile_options_safe(-Wno-implicit-float-conversion)
     add_compile_options_safe(-Wno-switch-enum)
-    add_compile_options_safe(-Wno-float-conversion)
     add_compile_options_safe(-Wno-date-time)
     add_compile_options(-Wno-disabled-macro-expansion)
     add_compile_options_safe(-Wno-bitwise-instead-of-logical)
@@ -159,7 +157,7 @@ if(MSVC)
     # General
     add_compile_options(/W4) # Warning Level
     add_compile_options(/Zi) # Debug Information Format - Program Database
-    if(WARNINGS_ARE_ERRORS)
+    if(CMAKE_COMPILE_WARNING_AS_ERROR)
         add_compile_options(/WX) # Treat Warning As Errors
     endif()
     add_compile_options(/MP) # Multi-processor Compilation

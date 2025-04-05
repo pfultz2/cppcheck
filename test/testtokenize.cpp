@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
 #include "errortypes.h"
 #include "fixture.h"
 #include "helpers.h"
@@ -78,6 +77,7 @@ private:
         TEST_CASE(tokenize37);  // #8550
         TEST_CASE(tokenize38);  // #9569
         TEST_CASE(tokenize39);  // #9771
+        TEST_CASE(tokenize40);  // #13181
 
         TEST_CASE(validate);
 
@@ -283,6 +283,7 @@ private:
         TEST_CASE(simplifyInitVar);
         TEST_CASE(simplifyInitVar2);
         TEST_CASE(simplifyInitVar3);
+        TEST_CASE(simplifyInitVar4);
 
         TEST_CASE(bitfields1);
         TEST_CASE(bitfields2);
@@ -298,6 +299,7 @@ private:
         TEST_CASE(bitfields13); // ticket #3502 (segmentation fault)
         TEST_CASE(bitfields15); // ticket #7747 (enum Foo {A,B}:4;)
         TEST_CASE(bitfields16); // Save bitfield bit count
+        TEST_CASE(bitfields17);
 
         TEST_CASE(simplifyNamespaceStd);
 
@@ -390,6 +392,9 @@ private:
         TEST_CASE(astlambda);
         TEST_CASE(astcase);
         TEST_CASE(astrefqualifier);
+        TEST_CASE(astthrowdelete);
+        TEST_CASE(asttrailingdecltype);
+        TEST_CASE(astnoexcept);
         TEST_CASE(astvardecl);
         TEST_CASE(astnewscoped);
 
@@ -459,6 +464,19 @@ private:
         TEST_CASE(testDirectiveIncludeLocations);
         TEST_CASE(testDirectiveIncludeComments);
         TEST_CASE(testDirectiveRelativePath);
+
+        TEST_CASE(funcnameInParenthesis1); // #13554
+        TEST_CASE(funcnameInParenthesis2); // #13578
+        TEST_CASE(funcnameInParenthesis3); // #13585
+
+        TEST_CASE(genericInIf); // #13561
+
+        TEST_CASE(preincrementInLambda); // #13312
+
+        TEST_CASE(atomicCast); // #12605
+        TEST_CASE(constFunctionPtrTypedef); // #12135
+
+        TEST_CASE(simplifyPlatformTypes);
     }
 
 #define tokenizeAndStringify(...) tokenizeAndStringify_(__FILE__, __LINE__, __VA_ARGS__)
@@ -582,7 +600,7 @@ private:
                             "    int x1 = 1;\n"
                             "    int x2(x1);\n"
                             "}\n";
-        ASSERT_EQUALS("void f ( ) {\nint x1 ; x1 = 1 ;\nint x2 ; x2 = x1 ;\n}",
+        ASSERT_EQUALS("void f ( ) {\nint x1 ; x1 = 1 ;\nint x2 ( x1 ) ;\n}",
                       tokenizeAndStringify(code));
     }
 
@@ -592,8 +610,8 @@ private:
                             "    int x2(x1);\n"
                             "}\n";
         ASSERT_EQUALS("1: void f ( ) {\n"
-                      "2: int x1@1 ; x1@1 = g ( ) ;\n"
-                      "3: int x2@2 ; x2@2 = x1@1 ;\n"
+                      "2: int x1@1 ( g ( ) ) ;\n"
+                      "3: int x2@2 ( x1@1 ) ;\n"
                       "4: }\n",
                       tokenizeDebugListing(code));
     }
@@ -826,6 +844,17 @@ private:
         ASSERT_EQUALS(exp, tokenizeAndStringify(code));
     }
 
+    void tokenize40() { // #13181
+        const char code[] = "struct A { double eps(double); };\n"
+                            "A operator \"\"_a(long double);\n"
+                            "void f() {\n"
+                            "    double d = 1.23;\n"
+                            "    if (d == 1.2_a .eps(.1)) {}\n"
+                            "}\n";
+        (void) tokenizeAndStringify(code);
+        ASSERT_EQUALS("", errout_str());
+    }
+
     void validate() {
         // C++ code in C file
         ASSERT_THROW_INTERNAL(tokenizeAndStringify(";using namespace std;",false,Platform::Type::Native,false), SYNTAX);
@@ -906,9 +935,9 @@ private:
     void foreach () {
         // #3690,#5154
         const char code[] ="void f() { for each ( char c in MyString ) { Console::Write(c); } }";
-        ASSERT_EQUALS("void f ( ) { asm ( \"char c in MyString\" ) { Console :: Write ( c ) ; } }", tokenizeAndStringify(code));
+        ASSERT_EQUALS("void f ( ) { for ( char c : MyString ) { Console :: Write ( c ) ; } }", tokenizeAndStringify(code));
         ASSERT_EQUALS(
-            "[test.cpp:1]: (debug) valueFlowConditionExpressions bailout: Skipping function due to incomplete variable c\n",
+            "[test.cpp:1]: (debug) valueFlowConditionExpressions bailout: Skipping function due to incomplete variable MyString\n",
             errout_str());
     }
 
@@ -994,6 +1023,8 @@ private:
         ASSERT_EQUALS("int x ;", tokenizeAndStringify("int x @ (0x1000 + 18);"));
 
         ASSERT_EQUALS("int x [ 10 ] ;", tokenizeAndStringify("int x[10]@0x100;"));
+
+        ASSERT_EQUALS("void ( * f [ ] ) ( void ) ;", tokenizeAndStringify("void (*f[])(void)@0x100;")); // #13458
 
         ASSERT_EQUALS("interrupt@ f ( ) { }", tokenizeAndStringify("@interrupt f() {}"));
 
@@ -1788,6 +1819,15 @@ private:
                                            "  };\n"
                                            "} catch (long) {\n"
                                            "}"));
+
+        ASSERT_EQUALS("struct S { void func ( ) const ; } ;\n"
+                      "void S :: func ( ) const {\n"
+                      "try { f ( ) ; }\n"
+                      "catch ( ... ) { g ( ) ; } }",
+                      tokenizeAndStringify("struct S { void func() const; };\n"
+                                           "void S::func() const\n"
+                                           "try { f(); }\n"
+                                           "catch (...) { g(); }\n"));
     }
 
     // Simplify "((..))" into "(..)"
@@ -3758,7 +3798,7 @@ private:
         ASSERT_EQUALS("unsigned int ( * f ) ( ) ;", tokenizeAndStringify("unsigned int (*f)();"));
         ASSERT_EQUALS("unsigned int * ( * f ) ( ) ;", tokenizeAndStringify("unsigned int * (*f)();"));
         ASSERT_EQUALS("void ( * f [ 2 ] ) ( ) ;", tokenizeAndStringify("void (*f[2])();"));
-        ASSERT_EQUALS("void ( * f [ 2 ] ) ( void ) ;", tokenizeAndStringify("typedef void func_t(void); func_t *f[2];"));
+        ASSERT_EQUALS("void ( * f [ 2 ] ) ( void ) ;", tokenizeAndStringify("typedef void func_t(void); func_t *f[2];")); // #10581
     }
 
     void simplifyFunctionPointers2() {
@@ -4276,79 +4316,79 @@ private:
     void simplifyInitVar() {
         {
             const char code[] = "int i ; int p(0);";
-            ASSERT_EQUALS("int i ; int p ; p = 0 ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("int i ; int p ( 0 ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "int i; int *p(0);";
-            ASSERT_EQUALS("int i ; int * p ; p = 0 ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("int i ; int * p ( 0 ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "int p(0);";
-            ASSERT_EQUALS("int p ; p = 0 ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("int p ( 0 ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "int *p(0);";
-            ASSERT_EQUALS("int * p ; p = 0 ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("int * p ( 0 ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "int i ; int p(i);";
-            ASSERT_EQUALS("int i ; int p ; p = i ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("int i ; int p ( i ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "int i; int *p(&i);";
-            ASSERT_EQUALS("int i ; int * p ; p = & i ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("int i ; int * p ( & i ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "int i; void *p(&i);";
-            ASSERT_EQUALS("int i ; void * p ; p = & i ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("int i ; void * p ( & i ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "struct S { }; struct S s; struct S *p(&s);";
-            ASSERT_EQUALS("struct S { } ; struct S s ; struct S * p ; p = & s ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("struct S { } ; struct S s ; struct S * p ( & s ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "struct S { }; S s; S *p(&s);";
-            ASSERT_EQUALS("struct S { } ; S s ; S * p ; p = & s ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("struct S { } ; S s ; S * p ( & s ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "union S { int i; float f; }; union S s; union S *p(&s);";
-            ASSERT_EQUALS("union S { int i ; float f ; } ; union S s ; union S * p ; p = & s ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("union S { int i ; float f ; } ; union S s ; union S * p ( & s ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "union S { int i; float f; }; S s; S *p(&s);";
-            ASSERT_EQUALS("union S { int i ; float f ; } ; S s ; S * p ; p = & s ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("union S { int i ; float f ; } ; S s ; S * p ( & s ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "class C { }; class C c; class C *p(&c);";
-            ASSERT_EQUALS("class C { } ; class C c ; class C * p ; p = & c ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("class C { } ; class C c ; class C * p ( & c ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "class C { }; C c; C *p(&c);";
-            ASSERT_EQUALS("class C { } ; C c ; C * p ; p = & c ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("class C { } ; C c ; C * p ( & c ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
@@ -4440,13 +4480,13 @@ private:
 
         {
             const char code[] = "class A { } ; A a; int foo(a);";
-            ASSERT_EQUALS("class A { } ; A a ; int foo ; foo = a ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("class A { } ; A a ; int foo ( a ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
         {
             const char code[] = "int x(f());";
-            ASSERT_EQUALS("int x ; x = f ( ) ;", tokenizeAndStringify(code));
+            ASSERT_EQUALS("int x ( f ( ) ) ;", tokenizeAndStringify(code));
             ASSERT_EQUALS("", errout_str());
         }
 
@@ -4463,7 +4503,7 @@ private:
                             "    unsigned int a(0),b(0);\n"
                             "}";
         ASSERT_EQUALS("void f ( ) {\n"
-                      "unsigned int a ; a = 0 ; unsigned int b ; b = 0 ;\n"
+                      "unsigned int a ( 0 ) ; unsigned int b ( 0 ) ;\n"
                       "}", tokenizeAndStringify(code));
     }
 
@@ -4472,7 +4512,16 @@ private:
                             "    int *a(0),b(0);\n"
                             "}";
         ASSERT_EQUALS("void f ( ) {\n"
-                      "int * a ; a = 0 ; int b ; b = 0 ;\n"
+                      "int * a ( 0 ) ; int b ( 0 ) ;\n"
+                      "}", tokenizeAndStringify(code));
+    }
+
+    void simplifyInitVar4() {
+        const char code[] = "void f() {\n"
+                            "    uint32_t x{0};\n"
+                            "}";
+        ASSERT_EQUALS("void f ( ) {\n"
+                      "uint32_t x { 0 } ;\n"
                       "}", tokenizeAndStringify(code));
     }
 
@@ -4718,6 +4767,32 @@ private:
         ASSERT(tokenizer.tokenize(code));
         const Token *x = Token::findsimplematch(tokenizer.tokens(), "x");
         ASSERT_EQUALS(1, x->bits());
+    }
+
+    void bitfields17() {
+        const char code[] = "struct S {\n" // #13722
+                            "    volatile uint32_t a : 10;\n"
+                            "    volatile uint32_t   : 6;\n"
+                            "    volatile uint32_t b : 10;\n"
+                            "    volatile uint32_t   : 6;\n"
+                            "};\n";
+        const char expected[] = "struct S {\n"
+                                "volatile uint32_t a ;\n"
+                                "\n"
+                                "volatile uint32_t b ;\n"
+                                "\n"
+                                "} ;";
+        ASSERT_EQUALS(expected, tokenizeAndStringify(code));
+
+        const char code2[] = "struct S {\n"
+                             "    const volatile uint32_t a : 10;\n"
+                             "    const volatile uint32_t   : 6;\n"
+                             "};\n";
+        const char expected2[] = "struct S {\n"
+                                 "const volatile uint32_t a ;\n"
+                                 "\n"
+                                 "} ;";
+        ASSERT_EQUALS(expected2, tokenizeAndStringify(code2));
     }
 
     void simplifyNamespaceStd() {
@@ -6407,6 +6482,7 @@ private:
         ASSERT_EQUALS("sS(new::=", testAst("s = ::new (ptr) S();")); // #12552
         ASSERT_EQUALS("pdelete::return", testAst("return ::delete p;"));
         ASSERT_EQUALS("gn--(delete", testAst("delete g(--n);"));
+        ASSERT_EQUALS("bdeletep1*p0*,deletep0*p1*,:?*return", testAst("return *(b ? (delete *p1, *p0) : (delete *p0, *p1));")); // #10662
 
         // placement new
         ASSERT_EQUALS("X12,3,(new ab,c,", testAst("new (a,b,c) X(1,2,3);"));
@@ -6473,7 +6549,7 @@ private:
         // (cast){data}[index]
         ASSERT_EQUALS("a&{(0[1[5[0=", testAst("(int (**)[i]){&a}[0][1][5] = 0;"));
         ASSERT_EQUALS("ab12,{(0[,(", testAst("a(b, (int []){1,2}[0]);"));
-        ASSERT_EQUALS("n0=", testAst("TrivialDefCtor{[2][2]}[1][1].n = 0;"));
+        ASSERT_EQUALS("TrivialDefCtora2[2[{1[1[n.0=", testAst("TrivialDefCtor{a[2][2]}[1][1].n = 0;"));
         ASSERT_EQUALS("aT12,3,{1[=", testAst("a = T{1, 2, 3}[1];"));
 
         // Type{data}()
@@ -6696,7 +6772,7 @@ private:
         ASSERT_EQUALS("", testAst("a::b f();"));
         ASSERT_EQUALS("", testAst("a::b f() {}"));
         ASSERT_EQUALS("", testAst("a::b f() = delete;"));
-        ASSERT_EQUALS("constdelete=", testAst("int f() const = delete;"));
+        ASSERT_EQUALS("", testAst("int f() const = delete;"));
         ASSERT_EQUALS("", testAst("extern unsigned f(const char *);"));
         ASSERT_EQUALS("charformat*...,", testAst("extern void f(const char *format, ...);"));
         ASSERT_EQUALS("int(int(void,", testAst("extern int for_each_commit_graft(int (*)(int*), void *);"));
@@ -6875,7 +6951,7 @@ private:
 
         // #9662
         ASSERT_EQUALS("b{[{ stdunique_ptr::0nullptrnullptr:?{", testAst("auto b{[] { std::unique_ptr<void *>{0 ? nullptr : nullptr}; }};"));
-        ASSERT_EQUALS("b{[=", testAst("void a() { [b = [] { ; }] {}; }"));
+        ASSERT_EQUALS("{b{[=[", testAst("void a() { [b = [] { ; }] {}; }"));
 
         // Lambda capture expression (C++14)
         ASSERT_EQUALS("a{b1=[= c2=", testAst("a = [b=1]{c=2;};"));
@@ -6962,6 +7038,8 @@ private:
         ASSERT_EQUALS("gT{(&[{= 0return", testAst("auto g = T{ [&]() noexcept -> int { return 0; } };"));
 
         ASSERT_EQUALS("sf.{(i[{={", testAst("void g(int i) { S s{ .f = { [i]() {} } }; }"));
+
+        ASSERT_EQUALS("{([", testAst("void f() { []() {}; }")); // #13471
     }
 
     void astcase() {
@@ -6973,12 +7051,30 @@ private:
     }
 
     void astrefqualifier() {
-        ASSERT_EQUALS("b(int.", testAst("class a { auto b() -> int&; };"));
-        ASSERT_EQUALS("b(int.", testAst("class a { auto b() -> int&&; };"));
-        ASSERT_EQUALS("b(", testAst("class a { void b() &&; };"));
-        ASSERT_EQUALS("b(", testAst("class a { void b() &; };"));
-        ASSERT_EQUALS("b(", testAst("class a { void b() && {} };"));
-        ASSERT_EQUALS("b(", testAst("class a { void b() & {} };"));
+        ASSERT_EQUALS("", testAst("class a { auto b() -> int&; };"));
+        ASSERT_EQUALS("", testAst("class a { auto b() -> int&&; };"));
+        ASSERT_EQUALS("", testAst("class a { void b() &&; };"));
+        ASSERT_EQUALS("", testAst("class a { void b() &; };"));
+        ASSERT_EQUALS("", testAst("class a { void b() && = delete; };"));
+        ASSERT_EQUALS("", testAst("class a { void b() & = delete; };"));
+        ASSERT_EQUALS("", testAst("class a { void b() && {} };"));
+        ASSERT_EQUALS("", testAst("class a { void b() & {} };"));
+    }
+
+    void astthrowdelete() {
+        ASSERT_EQUALS("a(", testAst("class a { virtual ~a() throw() = delete; };"));
+    }
+
+    void asttrailingdecltype() {
+        ASSERT_EQUALS("Cc& csize.(", testAst("template<class C> constexpr auto s(const C &c) noexcept -> decltype(c.size()) {}"));
+        ASSERT_EQUALS("Cc& MakeSpancdata.(csize.(,(",
+                      testAst("template <typename C> constexpr auto MakeSpan(C &c) -> decltype(MakeSpan(c.data(), c.size())) {}"));
+        ASSERT_EQUALS("Eqeq&key_typek&, eqkk,(", testAst("auto KeyTypeCanBeEq(const Eq& eq, const key_type& k) -> decltype(eq(k, k));"));
+        ASSERT_EQUALS("h{([= si. {return", testAst("auto h = []() -> decltype(s.i) { return {}; };"));
+    }
+    void astnoexcept() {
+        ASSERT_EQUALS("noexceptaswap.b((", testAst("void f() noexcept(noexcept(a.swap(b))) {}"));
+        ASSERT_EQUALS("{([ noexceptaswap.b((", testAst("[]() noexcept(noexcept(a.swap(b))) {}"));
     }
 
     //Verify that returning a newly constructed object generates the correct AST even when the class name is scoped
@@ -8318,6 +8414,107 @@ private:
         directiveDump(filedata, "/some/path/test.c", s, ostr);
         ASSERT_EQUALS(dumpdata, ostr.str());
     }
+
+    void funcnameInParenthesis1() { // #13554
+        const char code[] = "void f(void) {\n"
+                            "  double result = (strtod)(\"NAN\", NULL);\n"
+                            "}\n";
+        SimpleTokenizer tokenizer(settings1, *this);
+        ASSERT_LOC(tokenizer.tokenize(code, false), __FILE__, __LINE__);
+        const Token *f = Token::findsimplematch(tokenizer.tokens(), "strtod");
+        ASSERT(f);
+        ASSERT(!f->previous()->isCast());
+    }
+
+    void funcnameInParenthesis2() { // #13578
+        const char code[] = "int f(double a, double b, double c) {\n"
+                            "    return static_cast<int>(std::ceil((std::min)(a, (std::min)(b, c))));\n"
+                            "}\n";
+        SimpleTokenizer tokenizer(settings1, *this);
+        ASSERT_LOC(tokenizer.tokenize(code, true), __FILE__, __LINE__);
+        const Token *f = Token::findsimplematch(tokenizer.tokens(), "min");
+        ASSERT(f);
+        const Token *par = f->next();
+        ASSERT(par);
+        ASSERT(Token::simpleMatch(par, "("));
+        ASSERT_EQUALS(par->astOperand1(), f->astParent() /* :: */);
+        ASSERT(Token::simpleMatch(par->astOperand2(), ","));
+    }
+
+    void funcnameInParenthesis3() { // #13585
+        const char code[] = "int f(int a, int b) {\n"
+                            "    return (a != 0) ? 1 : (std::min)(1, b);\n"
+                            "}\n";
+        SimpleTokenizer tokenizer(settings1, *this);
+        ASSERT_LOC(tokenizer.tokenize(code, true), __FILE__, __LINE__);
+        const Token *f = Token::findsimplematch(tokenizer.tokens(), "min");
+        ASSERT(f);
+        const Token *par = f->next();
+        ASSERT(par);
+        ASSERT(Token::simpleMatch(par, "("));
+        ASSERT_EQUALS(par->astOperand1(), f->astParent() /* :: */);
+        ASSERT(Token::simpleMatch(par->astOperand2(), ","));
+    }
+
+    void genericInIf() { // #13561
+        const char code[] = "  if (_Generic(s, char * : 1, const float * : (a ? b, c : d), volatile int * : 3, default : 0)) {}";
+        const char ast[] = "(( if (( _Generic (, (, (, (, s 1) (? a (: (, b c) d))) 3) 0)))";
+        ASSERT_EQUALS(ast, testAst(code, AstStyle::Z3));
+    }
+
+    void preincrementInLambda() { // #13312
+        const char code[] =
+            "void f(const std::vector<int>& v, int a) {\n"
+            "    std::for_each(v.begin(), v.end(), [&](int i)  {\n"
+            "        switch (i) {\n"
+            "        default:\n"
+            "            ++a;\n"
+            "        }\n"
+            "    });\n"
+            "}\n";
+        ASSERT_NO_THROW(tokenizeAndStringify(code));
+    }
+
+    void atomicCast() { // #12605
+        const char code[] = "int atomic_add_int(int *ptr, int v)\n"
+                            "{\n"
+                            "    return atomic_fetch_add((_Atomic(unsigned int) *)ptr, v) + v;\n"
+                            "}\n";
+        ASSERT_NO_THROW(tokenizeAndStringify(code, settingsDefault, false));
+    }
+
+    void constFunctionPtrTypedef() { // #12135
+        const char code[] = "struct S {\n"
+                            "    template<typename T> T g() {\n"
+                            "        return T();\n"
+                            "    }\n"
+                            "};\n"
+                            "void f() {\n"
+                            "    S s;\n"
+                            "    typedef void (*fp_t)();\n"
+                            "    if (fp_t const fp = s.g<fp_t>()) {}\n"
+                            "}\n";
+        ASSERT_NO_THROW(tokenizeAndStringify(code));
+        ASSERT_EQUALS("void ( * const f ) ( ) ;", tokenizeAndStringify("typedef void (*fp_t)(); fp_t const f;"));
+    }
+
+    void simplifyPlatformTypes() {
+        {
+            const char code[] = "size_t f();";
+            ASSERT_EQUALS("unsigned long f ( ) ;", tokenizeAndStringify(code, true, Platform::Type::Unix32));
+            ASSERT_EQUALS("unsigned long f ( ) ;", tokenizeAndStringify(code, true, Platform::Type::Unix64));
+        }
+        {
+            const char code[] = "ssize_t f();";
+            ASSERT_EQUALS("long f ( ) ;", tokenizeAndStringify(code, true, Platform::Type::Unix32));
+            ASSERT_EQUALS("long f ( ) ;", tokenizeAndStringify(code, true, Platform::Type::Unix64));
+        }
+        {
+            const char code[] = "std::ptrdiff_t f();";
+            ASSERT_EQUALS("long f ( ) ;", tokenizeAndStringify(code, true, Platform::Type::Unix32));
+            ASSERT_EQUALS("long f ( ) ;", tokenizeAndStringify(code, true, Platform::Type::Unix64));
+        }
+    }
 };
 
 REGISTER_TEST(TestTokenizer)
@@ -8363,10 +8560,10 @@ private:
         std::istringstream fin(raw_code);
         simplecpp::OutputList outputList;
         std::vector<std::string> files;
-        const simplecpp::TokenList tokens1(fin, files, emptyString, &outputList);
+        const simplecpp::TokenList tokens1(fin, files, "", &outputList);
         const std::string filedata = tokens1.stringify();
         const Settings settings;
-        const std::string code = PreprocessorHelper::getcode(settings, *this, filedata, emptyString, emptyString);
+        const std::string code = PreprocessorHelper::getcode(settings, *this, filedata, "", "");
 
         ASSERT_THROW_INTERNAL_EQUALS(tokenizeAndStringify(code), AST, "maximum AST depth exceeded");
     }

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -135,6 +135,7 @@ static bool parseInlineSuppressionCommentToken(const simplecpp::Token *tok, std:
         std::vector<SuppressionList::Suppression> suppressions = SuppressionList::parseMultiSuppressComment(comment, &errmsg);
 
         for (SuppressionList::Suppression &s : suppressions) {
+            s.isInline = true;
             s.type = errorType;
             s.lineNumber = tok->location.line;
         }
@@ -152,6 +153,7 @@ static bool parseInlineSuppressionCommentToken(const simplecpp::Token *tok, std:
         if (!s.parseComment(comment, &errmsg))
             return false;
 
+        s.isInline = true;
         s.type = errorType;
         s.lineNumber = tok->location.line;
 
@@ -166,6 +168,8 @@ static bool parseInlineSuppressionCommentToken(const simplecpp::Token *tok, std:
 }
 
 static std::string getRelativeFilename(const simplecpp::Token* tok, const Settings &settings) {
+    if (!tok)
+        return "";
     std::string relativeFilename(tok->location.file());
     if (settings.relativePaths) {
         for (const std::string & basePath : settings.basePaths) {
@@ -256,7 +260,7 @@ static void addInlineSuppressions(const simplecpp::TokenList &tokens, const Sett
                             suppr.lineNumber = supprBegin->lineNumber;
                             suppr.type = SuppressionList::Type::block;
                             inlineSuppressionsBlockBegin.erase(supprBegin);
-                            suppressions.addSuppression(std::move(suppr));
+                            suppressions.addSuppression(std::move(suppr)); // TODO: check result
                             throwError = false;
                             break;
                         }
@@ -281,10 +285,10 @@ static void addInlineSuppressions(const simplecpp::TokenList &tokens, const Sett
                 suppr.thisAndNextLine = thisAndNextLine;
                 suppr.lineNumber = tok->location.line;
                 suppr.macroName = macroName;
-                suppressions.addSuppression(std::move(suppr));
+                suppressions.addSuppression(std::move(suppr)); // TODO: check result
             } else if (SuppressionList::Type::file == suppr.type) {
                 if (onlyComments)
-                    suppressions.addSuppression(std::move(suppr));
+                    suppressions.addSuppression(std::move(suppr)); // TODO: check result
                 else
                     bad.emplace_back(suppr.fileName, suppr.lineNumber, "File suppression should be at the top of the file");
             }
@@ -302,7 +306,7 @@ void Preprocessor::inlineSuppressions(const simplecpp::TokenList &tokens, Suppre
         return;
     std::list<BadInlineSuppression> err;
     ::addInlineSuppressions(tokens, mSettings, suppressions, err);
-    for (std::map<std::string,simplecpp::TokenList*>::const_iterator it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
+    for (auto it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
         if (it->second)
             ::addInlineSuppressions(*it->second, mSettings, suppressions, err);
     }
@@ -315,7 +319,7 @@ std::vector<RemarkComment> Preprocessor::getRemarkComments(const simplecpp::Toke
 {
     std::vector<RemarkComment> ret;
     addRemarkComments(tokens, ret);
-    for (std::map<std::string,simplecpp::TokenList*>::const_iterator it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
+    for (auto it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
         if (it->second)
             addRemarkComments(*it->second, ret);
     }
@@ -330,7 +334,7 @@ std::list<Directive> Preprocessor::createDirectives(const simplecpp::TokenList &
     std::vector<const simplecpp::TokenList *> list;
     list.reserve(1U + mTokenLists.size());
     list.push_back(&tokens);
-    for (std::map<std::string, simplecpp::TokenList *>::const_iterator it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
+    for (auto it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
         list.push_back(it->second);
     }
 
@@ -340,7 +344,7 @@ std::list<Directive> Preprocessor::createDirectives(const simplecpp::TokenList &
                 continue;
             if (tok->next && tok->next->str() == "endfile")
                 continue;
-            Directive directive(tok->location, emptyString);
+            Directive directive(tok->location, "");
             for (const simplecpp::Token *tok2 = tok; tok2 && tok2->location.line == directive.linenr; tok2 = tok2->next) {
                 if (tok2->comment)
                     continue;
@@ -662,7 +666,7 @@ std::set<std::string> Preprocessor::getConfigs(const simplecpp::TokenList &token
 
     ::getConfigs(tokens, defined, mSettings.userDefines, mSettings.userUndefs, ret);
 
-    for (std::map<std::string, simplecpp::TokenList*>::const_iterator it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
+    for (auto it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
         if (!mSettings.configurationExcluded(it->first))
             ::getConfigs(*(it->second), defined, mSettings.userDefines, mSettings.userUndefs, ret);
     }
@@ -691,7 +695,7 @@ static simplecpp::DUI createDUI(const Settings &mSettings, const std::string &cf
 
     splitcfg(mSettings.userDefines, dui.defines, "1");
     if (!cfg.empty())
-        splitcfg(cfg, dui.defines, emptyString);
+        splitcfg(cfg, dui.defines, "");
 
     for (const std::string &def : mSettings.library.defines()) {
         const std::string::size_type pos = def.find_first_of(" (");
@@ -769,7 +773,7 @@ void Preprocessor::handleErrors(const simplecpp::OutputList& outputList, bool th
 
 bool Preprocessor::loadFiles(const simplecpp::TokenList &rawtokens, std::vector<std::string> &files)
 {
-    const simplecpp::DUI dui = createDUI(mSettings, emptyString, files[0]);
+    const simplecpp::DUI dui = createDUI(mSettings, "", files[0]);
 
     simplecpp::OutputList outputList;
     mTokenLists = simplecpp::load(rawtokens, files, dui, &outputList);
@@ -878,7 +882,7 @@ void Preprocessor::reportOutput(const simplecpp::OutputList &outputList, bool sh
         case simplecpp::Output::EXPLICIT_INCLUDE_NOT_FOUND:
         case simplecpp::Output::FILE_NOT_FOUND:
         case simplecpp::Output::DUI_ERROR:
-            error(emptyString, 0, out.msg);
+            error("", 0, out.msg);
             break;
         }
     }
@@ -924,9 +928,9 @@ void Preprocessor::missingInclude(const std::string &filename, unsigned int line
 void Preprocessor::getErrorMessages(ErrorLogger &errorLogger, const Settings &settings)
 {
     Preprocessor preprocessor(settings, errorLogger);
-    preprocessor.missingInclude(emptyString, 1, emptyString, UserHeader);
-    preprocessor.missingInclude(emptyString, 1, emptyString, SystemHeader);
-    preprocessor.error(emptyString, 1, "#error message");   // #error ..
+    preprocessor.missingInclude("", 1, "", UserHeader);
+    preprocessor.missingInclude("", 1, "", SystemHeader);
+    preprocessor.error("", 1, "#error message");   // #error ..
 }
 
 void Preprocessor::dump(std::ostream &out) const
@@ -975,7 +979,7 @@ std::size_t Preprocessor::calculateHash(const simplecpp::TokenList &tokens1, con
             hashData += static_cast<char>(tok->location.col);
         }
     }
-    for (std::map<std::string, simplecpp::TokenList *>::const_iterator it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
+    for (auto it = mTokenLists.cbegin(); it != mTokenLists.cend(); ++it) {
         for (const simplecpp::Token *tok = it->second->cfront(); tok; tok = tok->next) {
             if (!tok->comment) {
                 hashData += tok->str();
@@ -1077,6 +1081,8 @@ void Preprocessor::addRemarkComments(const simplecpp::TokenList &tokens, std::ve
                 remarkedToken = prev;
             break;
         }
+        if (!remarkedToken)
+            continue;
 
         // Relative filename
         const std::string relativeFilename = getRelativeFilename(remarkedToken, mSettings);

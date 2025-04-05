@@ -2,6 +2,8 @@
 // ~/cppcheck/cppcheck --dump misra/misra-test.h --std=c89
 // ~/cppcheck/cppcheck --dump -DDUMMY --suppress=uninitvar --inline-suppr misra/misra-test.c --std=c89 --platform=unix64 && python3 ../misra.py -verify misra/misra-test.c.dump
 
+#pragma ghs section rodata=default // no warning
+
 #include "path\file.h" // 20.2
 #include "file//.h" // 20.2
 #include "file/*.h" // 20.2
@@ -35,8 +37,8 @@
 
 #include <setjmp.h> // 21.4
 #include <signal.h> // 21.5
-#include <stdio.h> //21.6
-#include <wchar.h> //21.6
+#include <stdio.h>
+#include <wchar.h>
 #include <time.h> // 21.10
 #include <tgmath.h> // 21.11
 #include <fenv.h>
@@ -132,7 +134,7 @@ static void misra_3_2(int enable)
         ++y;    // This is hidden if trigraph replacement is active
     }
 
-    (void)printf("x=%i, y=%i\n", x, y);
+    (void)printf("x=%i, y=%i\n", x, y); //21.6
 }
 
 extern int misra_5_1_extern_var_hides_var_x;
@@ -207,9 +209,9 @@ int c41_15         = 'a'; // 10.3 8.4
 
 static void misra_4_1(void)
 {
-    (void)printf("\x41g"); // 4.1
-    (void)printf("\x41\x42");
-    (void)printf("\x41" "g");
+    (void)printf("\x41g"); // 4.1 21.6
+    (void)printf("\x41\x42"); //21.6
+    (void)printf("\x41" "g"); //21.6
 }
 
 const char *s42_1 = "String containing trigraphs ??-??-??";   // 4.2 8.4
@@ -218,8 +220,8 @@ const char *s42_3 = "No trigraph?(?'?)"; // 8.4
 
 static void misra_4_2(void)
 {
-    (void)printf("??=Trigraph\n");   // 4.2
-    (void)printf("No?/Trigraph\n");
+    (void)printf("??=Trigraph\n");   // 4.2 21.6
+    (void)printf("No?/Trigraph\n"); //21.6
 }
 
 #define misra_5_4_macro_hides_macro__31x 1
@@ -963,7 +965,7 @@ void misra_12_3(int a, int b, int c) {
   int a41 = MISRA_12_3_FN3_2(a34, a35), a42; // 12.3
   int a43, a44 = MISRA_12_3_FN3_2(a34, a35); // 12.3
 
-  MISRA_12_3_FN3_2_MSG(fprintf(stderr, "test\n")); // 12.3
+  MISRA_12_3_FN3_2_MSG(fprintf(stderr, "test\n")); // 12.3 21.6
 
   f((1,2),3); // TODO
 

@@ -197,7 +197,7 @@ def test_progress_j(tmpdir):
     assert stderr == ""
 
 
-def test_execute_addon_failure(tmpdir):
+def test_execute_addon_failure_py_auto(tmpdir):
     test_file = os.path.join(tmpdir, 'test.cpp')
     with open(test_file, 'wt') as f:
         f.write("""
@@ -212,19 +212,69 @@ def test_execute_addon_failure(tmpdir):
     assert stderr == '{}:0:0: error: Bailing out from analysis: Checking file failed: Failed to auto detect python [internalError]\n\n^\n'.format(test_file)
 
 
-def test_execute_addon_failure_2(tmpdir):
+def test_execute_addon_failure_py_notexist(tmpdir):
     test_file = os.path.join(tmpdir, 'test.cpp')
     with open(test_file, 'wt') as f:
         f.write("""
                 void f();
                 """)
 
-    # specify non-existent python executbale so execution of addon fails
+    # specify non-existent python executable so execution of addon fails
     args = ['--addon=naming', '--addon-python=python5.x', test_file]
 
     _, _, stderr = cppcheck(args)
     ec = 1 if os.name == 'nt' else 127
     assert stderr == "{}:0:0: error: Bailing out from analysis: Checking file failed: Failed to execute addon 'naming' - exitcode is {} [internalError]\n\n^\n".format(test_file, ec)
+
+
+def test_execute_addon_failure_json_notexist(tmpdir):
+    # specify non-existent python executable so execution of addon fails
+    addon_json = os.path.join(tmpdir, 'addon.json')
+    with open(addon_json, 'wt') as f:
+        f.write(json.dumps({'executable': 'notexist'}))
+
+    test_file = os.path.join(tmpdir, 'test.cpp')
+    with open(test_file, 'wt') as f:
+        f.write("""
+                void f();
+                """)
+
+    args = [
+        '--addon={}'.format(addon_json),
+        test_file
+    ]
+
+    _, _, stderr = cppcheck(args)
+    ec = 1 if os.name == 'nt' else 127
+    assert stderr == "{}:0:0: error: Bailing out from analysis: Checking file failed: Failed to execute addon 'addon.json' - exitcode is {} [internalError]\n\n^\n".format(test_file, ec)
+
+
+def test_execute_addon_failure_json_ctu_notexist(tmpdir):
+    # specify non-existent python executable so execution of addon fails
+    addon_json = os.path.join(tmpdir, 'addon.json')
+    with open(addon_json, 'wt') as f:
+        f.write(json.dumps({
+            'executable': 'notexist',
+            'ctu': True
+        }))
+
+    test_file = os.path.join(tmpdir, 'test.cpp')
+    with open(test_file, 'wt') as f:
+        f.write("""
+                void f(); """)
+
+    args = [
+        '--template=simple',
+        '--addon={}'.format(addon_json),
+        test_file
+    ]
+
+    _, _, stderr = cppcheck(args)
+    ec = 1 if os.name == 'nt' else 127
+    assert stderr.splitlines() == [
+        "{}:0:0: error: Bailing out from analysis: Checking file failed: Failed to execute addon 'addon.json' - exitcode is {} [internalError]".format(test_file, ec),
+        ":0:0: error: Bailing out from analysis: Whole program analysis failed: Failed to execute addon 'addon.json' - exitcode is {} [internalError]".format(ec)
+    ]
 
 
 def test_execute_addon_file0(tmpdir):
@@ -1983,6 +2033,7 @@ def test_ignore(tmpdir):
     with open(test_file, 'wt'):
         pass
 
+    # TODO: this should say that all paths are ignored
     lines_exp = [
         'cppcheck: error: could not find or open any of the paths given.',
         'cppcheck: Maybe all paths were ignored?'
@@ -2172,89 +2223,66 @@ def __write_compdb(tmpdir, test_file):
     return compile_commands
 
 
-# TODO: -i appears to be ignored
-@pytest.mark.xfail(strict=True)
-def test_ignore_project_2(tmpdir):
+def __test_ignore_project_2(tmpdir, extra_args, append=False, inject_path=False):
     os.mkdir(os.path.join(tmpdir, 'src'))
     test_file = os.path.join(tmpdir, 'src', 'test.cpp')
     with open(test_file, 'wt'):
         pass
 
     lines_exp = [
-        'cppcheck: error: could not find or open any of the paths given.',
-        'cppcheck: Maybe all paths were ignored?'
+        'cppcheck: error: no C or C++ source files found.',
+        'cppcheck: all paths were ignored'
     ]
-
     project_file = __write_compdb(tmpdir, test_file)
     args = [
-        '-itest.cpp',
+        '-q',
         '--project={}'.format(project_file)
     ]
 
-    exitcode, stdout, _ = cppcheck(args, cwd=tmpdir)
-    assert exitcode == 1, stdout
+    if inject_path:
+        extra_args = [ extra_args[0].replace('$path', str(test_file)) ]
+    if append:
+        args += extra_args
+    else:
+        args = extra_args + args
+    print(args)
+
+    exitcode, stdout, stderr = cppcheck(args, cwd=tmpdir)
+    assert exitcode == 1, stdout if stdout else stderr
     assert stdout.splitlines() == lines_exp
 
+
+@pytest.mark.xfail(strict=True)  # TODO: -i appears to be ignored
+def test_ignore_project_2_file(tmpdir):
+    __test_ignore_project_2(tmpdir, ['-itest.cpp'])
+
+
+@pytest.mark.xfail(strict=True)  # TODO: -i appears to be ignored
+def test_ignore_project_2_file_append(tmpdir):
     # make sure it also matches when specified after project
-    project_file = __write_compdb(tmpdir, test_file)
-    args = [
-        '--project={}'.format(project_file),
-        '-itest.cpp'
-    ]
+    __test_ignore_project_2(tmpdir, ['-itest.cpp'], append=True)
 
-    exitcode, stdout, _ = cppcheck(args, cwd=tmpdir)
-    assert exitcode == 1, stdout
-    assert stdout.splitlines() == lines_exp
 
-    project_file = __write_compdb(tmpdir, test_file)
-    args = [
-        '-isrc/test.cpp',
-        '--project={}'.format(project_file)
-    ]
+@pytest.mark.xfail(strict=True)  # TODO: -i appears to be ignored
+def test_ignore_project_2_file_relative(tmpdir):
+    __test_ignore_project_2(tmpdir, ['-isrc/test.cpp'])
 
-    exitcode, stdout, _ = cppcheck(args, cwd=tmpdir)
-    assert exitcode == 1, stdout
-    assert stdout.splitlines() == lines_exp
 
-    project_file = __write_compdb(tmpdir, test_file)
-    args = [
-        '-isrc\\test.cpp',
-        '--project={}'.format(project_file)
-    ]
+@pytest.mark.xfail(strict=True)  # TODO: -i appears to be ignored
+def test_ignore_project_2_file_relative_backslash(tmpdir):
+    __test_ignore_project_2(tmpdir, ['-isrc\\test.cpp'])
 
-    exitcode, stdout, _ = cppcheck(args, cwd=tmpdir)
-    assert exitcode == 1, stdout
-    assert stdout.splitlines() == lines_exp
 
-    project_file = __write_compdb(tmpdir, test_file)
-    args = [
-        '-isrc/',
-        '--project={}'.format(project_file)
-    ]
+def test_ignore_project_2_path_relative(tmpdir):
+    __test_ignore_project_2(tmpdir, ['-isrc/'])
 
-    exitcode, stdout, _ = cppcheck(args, cwd=tmpdir)
-    assert exitcode == 1, stdout
-    assert stdout.splitlines() == lines_exp
 
-    project_file = __write_compdb(tmpdir, test_file)
-    args = [
-        '-isrc\\',
-        '--project={}'.format(project_file)
-    ]
+def test_ignore_project_2_path_relative_backslash(tmpdir):
+    __test_ignore_project_2(tmpdir, ['-isrc\\'])
 
-    exitcode, stdout, _ = cppcheck(args, cwd=tmpdir)
-    assert exitcode == 1, stdout
-    assert stdout.splitlines() == lines_exp
 
-    project_file = __write_compdb(tmpdir, test_file)
-    args = [
-        '-i{}'.format(test_file),
-        '--project={}'.format(project_file)
-    ]
-
-    exitcode, stdout, _ = cppcheck(args, cwd=tmpdir)
-    assert exitcode == 1, stdout
-    assert stdout.splitlines() == lines_exp
+def test_ignore_project_2_abspath(tmpdir):
+    __test_ignore_project_2(tmpdir, ['-i$path'], inject_path=True)
 
 
 def test_dumpfile_platform(tmpdir):
@@ -2466,3 +2494,879 @@ void f()
     assert stderr.splitlines() == [
         '{}:7:16: error: Null pointer dereference: (int*)0 [nullPointer]'.format(test_file)
     ]
+
+
+def test_dump_check_config(tmp_path):  # #13432
+    test_file = tmp_path / 'test.c'
+    with open(test_file, 'wt') as f:
+        f.write("""
+void f() {}
+""")
+
+    args = [
+        '-q',
+        '--template=simple',
+        '--dump',
+        '--check-config',
+        str(test_file)
+    ]
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout == ''
+    assert stderr == ''
+
+    # no dump file should have been generated
+    assert not os.path.exists(str(test_file) + '.dump')
+
+
+# TODO: remove all overrides when fully fixed
+def __test_inline_suppr(tmp_path, extra_args):  # #13087
+    test_file = tmp_path / 'test.c'
+    with open(test_file, 'wt') as f:
+        f.write("""
+void f() {
+  // cppcheck-suppress memleak
+}
+""")
+
+    args = [
+        '-q',
+        '--template=simple',
+        '--enable=information',
+        '--inline-suppr',
+        str(test_file)
+    ]
+
+    args += extra_args
+
+    exitcode, stdout, stderr, = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout == ''
+    assert stderr.splitlines() == [
+        '{}:4:0: information: Unmatched suppression: memleak [unmatchedSuppression]'.format(test_file)
+    ]
+
+
+def test_inline_suppr(tmp_path):
+    __test_inline_suppr(tmp_path, ['-j1'])
+
+
+def test_inline_suppr_j(tmp_path):
+    __test_inline_suppr(tmp_path, ['-j2'])
+
+
+def test_inline_suppr_builddir(tmp_path):
+    build_dir = tmp_path / 'b1'
+    os.mkdir(build_dir)
+    __test_inline_suppr(tmp_path, ['--cppcheck-build-dir={}'.format(build_dir), '-j1'])
+
+
+# TODO: the suppressions are generated outside of the scope which captures the analysis information
+@pytest.mark.xfail(strict=True)
+def test_inline_suppr_builddir_cached(tmp_path):
+    build_dir = tmp_path / 'b1'
+    os.mkdir(build_dir)
+    __test_inline_suppr(tmp_path, ['--cppcheck-build-dir={}'.format(build_dir), '-j1'])
+    __test_inline_suppr(tmp_path, ['--cppcheck-build-dir={}'.format(build_dir), '-j1'])
+
+
+def test_inline_suppr_builddir_j(tmp_path):
+    build_dir = tmp_path / 'b1'
+    os.mkdir(build_dir)
+    __test_inline_suppr(tmp_path, ['--cppcheck-build-dir={}'.format(build_dir), '-j2'])
+
+
+# TODO: the suppressions are generated outside of the scope which captures the analysis information
+@pytest.mark.xfail(strict=True)
+def test_inline_suppr_builddir_j_cached(tmp_path):
+    build_dir = tmp_path / 'b1'
+    os.mkdir(build_dir)
+    __test_inline_suppr(tmp_path, ['--cppcheck-build-dir={}'.format(build_dir), '-j2'])
+    __test_inline_suppr(tmp_path, ['--cppcheck-build-dir={}'.format(build_dir), '-j2'])
+
+
+def test_duplicate_suppression(tmp_path):
+    test_file = tmp_path / 'file.cpp'
+    with open(test_file, 'wt'):
+        pass
+
+    args = [
+        '-q',
+        '--suppress=uninitvar',
+        '--suppress=uninitvar',
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 1, stdout
+    assert stdout.splitlines() == [
+        "cppcheck: error: suppression 'uninitvar' already exists"
+    ]
+    assert stderr == ''
+
+
+def test_duplicate_suppressions_list(tmp_path):
+    suppr_file = tmp_path / 'suppressions'
+    with open(suppr_file, 'wt') as f:
+        f.write('''
+uninitvar
+uninitvar
+''')
+
+    test_file = tmp_path / 'file.cpp'
+    with open(test_file, 'wt'):
+        pass
+
+    args = [
+        '-q',
+        '--suppressions-list={}'.format(suppr_file),
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 1, stdout
+    assert stdout.splitlines() == [
+        "cppcheck: error: suppression 'uninitvar' already exists"
+    ]
+    assert stderr == ''
+
+
+def test_duplicate_suppressions_mixed(tmp_path):
+    suppr_file = tmp_path / 'suppressions'
+    with open(suppr_file, 'wt') as f:
+        f.write('uninitvar')
+
+    test_file = tmp_path / 'file.cpp'
+    with open(test_file, 'wt'):
+        pass
+
+    args = [
+        '-q',
+        '--suppress=uninitvar',
+        '--suppressions-list={}'.format(suppr_file),
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 1, stdout
+    assert stdout.splitlines() == [
+        "cppcheck: error: suppression 'uninitvar' already exists"
+    ]
+    assert stderr == ''
+
+
+def test_xml_output(tmp_path):  # #13391 / #13485
+    test_file = tmp_path / 'test.cpp'
+    with open(test_file, 'wt') as f:
+        f.write("""
+void f(const void* p)
+{
+    if(p) {}
+    (void)*p; // REMARK: boom
+}
+""")
+
+    _, version_str, _ = cppcheck(['--version'])
+    version_str = version_str.replace('Cppcheck ', '').strip()
+
+    args = [
+        '-q',
+        '--enable=style',
+        '--xml',
+        str(test_file)
+    ]
+    exitcode_1, stdout_1, stderr_1 = cppcheck(args)
+    assert exitcode_1 == 0, stdout_1
+    assert stdout_1 == ''
+    assert (stderr_1 ==
+'''<?xml version="1.0" encoding="UTF-8"?>
+<results version="2">
+    <cppcheck version="{}"/>
+    <errors>
+        <error id="nullPointerRedundantCheck" severity="warning" msg="Either the condition &apos;p&apos; is redundant or there is possible null pointer dereference: p." verbose="Either the condition &apos;p&apos; is redundant or there is possible null pointer dereference: p." cwe="476" file0="{}" remark="boom">
+            <location file="{}" line="5" column="12" info="Null pointer dereference"/>
+            <location file="{}" line="4" column="8" info="Assuming that condition &apos;p&apos; is not redundant"/>
+            <symbol>p</symbol>
+        </error>
+    </errors>
+</results>
+'''.format(version_str, str(test_file).replace('\\', '/'), test_file, test_file))  # TODO: the slashes are inconsistent
+
+
+def test_internal_error_loc_int(tmp_path):
+    test_file = tmp_path / 'test.c'
+    with open(test_file, 'wt') as f:
+        f.write(
+"""
+void f() {
+    int i = 0x10000000000000000;
+}
+""")
+
+    args = [
+        '-q',
+        '--template=simple',
+        str(test_file)
+    ]
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout.splitlines() == []
+    assert stderr.splitlines() == [
+        '{}:3:13: error: Internal Error. MathLib::toBigUNumber: out_of_range: 0x10000000000000000 [internalError]'.format(test_file)
+    ]
+
+
+def __test_addon_suppr(tmp_path, extra_args):
+    test_file = tmp_path / 'test.c'
+    with open(test_file, 'wt') as f:
+        f.write("""
+// cppcheck-suppress misra-c2012-2.3
+typedef int MISRA_5_6_VIOLATION;
+typedef int MISRA_5_6_VIOLATION_1;
+        """)
+
+    args = [
+        '-q',
+        '--template=simple',
+        '--enable=style',
+        '--addon=misra',
+        str(test_file)
+    ]
+
+    args += extra_args
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout == ''
+    assert stderr.splitlines() == [
+        '{}:4:1: style: misra violation (use --rule-texts=<file> to get proper output) [misra-c2012-2.3]'.format(test_file),
+    ]
+
+
+# TODO: remove override when all issues are fixed
+def test_addon_suppr_inline(tmp_path):
+    __test_addon_suppr(tmp_path, ['--inline-suppr', '-j1'])
+
+# TODO: remove override when all issues are fixed
+def test_addon_suppr_inline_j(tmp_path):
+    __test_addon_suppr(tmp_path, ['--inline-suppr', '-j2'])
+
+
+def test_addon_suppr_cli_line(tmp_path):
+    __test_addon_suppr(tmp_path, ['--suppress=misra-c2012-2.3:*:3'])
+
+
+@pytest.mark.xfail(strict=True)  # #13437 - TODO: suppression needs to match the whole input path
+def test_addon_suppr_cli_file_line(tmp_path):
+    __test_addon_suppr(tmp_path, ['--suppress=misra-c2012-2.3:test.c:3'])
+
+
+def test_addon_suppr_cli_absfile_line(tmp_path):
+    test_file = tmp_path / 'test.c'
+    __test_addon_suppr(tmp_path, ['--suppress=misra-c2012-2.3:{}:3'.format(test_file)])
+
+
+def test_ctu_path_builddir(tmp_path):  # #11883
+    build_dir = tmp_path / 'b1'
+    os.mkdir(build_dir)
+
+    test_file = tmp_path / 'test.c'
+    with open(test_file, 'wt') as f:
+        f.write("""
+void f(int *p) { *p = 3; }
+int main() {
+    int *p = 0;
+f(p);
+}
+        """)
+
+    args = [
+        '-q',
+        '--enable=style',
+        '--suppress=nullPointer',  # we only care about the CTU findings
+        '--cppcheck-build-dir={}'.format(build_dir),
+        str(test_file)
+    ]
+
+    # the CTU path was not properly read leading to missing location information
+    stderr_exp = [
+        '{}:2:19: error: Null pointer dereference: p [ctunullpointer]'.format(test_file),
+        'void f(int *p) { *p = 3; }',
+        '                  ^',
+        "{}:4:14: note: Assignment 'p=0', assigned value is 0".format(test_file),
+        '    int *p = 0;',
+        '             ^',
+        '{}:5:2: note: Calling function f, 1st argument is null'.format(test_file),
+        'f(p);',
+        ' ^',
+        '{}:2:19: note: Dereferencing argument p that is null'.format(test_file),
+        'void f(int *p) { *p = 3; }',
+        '                  ^'
+    ]
+
+    exitcode_1, stdout_1, stderr_1 = cppcheck(args)
+    assert exitcode_1 == 0, stdout_1
+    assert stdout_1 == ''
+    assert stderr_1.splitlines() == stderr_exp
+
+    exitcode_2, stdout_2, stderr_2 = cppcheck(args)
+    assert exitcode_2 == 0, stdout_2
+    assert stdout_2 == ''
+    assert stderr_2.splitlines() == stderr_exp
+
+
+@pytest.mark.xfail(strict=True)
+def test_ctu_builddir(tmp_path):  # #11883
+    build_dir = tmp_path / 'b1'
+    os.mkdir(build_dir)
+
+    test_file = tmp_path / 'test.c'
+    with open(test_file, 'wt') as f:
+        f.write("""
+void f(int *p) { *p = 3; }
+int main() {
+    int *p = 0;
+f(p);
+}
+        """)
+
+    args = [
+        '-q',
+        '--template=simple',
+        '--enable=style',
+        '--suppress=nullPointer',  # we only care about the CTU findings
+        '--cppcheck-build-dir={}'.format(build_dir),
+        '-j1',
+        '--emit-duplicates',
+        str(test_file)
+    ]
+
+    # the CTU was run and then evaluated again from the builddir leading to duplicated findings
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout == ''
+    assert stderr.splitlines() == [
+        '{}:2:19: error: Null pointer dereference: p [ctunullpointer]'.format(test_file)
+    ]
+
+
+def test_debug(tmp_path):
+    test_file = tmp_path / 'test.c'
+    with open(test_file, "w") as f:
+        f.write(
+"""void f
+{
+    (void)*((int*)0);
+}
+""")
+
+    args = [
+        '-q',
+        '--debug',
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout.find('##file ') != -1
+    assert stdout.find('##Value flow') != -1
+    assert stdout.find('### Symbol database ###') == -1
+    assert stdout.find('##AST') == -1
+    assert stdout.find('### Template Simplifier pass ') == -1
+    assert stderr.splitlines() == []
+
+
+def test_debug_xml(tmp_path):
+    test_file = tmp_path / 'test.c'
+    with open(test_file, "w") as f:
+        f.write(
+"""void f
+{
+    (void)*((int*)0);
+}
+""")
+
+    args = [
+        '-q',
+        '--debug',
+        '--xml',
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+
+    assert stderr
+    assert ElementTree.fromstring(stderr) is not None
+
+    assert stdout.find('##file ') != -1  # also exists in CDATA
+    assert stdout.find('##Value flow') == -1
+    assert stdout.find('### Symbol database ###') == -1
+    assert stdout.find('##AST') == -1
+    assert stdout.find('### Template Simplifier pass ') == -1
+
+    debug_xml = ElementTree.fromstring(stdout)
+    assert debug_xml is not None
+    assert debug_xml.tag == 'debug'
+    file_elem = debug_xml.findall('file')
+    assert len(file_elem) == 1
+    valueflow_elem = debug_xml.findall('valueflow')
+    assert len(valueflow_elem) == 1
+    scopes_elem = debug_xml.findall('scopes')
+    assert len(scopes_elem) == 1
+    ast_elem = debug_xml.findall('ast')
+    assert len(ast_elem) == 0
+
+
+def test_debug_verbose(tmp_path):
+    test_file = tmp_path / 'test.c'
+    with open(test_file, "w") as f:
+        f.write(
+"""void f
+{
+    (void)*((int*)0);
+}
+""")
+
+    args = [
+        '-q',
+        '--debug',
+        '--verbose',
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout.find('##file ') != -1
+    assert stdout.find('##Value flow') != -1
+    assert stdout.find('### Symbol database ###') != -1
+    assert stdout.find('##AST') != -1
+    assert stdout.find('### Template Simplifier pass ') == -1
+    assert stderr.splitlines() == []
+
+
+def test_debug_verbose_xml(tmp_path):
+    test_file = tmp_path / 'test.c'
+    with open(test_file, "w") as f:
+        f.write(
+"""void f
+{
+    (void)*((int*)0);
+}
+""")
+
+    args = [
+        '-q',
+        '--debug',
+        '--verbose',
+        '--xml',
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+
+    assert stderr
+    assert ElementTree.fromstring(stderr) is not None
+
+    assert stdout.find('##file ') != -1  # also exists in CDATA
+    assert stdout.find('##Value flow') == -1
+    assert stdout.find('### Symbol database ###') == -1
+    assert stdout.find('##AST') == -1
+    assert stdout.find('### Template Simplifier pass ') == -1
+
+    debug_xml = ElementTree.fromstring(stdout)
+    assert debug_xml is not None
+    assert debug_xml.tag == 'debug'
+    file_elem = debug_xml.findall('file')
+    assert len(file_elem) == 1
+    valueflow_elem = debug_xml.findall('valueflow')
+    assert len(valueflow_elem) == 1
+    scopes_elem = debug_xml.findall('scopes')
+    assert len(scopes_elem) == 1
+    ast_elem = debug_xml.findall('ast')
+    assert len(ast_elem) == 1
+
+
+# TODO: test with --xml
+def test_debug_template(tmp_path):
+    test_file = tmp_path / 'test.cpp'
+    with open(test_file, "w") as f:
+        f.write(
+"""template<class T> class TemplCl;
+void f
+{
+    (void)*((int*)0);
+}
+""")
+
+    args = [
+        '-q',
+        '--debug',  # TODO: remove depdency on this
+        '--debug-template',
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout.find('##file ') != -1
+    assert stdout.find('##Value flow') != -1
+    assert stdout.find('### Symbol database ###') == -1
+    assert stdout.find('##AST') == -1
+    assert stdout.find('### Template Simplifier pass ') != -1
+    assert stderr.splitlines() == []
+
+
+def test_file_ignore_2(tmp_path):  # #13570
+    tests_path = tmp_path / 'tests'
+    os.mkdir(tests_path)
+
+    lib_path = tmp_path / 'lib'
+    os.mkdir(lib_path)
+
+    test_file_1 = lib_path / 'test_1.c'
+    with open(test_file_1, 'wt'):
+        pass
+
+    args = [
+        '-itests',
+        '-itest_1.c',
+        '.'
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args, cwd=tmp_path)
+    assert exitcode == 1, stdout
+    assert stdout.splitlines() == [
+        'cppcheck: error: could not find or open any of the paths given.',
+        'cppcheck: Maybe all paths were ignored?'
+    ]
+    assert stderr.splitlines() == []
+
+
+def test_debug_valueflow(tmp_path):
+    test_file = tmp_path / 'test.c'
+    with open(test_file, "w") as f:
+        f.write(
+"""int f()
+{
+    double d = 1.0 / 0.5;
+    return d;
+}
+""")
+
+    args = [
+        '-q',
+        '--debug',  # TODO: limit to valueflow output
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+
+    # check sections in output
+    assert stdout.find('##file ') != -1
+    assert stdout.find('##Value flow') != -1
+    assert stdout.find('### Symbol database ###') == -1
+    assert stdout.find('##AST') == -1
+    assert stdout.find('### Template Simplifier pass ') == -1
+    assert stderr.splitlines() == []
+
+    # check precision in output - #13607
+    valueflow = stdout[stdout.find('##Value flow'):]
+    assert valueflow.splitlines() == [
+        '##Value flow',
+        'File {}'.format(str(test_file).replace('\\', '/')),
+        'Line 3',
+        '  = always 2.0',
+        '  1.0 always 1.0',
+        '  / always 2.0',
+        '  0.5 always 0.5',
+        'Line 4',
+        '  d always {symbolic=(1.0/0.5),2.0}'
+    ]
+
+
+def test_debug_valueflow_xml(tmp_path):  # #13606
+    test_file = tmp_path / 'test.c'
+    with open(test_file, "w") as f:
+        f.write(
+"""double f()
+{
+    double d = 0.0000001;
+    return d;
+}
+""")
+
+    args = [
+        '-q',
+        '--debug',  # TODO: limit to valueflow output
+        '--xml',
+        str(test_file)
+    ]
+
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+
+    assert stderr
+    assert ElementTree.fromstring(stderr) is not None
+
+    # check sections in output
+    assert stdout.find('##file ') != -1  # also exists in CDATA
+    assert stdout.find('##Value flow') == -1
+    assert stdout.find('### Symbol database ###') == -1
+    assert stdout.find('##AST') == -1
+    assert stdout.find('### Template Simplifier pass ') == -1
+
+    # check XML nodes in output
+    debug_xml = ElementTree.fromstring(stdout)
+    assert debug_xml is not None
+    assert debug_xml.tag == 'debug'
+    file_elem = debug_xml.findall('file')
+    assert len(file_elem) == 1
+    valueflow_elem = debug_xml.findall('valueflow')
+    assert len(valueflow_elem) == 1
+    scopes_elem = debug_xml.findall('scopes')
+    assert len(scopes_elem) == 1
+    ast_elem = debug_xml.findall('ast')
+    assert len(ast_elem) == 0
+
+    # check precision in output - #13606
+    value_elem = valueflow_elem[0].findall('values/value')
+    assert len(value_elem) == 3
+    assert 'floatvalue' in value_elem[0].attrib
+    assert value_elem[0].attrib['floatvalue'] == '1e-07'
+    assert 'floatvalue' in value_elem[1].attrib
+    assert value_elem[1].attrib['floatvalue'] == '1e-07'
+    assert 'floatvalue' in value_elem[2].attrib
+    assert value_elem[2].attrib['floatvalue'] == '1e-07'
+
+
+def test_dir_ignore(tmp_path):
+    test_file = tmp_path / 'test.cpp'
+    with open(test_file, 'wt'):
+        pass
+
+    lib_dir = tmp_path / 'lib'
+    os.mkdir(lib_dir)
+    lib_test_file = lib_dir / 'test.cpp'
+    with open(lib_test_file, 'wt'):
+        pass
+
+    args = [
+        '-ilib',
+        '--debug-ignore',
+        str(tmp_path)
+    ]
+    # make sure the whole directory is being ignored instead of each of its contents individually
+    out_lines = [
+        'ignored path: {}'.format(lib_dir),
+        'Checking {} ...'.format(test_file)
+    ]
+
+    assert_cppcheck(args, ec_exp=0, err_exp=[], out_exp=out_lines, cwd=str(tmp_path))
+
+
+def test_check_headers(tmp_path):
+    test_file_h = tmp_path / 'test.h'
+    with open(test_file_h, 'wt') as f:
+        f.write(
+"""
+inline void hdr()
+{
+    (void)(*((int*)0));
+}
+""")
+
+    test_file_c = tmp_path / 'test.c'
+    with open(test_file_c, 'wt') as f:
+        f.write(
+"""
+#include "test.h"
+
+void f() {}
+""")
+
+    args = [
+        '-q',
+        '--template=simple',
+        '--no-check-headers',
+        str(test_file_c)
+    ]
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout.splitlines() == []
+    assert stderr.splitlines() == []  # no error since the header is not checked
+
+
+def test_unique_error(tmp_path):  # #6366
+    test_file = tmp_path / 'test.c'
+    with open(test_file, 'wt') as f:
+        f.write(
+"""void f()
+{
+    const long m[9] = {};
+    long a=m[9], b=m[9];
+    (void)a;
+    (void)b;
+}
+""")
+
+    args = [
+        '-q',
+        '--template=simple',
+        str(test_file)
+    ]
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout.splitlines() == []
+    assert stderr.splitlines() == [
+        "{}:4:13: error: Array 'm[9]' accessed at index 9, which is out of bounds. [arrayIndexOutOfBounds]".format(test_file),
+        "{}:4:21: error: Array 'm[9]' accessed at index 9, which is out of bounds. [arrayIndexOutOfBounds]".format(test_file)
+    ]
+
+
+def test_check_unused_templates_class(tmp_path):
+    test_file_h = tmp_path / 'test.h'
+    with open(test_file_h, 'wt') as f:
+        f.write(
+"""template<class T>
+class HdrCl1
+{
+    HdrCl1()
+    {
+        (void)(*((int*)0));
+    }
+};
+
+template<typename T>
+class HdrCl2
+{
+    HdrCl2()
+    {
+        (void)(*((int*)0));
+    }
+};
+
+template<class T>
+struct HdrSt1
+{
+    HdrSt1()
+    {
+        (void)(*((int*)0));
+    }
+};
+
+template<typename T>
+struct HdrSt2
+{
+    HdrSt2()
+    {
+        (void)(*((int*)0));
+    }
+};
+""")
+
+    test_file = tmp_path / 'test.cpp'
+    with open(test_file, 'wt') as f:
+        f.write(
+"""#include "test.h"
+
+template<class T>
+class Cl1
+{
+    CL1()
+    {
+        (void)(*((int*)0));
+    }
+};
+
+template<typename T>
+class Cl2
+{
+    Cl2()
+    {
+        (void)(*((int*)0));
+    }
+};
+
+template<class T>
+struct St1
+{
+    St1()
+    {
+        (void)(*((int*)0));
+    }
+};
+
+template<typename T>
+struct St2
+{
+    St2()
+    {
+        (void)(*((int*)0));
+    }
+};
+
+void f() {}
+""")
+
+    args = [
+        '-q',
+        '--template=simple',
+        '--no-check-unused-templates',
+        str(test_file)
+    ]
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout.splitlines() == []
+    assert stderr.splitlines() == []  # no error since the unused templates are not being checked
+
+
+@pytest.mark.xfail(strict=True)  # TODO: only the first unused templated function is not being checked
+def test_check_unused_templates_func(tmp_path):  # #13714
+    test_file_h = tmp_path / 'test.h'
+    with open(test_file_h, 'wt') as f:
+        f.write(
+"""template<class T>
+void f_t_hdr_1()
+{
+    (void)(*((int*)0));
+}
+
+template<typename T>
+void f_t_hdr_2()
+{
+    (void)(*((int*)0));
+}
+""")
+
+    test_file = tmp_path / 'test.cpp'
+    with open(test_file, 'wt') as f:
+        f.write(
+"""#include "test.h"
+
+template<class T>
+void f_t_1()
+{
+    (void)(*((int*)0));
+}
+
+template<typename T>
+void f_t_2()
+{
+    (void)(*((int*)0));
+}
+
+void f() {}
+""")
+
+    args = [
+        '-q',
+        '--template=simple',
+        '--no-check-unused-templates',
+        str(test_file)
+    ]
+    exitcode, stdout, stderr = cppcheck(args)
+    assert exitcode == 0, stdout
+    assert stdout.splitlines() == []
+    assert stderr.splitlines() == []  # no error since the unused templates are not being checked

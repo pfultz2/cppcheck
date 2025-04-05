@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -141,7 +141,7 @@ static std::string writestr(const std::string &str, bool gccStyle = false)
     std::ostringstream ostr;
     if (gccStyle)
         ostr << '\"';
-    for (std::string::const_iterator i = str.cbegin(); i != str.cend(); ++i) {
+    for (auto i = str.cbegin(); i != str.cend(); ++i) {
         if (*i == '\n') {
             ostr << "\\n";
             if ((i+1) != str.end() && !gccStyle)
@@ -162,11 +162,13 @@ static std::string writestr(const std::string &str, bool gccStyle = false)
     return ostr.str();
 }
 
-void TestFixture::assert_(const char * const filename, const unsigned int linenr, const bool condition) const
+void TestFixture::assert_(const char * const filename, const unsigned int linenr, const bool condition, const std::string& msg) const
 {
     if (!condition) {
         ++fails_counter;
         errmsg << getLocationStr(filename, linenr) << ": Assertion failed." << std::endl << "_____" << std::endl;
+        if (!msg.empty())
+            errmsg << "Hint:" << std::endl << msg << std::endl;
     }
 }
 
@@ -427,7 +429,26 @@ void TestFixture::reportErr(const ErrorMessage &msg)
         return;
     if (msg.severity == Severity::information && msg.id == "normalCheckLevelMaxBranches")
         return;
-    const std::string errormessage(msg.toString(mVerbose, mTemplateFormat, mTemplateLocation));
+    std::string errormessage;
+    if (!mTemplateFormat.empty()) {
+        errormessage = msg.toString(mVerbose, mTemplateFormat, mTemplateLocation);
+    }
+    else {
+        if (!msg.callStack.empty()) {
+            // TODO: add column
+            errormessage += ErrorLogger::callStackToString(msg.callStack);
+            errormessage += ": ";
+        }
+        if (msg.severity != Severity::none) {
+            errormessage += '(';
+            errormessage += severityToString(msg.severity);
+            if (msg.certainty == Certainty::inconclusive)
+                errormessage += ", inconclusive";
+            errormessage += ") ";
+        }
+        errormessage += msg.shortMessage();
+        // TODO: add ID
+    }
     mErrout << errormessage << std::endl;
 }
 

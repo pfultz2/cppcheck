@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,12 +19,13 @@
 //---------------------------------------------------------------------------
 #include "checkexceptionsafety.h"
 
+#include "astutils.h"
 #include "errortypes.h"
 #include "library.h"
 #include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
-#include "astutils.h"
+#include "tokenize.h"
 
 #include <list>
 #include <set>
@@ -59,7 +60,7 @@ void CheckExceptionSafety::destructors()
         if (!function)
             continue;
         // only looking for destructors
-        if (function->type == Function::eDestructor) {
+        if (function->type == FunctionType::eDestructor) {
             // Inspect this destructor.
             for (const Token *tok = scope->bodyStart->next(); tok != scope->bodyEnd; tok = tok->next()) {
                 // Skip try blocks
@@ -177,7 +178,7 @@ void CheckExceptionSafety::checkRethrowCopy()
     const SymbolDatabase* const symbolDatabase = mTokenizer->getSymbolDatabase();
 
     for (const Scope &scope : symbolDatabase->scopeList) {
-        if (scope.type != Scope::eCatch)
+        if (scope.type != ScopeType::eCatch)
             continue;
 
         const unsigned int varid = scope.bodyStart->tokAt(-2)->varId();
@@ -221,7 +222,7 @@ void CheckExceptionSafety::checkCatchExceptionByValue()
     const SymbolDatabase* const symbolDatabase = mTokenizer->getSymbolDatabase();
 
     for (const Scope &scope : symbolDatabase->scopeList) {
-        if (scope.type != Scope::eCatch)
+        if (scope.type != ScopeType::eCatch)
             continue;
 
         // Find a pass-by-value declaration in the catch(), excluding basic types
@@ -407,4 +408,31 @@ void CheckExceptionSafety::rethrowNoCurrentExceptionError(const Token *tok)
                 " If there is no current exception this calls std::terminate()."
                 " More: https://isocpp.org/wiki/faq/exceptions#throw-without-an-object",
                 CWE480, Certainty::normal);
+}
+
+void CheckExceptionSafety::runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger)
+{
+    if (tokenizer.isC())
+        return;
+
+    CheckExceptionSafety checkExceptionSafety(&tokenizer, &tokenizer.getSettings(), errorLogger);
+    checkExceptionSafety.destructors();
+    checkExceptionSafety.deallocThrow();
+    checkExceptionSafety.checkRethrowCopy();
+    checkExceptionSafety.checkCatchExceptionByValue();
+    checkExceptionSafety.nothrowThrows();
+    checkExceptionSafety.unhandledExceptionSpecification();
+    checkExceptionSafety.rethrowNoCurrentException();
+}
+
+void CheckExceptionSafety::getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const
+{
+    CheckExceptionSafety c(nullptr, settings, errorLogger);
+    c.destructorsError(nullptr, "Class");
+    c.deallocThrowError(nullptr, "p");
+    c.rethrowCopyError(nullptr, "varname");
+    c.catchExceptionByValueError(nullptr);
+    c.noexceptThrowError(nullptr);
+    c.unhandledExceptionSpecificationError(nullptr, nullptr, "funcname");
+    c.rethrowNoCurrentExceptionError(nullptr);
 }

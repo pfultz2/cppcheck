@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,8 @@
 #include "settings.h"
 #include "path.h"
 #include "summaries.h"
+#include "suppressions.h"
+#include "utils.h"
 #include "vfvalue.h"
 
 #include <cctype>
@@ -103,7 +105,7 @@ std::string Settings::loadCppcheckCfg(Settings& settings, Suppressions& suppress
     }
     const picojson::object& obj = json.get<picojson::object>();
     {
-        const picojson::object::const_iterator it = obj.find("productName");
+        const auto it = utils::as_const(obj).find("productName");
         if (it != obj.cend()) {
             const auto& v = it->second;
             if (!v.is<std::string>())
@@ -112,7 +114,7 @@ std::string Settings::loadCppcheckCfg(Settings& settings, Suppressions& suppress
         }
     }
     {
-        const picojson::object::const_iterator it = obj.find("about");
+        const auto it = utils::as_const(obj).find("about");
         if (it != obj.cend()) {
             const auto& v = it->second;
             if (!v.is<std::string>())
@@ -121,7 +123,7 @@ std::string Settings::loadCppcheckCfg(Settings& settings, Suppressions& suppress
         }
     }
     {
-        const picojson::object::const_iterator it = obj.find("addons");
+        const auto it = utils::as_const(obj).find("addons");
         if (it != obj.cend()) {
             const auto& entry = it->second;
             if (!entry.is<picojson::array>())
@@ -139,7 +141,7 @@ std::string Settings::loadCppcheckCfg(Settings& settings, Suppressions& suppress
         }
     }
     {
-        const picojson::object::const_iterator it = obj.find("suppressions");
+        const auto it = utils::as_const(obj).find("suppressions");
         if (it != obj.cend()) {
             const auto& entry = it->second;
             if (!entry.is<picojson::array>())
@@ -156,7 +158,7 @@ std::string Settings::loadCppcheckCfg(Settings& settings, Suppressions& suppress
         }
     }
     {
-        const picojson::object::const_iterator it = obj.find("safety");
+        const auto it = utils::as_const(obj).find("safety");
         if (it != obj.cend()) {
             const auto& v = it->second;
             if (!v.is<bool>())
@@ -465,6 +467,7 @@ static const std::set<std::string> misrac2012Checkers{
     "comparePointers",
     "compareValueOutOfTypeRangeError",
     "constParameterPointer",
+    "constStatement",
     "danglingLifetime",
     "danglingTemporaryLifetime",
     "duplicateBreak",
@@ -507,6 +510,7 @@ static const std::set<std::string> misrac2023Checkers{
     "comparePointers",
     "compareValueOutOfTypeRangeError",
     "constParameterPointer",
+    "constStatement",
     "danglingLifetime",
     "danglingTemporaryLifetime",
     "duplicateBreak",

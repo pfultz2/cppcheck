@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <list>
 #include <string>
@@ -143,7 +144,7 @@ namespace ValueFlow
             Value floatValue = value;
             floatValue.valueType = Value::ValueType::FLOAT;
             if (value.isIntValue())
-                floatValue.floatValue = value.intvalue;
+                floatValue.floatValue = static_cast<double>(value.intvalue);
             setTokenValue(parent, std::move(floatValue), settings);
         } else if (value.isIntValue()) {
             const long long charMax = settings.platform.signedCharMax();
@@ -479,7 +480,7 @@ namespace ValueFlow
                 if (!isComputableValue(parent, value1))
                     continue;
                 for (const Value &value2 : parent->astOperand2()->values()) {
-                    if (value1.path != value2.path)
+                    if (value1.path != value2.path && value1.path != 0 && value2.path != 0)
                         continue;
                     if (!isComputableValue(parent, value2))
                         continue;
@@ -494,8 +495,9 @@ namespace ValueFlow
                             continue;
                         result.valueType = Value::ValueType::FLOAT;
                     }
-                    const double floatValue1 = value1.isFloatValue() ? value1.floatValue : value1.intvalue;
-                    const double floatValue2 = value2.isFloatValue() ? value2.floatValue : value2.intvalue;
+                    const double floatValue1 = value1.isFloatValue() ? value1.floatValue : static_cast<double>(value1.intvalue);
+                    const double floatValue2 = value2.isFloatValue() ? value2.floatValue : static_cast<double>(value2.intvalue);
+                    const bool isFloat = value1.isFloatValue() || value2.isFloatValue();
                     const auto intValue1 = [&]() -> MathLib::bigint {
                         return value1.isFloatValue() ? static_cast<MathLib::bigint>(value1.floatValue) : value1.intvalue;
                     };
@@ -534,8 +536,8 @@ namespace ValueFlow
                                                        args1.end(),
                                                        args2.begin(),
                                                        [&](const Token* atok, const Token* btok) {
-                                        return atok->values().front().intvalue ==
-                                        btok->values().front().intvalue;
+                                        return atok->getKnownIntValue() ==
+                                        btok->getKnownIntValue();
                                     });
                                 } else {
                                     equal = false;
@@ -550,17 +552,27 @@ namespace ValueFlow
                         setTokenValue(parent, std::move(result), settings);
                     } else if (Token::Match(parent, "%op%")) {
                         if (Token::Match(parent, "%comp%")) {
-                            if (!result.isFloatValue() && !value1.isIntValue() && !value2.isIntValue())
+                            if (!isFloat && !value1.isIntValue() && !value2.isIntValue())
                                 continue;
                         } else {
                             if (value1.isTokValue() || value2.isTokValue())
                                 break;
                         }
                         bool error = false;
-                        if (result.isFloatValue()) {
-                            result.floatValue = calculate(parent->str(), floatValue1, floatValue2, &error);
+                        if (isFloat) {
+                            auto val = calculate(parent->str(), floatValue1, floatValue2, &error);
+                            if (result.isFloatValue()) {
+                                result.floatValue = val;
+                            } else {
+                                result.intvalue = static_cast<MathLib::bigint>(val);
+                            }
                         } else {
-                            result.intvalue = calculate(parent->str(), intValue1(), intValue2(), &error);
+                            auto val = calculate(parent->str(), intValue1(), intValue2(), &error);
+                            if (result.isFloatValue()) {
+                                result.floatValue = static_cast<double>(val);
+                            } else {
+                                result.intvalue = val;
+                            }
                         }
                         if (error)
                             continue;
@@ -597,7 +609,7 @@ namespace ValueFlow
                     continue;
                 Value v(val);
                 v.intvalue = ~v.intvalue;
-                int bits = 0;
+                std::uint8_t bits = 0;
                 if (tok->valueType() &&
                     tok->valueType()->sign == ValueType::Sign::UNSIGNED &&
                     tok->valueType()->pointer == 0) {
@@ -607,7 +619,7 @@ namespace ValueFlow
                         bits = settings.platform.long_bit;
                 }
                 if (bits > 0 && bits < MathLib::bigint_bits)
-                    v.intvalue &= (((MathLib::biguint)1)<<bits) - 1;
+                    v.intvalue &= (1ULL<<bits) - 1;
                 setTokenValue(parent, std::move(v), settings);
             }
         }
@@ -641,7 +653,7 @@ namespace ValueFlow
                         const ValueType *dst = tok->valueType();
                         if (dst) {
                             const size_t sz = ValueFlow::getSizeOf(*dst, settings);
-                            long long newvalue = ValueFlow::truncateIntValue(v.intvalue + 1, sz, dst->sign);
+                            MathLib::bigint newvalue = ValueFlow::truncateIntValue(v.intvalue + 1, sz, dst->sign);
                             if (v.bound != ValueFlow::Value::Bound::Point) {
                                 if (newvalue < v.intvalue) {
                                     v.invertBound();
@@ -671,7 +683,7 @@ namespace ValueFlow
                         const ValueType *dst = tok->valueType();
                         if (dst) {
                             const size_t sz = ValueFlow::getSizeOf(*dst, settings);
-                            long long newvalue = ValueFlow::truncateIntValue(v.intvalue - 1, sz, dst->sign);
+                            MathLib::bigint newvalue = ValueFlow::truncateIntValue(v.intvalue - 1, sz, dst->sign);
                             if (v.bound != ValueFlow::Value::Bound::Point) {
                                 if (newvalue > v.intvalue) {
                                     v.invertBound();

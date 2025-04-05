@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,10 +30,12 @@
 #include "token.h"
 #include "tokenize.h"
 #include "valueflow.h"
+#include "vfvalue.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <list>
 #include <sstream>
@@ -87,7 +89,7 @@ void CheckType::checkTooBigBitwiseShift()
         // C11 Standard, section 6.5.7 Bitwise shift operators, states:
         //   The integer promotions are performed on each of the operands.
         //   The type of the result is that of the promoted left operand.
-        int lhsbits;
+        std::uint8_t lhsbits;
         if ((lhstype->type == ValueType::Type::CHAR) ||
             (lhstype->type == ValueType::Type::SHORT) ||
             (lhstype->type == ValueType::Type::WCHAR_T) ||
@@ -198,7 +200,7 @@ void CheckType::checkIntegerOverflow()
             continue;
 
         // max value according to platform settings.
-        const MathLib::bigint maxvalue = (((MathLib::biguint)1) << (bits - 1)) - 1;
+        const MathLib::bigint maxvalue = (static_cast<MathLib::biguint>(1) << (bits - 1)) - 1;
 
         // is there a overflow result value
         bool isOverflow = true;
@@ -211,7 +213,7 @@ void CheckType::checkIntegerOverflow()
             continue;
 
         // For left shift, it's common practice to shift into the sign bit
-        if (tok->str() == "<<" && value->intvalue > 0 && value->intvalue < (((MathLib::bigint)1) << bits))
+        if (tok->str() == "<<" && value->intvalue > 0 && value->intvalue < (static_cast<MathLib::biguint>(1) << bits))
             continue;
 
         integerOverflowError(tok, *value, isOverflow);
@@ -342,9 +344,8 @@ void CheckType::checkLongCast()
         if (tok->str() != "=" || !Token::Match(tok->astOperand2(), "*|<<") || tok->astOperand2()->isUnaryOp("*"))
             continue;
 
-        if (tok->astOperand2()->hasKnownIntValue()) {
-            const ValueFlow::Value &v = tok->astOperand2()->values().front();
-            if (mSettings->platform.isIntValue(v.intvalue))
+        if (const ValueFlow::Value* v = tok->astOperand2()->getKnownValue(ValueFlow::Value::ValueType::INT)) {
+            if (mSettings->platform.isIntValue(v->intvalue))
                 continue;
         }
 
@@ -464,9 +465,9 @@ void CheckType::checkFloatToIntegerOverflow()
             if (isUnreachableOperand(tok))
                 continue;
             const Scope *scope = tok->scope();
-            while (scope && scope->type != Scope::ScopeType::eLambda && scope->type != Scope::ScopeType::eFunction)
+            while (scope && scope->type != ScopeType::eLambda && scope->type != ScopeType::eFunction)
                 scope = scope->nestedIn;
-            if (scope && scope->type == Scope::ScopeType::eFunction && scope->function && scope->function->retDef) {
+            if (scope && scope->type == ScopeType::eFunction && scope->function && scope->function->retDef) {
                 const ValueType &valueType = ValueType::parseDecl(scope->function->retDef, *mSettings);
                 vtfloat = tok->astOperand1()->valueType();
                 checkFloatToIntegerOverflow(tok, &valueType, vtfloat, tok->astOperand1()->values());
@@ -506,7 +507,7 @@ void CheckType::checkFloatToIntegerOverflow(const Token *tok, const ValueType *v
                 bits = mSettings->platform.long_long_bit;
             else
                 continue;
-            if (bits < MathLib::bigint_bits && f.floatValue >= (((MathLib::biguint)1) << bits))
+            if (bits < MathLib::bigint_bits && f.floatValue >= (static_cast<MathLib::biguint>(1) << bits))
                 floatToIntegerOverflowError(tok, f);
         }
     }
@@ -520,4 +521,30 @@ void CheckType::floatToIntegerOverflowError(const Token *tok, const ValueFlow::V
                 value.errorSeverity() ? Severity::error : Severity::warning,
                 "floatConversionOverflow",
                 errmsg.str(), CWE190, value.isInconclusive() ? Certainty::inconclusive : Certainty::normal);
+}
+
+void CheckType::runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger)
+{
+    // These are not "simplified" because casts can't be ignored
+    CheckType checkType(&tokenizer, &tokenizer.getSettings(), errorLogger);
+    checkType.checkTooBigBitwiseShift();
+    checkType.checkIntegerOverflow();
+    checkType.checkSignConversion();
+    checkType.checkLongCast();
+    checkType.checkFloatToIntegerOverflow();
+}
+
+void CheckType::getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const
+{
+    CheckType c(nullptr, settings, errorLogger);
+    c.tooBigBitwiseShiftError(nullptr, 32, ValueFlow::Value(64));
+    c.tooBigSignedBitwiseShiftError(nullptr, 31, ValueFlow::Value(31));
+    c.integerOverflowError(nullptr, ValueFlow::Value(1LL<<32));
+    c.signConversionError(nullptr, nullptr, false);
+    c.longCastAssignError(nullptr);
+    c.longCastReturnError(nullptr);
+    ValueFlow::Value f;
+    f.valueType = ValueFlow::Value::ValueType::FLOAT;
+    f.floatValue = 1E100;
+    c.floatToIntegerOverflowError(nullptr, f);
 }

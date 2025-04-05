@@ -19,6 +19,11 @@
 #include <boost/thread/lock_guard.hpp>
 #include <boost/test/unit_test.hpp>
 #include <boost/core/scoped_enum.hpp>
+#include <boost/foreach.hpp>
+
+#include <cstdlib>
+#include <set>
+#include <vector>
 
 BOOST_FORCEINLINE void boost_forceinline_test()
 {}
@@ -106,6 +111,68 @@ void lock_guard_finiteLifetime(boost::mutex& m)
 {
     // cppcheck-suppress unusedScopedObject
     boost::lock_guard<boost::mutex>{ m };
+}
+
+void test_BOOST_FOREACH_1(std::vector<int> data)
+{
+    BOOST_FOREACH(int i, data) {
+        // cppcheck-suppress invalidContainerLoop
+        data.push_back(123);
+    }
+}
+
+void test_BOOST_FOREACH_2(std::set<int> data)
+{
+    BOOST_FOREACH(int i, data) {
+        // don't warn for std::set
+        data.insert(123);
+    }
+}
+
+void test_BOOST_FOREACH_3(std::vector<int> data)
+{
+    BOOST_FOREACH(const int& i, data) {
+        // cppcheck-suppress invalidContainerLoop
+        data.erase(data.begin());
+    }
+}
+
+// Check single line usage
+void test_BOOST_FOREACH_4(std::vector<int> data)
+{
+    BOOST_FOREACH(const int& i, data)
+        // cppcheck-suppress invalidContainerLoop
+        data.clear();
+}
+
+// Container returned as result of a function -> Be quiet
+std::vector<int> get_data();
+void test_BOOST_FOREACH_5()
+{
+    std::set<int> data;
+    BOOST_FOREACH(const int& i, get_data())
+        data.insert(i);
+}
+
+// Break after modification (#4788)
+void test_BOOST_FOREACH_6(std::vector<int> data)
+{
+    BOOST_FOREACH(int i, data) {
+        data.push_back(123);
+        break;
+    }
+}
+
+void test_require()
+{
+    int *some_int = static_cast<int*>(std::malloc(sizeof(int)));
+    int *some_other_int = static_cast<int*>(malloc(sizeof(int)));
+    BOOST_REQUIRE(some_int);
+    BOOST_TEST_REQUIRE(some_other_int);
+    *some_int = 42;
+    *some_other_int = 42;
+    std::free(some_int);
+    free(some_other_int);
 }
 
 BOOST_AUTO_TEST_SUITE(my_auto_test_suite)

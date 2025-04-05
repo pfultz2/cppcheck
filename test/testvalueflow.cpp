@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -53,10 +53,11 @@ private:
                                "  <function name=\"strcpy\"> <arg nr=\"1\"><not-null/></arg> </function>\n"
                                "  <function name=\"abort\"> <noreturn>true</noreturn> </function>\n" // abort is a noreturn function
                                "</def>";
-        settings = settingsBuilder(settings).libraryxml(cfg, sizeof(cfg)).build();
+        settings = settingsBuilder(settings).libraryxml(cfg).build();
 
         TEST_CASE(valueFlowNumber);
         TEST_CASE(valueFlowString);
+        TEST_CASE(valueFlowTypeTraits);
         TEST_CASE(valueFlowPointerAlias);
         TEST_CASE(valueFlowLifetime);
         TEST_CASE(valueFlowArrayElement);
@@ -532,6 +533,21 @@ private:
         return values.size() == 1U && !values.front().isTokValue() ? values.front() : ValueFlow::Value();
     }
 
+#define testKnownValueOfTok(...) testKnownValueOfTok_(__FILE__, __LINE__, __VA_ARGS__)
+    bool testKnownValueOfTok_(const char* file,
+                              int line,
+                              const char code[],
+                              const char tokstr[],
+                              int value,
+                              const Settings* s = nullptr,
+                              bool cpp = true)
+    {
+        std::list<ValueFlow::Value> values = removeImpossible(tokenValues_(file, line, code, tokstr, s, cpp));
+        return std::any_of(values.begin(), values.end(), [&](const ValueFlow::Value& v) {
+            return v.isKnown() && v.isIntValue() && v.intvalue == value;
+        });
+    }
+
     static std::list<ValueFlow::Value> removeSymbolicTok(std::list<ValueFlow::Value> values)
     {
         values.remove_if([](const ValueFlow::Value& v) {
@@ -554,8 +570,8 @@ private:
         ASSERT_EQUALS(0, valueOfTok("x=false;", "false").intvalue);
         ASSERT_EQUALS(1, valueOfTok("x=true;", "true").intvalue);
         ASSERT_EQUALS(0, valueOfTok("x(NULL);", "NULL").intvalue);
-        ASSERT_EQUALS((int)('a'), valueOfTok("x='a';", "'a'").intvalue);
-        ASSERT_EQUALS((int)('\n'), valueOfTok("x='\\n';", "'\\n'").intvalue);
+        ASSERT_EQUALS(static_cast<int>('a'), valueOfTok("x='a';", "'a'").intvalue);
+        ASSERT_EQUALS(static_cast<int>('\n'), valueOfTok("x='\\n';", "'\\n'").intvalue);
         TODO_ASSERT_EQUALS(0xFFFFFFFF00000000, 0, valueOfTok("x=0xFFFFFFFF00000000;", "0xFFFFFFFF00000000").intvalue); // #7701
         ASSERT_EQUALS_DOUBLE(16, valueOfTok("x=(double)16;", "(").floatValue, 1e-5);
         ASSERT_EQUALS_DOUBLE(0.0625, valueOfTok("x=1/(double)16;", "/").floatValue, 1e-5);
@@ -594,6 +610,136 @@ private:
                 "\n"
                 "void test() { dostuff(\"abc\"); }";
         ASSERT_EQUALS(true, testValueOfX(code, 2, "\"abc\"", ValueFlow::Value::ValueType::TOK));
+    }
+
+    void valueFlowTypeTraits()
+    {
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_void<void>{};", "{", 1));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_void<void>::value;", ":: value", 1));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_void_v<void>;", "::", 1));
+
+        // is_void
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_void<int>{};", "{", 0));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_void<void*>{};", "{", 0));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_void<const void>{};", "{", 1));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_void<volatile void>{};", "{", 1));
+
+        // is_lvalue_reference
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_lvalue_reference<int>{};", "{", 0));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_lvalue_reference<int&>{};", "{", 1));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_lvalue_reference<int&&>{};", "{", 0));
+
+        // is_rvalue_reference
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_rvalue_reference<int>{};", "{", 0));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_rvalue_reference<int&>{};", "{", 0));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_rvalue_reference<int&&>{};", "{", 1));
+
+        // is_reference
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_reference<int>{};", "{", 0));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_reference<int&>{};", "{", 1));
+        ASSERT_EQUALS(true, testKnownValueOfTok("std::is_reference<int&&>{};", "{", 1));
+
+        {
+            const char* code;
+            code = "void bar();\n"
+                   "void foo() { std::is_void<decltype(bar())>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+
+            code = "int bar();\n"
+                   "void foo() { std::is_void<decltype(bar())>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "void bar();\n"
+                   "void foo() { std::is_void<decltype(bar)>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "class A;\n"
+                   "void foo() { std::is_lvalue_reference<A>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "class A;\n"
+                   "void foo() { std::is_lvalue_reference<A&>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+
+            code = "class A;\n"
+                   "void foo() { std::is_lvalue_reference<A&&>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "class A;\n"
+                   "void foo() { std::is_rvalue_reference<A>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "class A;\n"
+                   "void foo() { std::is_rvalue_reference<A&>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "class A;\n"
+                   "void foo() { std::is_rvalue_reference<A&&>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+
+            code = "class A;\n"
+                   "void foo() { std::is_reference<A>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "class A;\n"
+                   "void foo() { std::is_reference<A&>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+
+            code = "class A;\n"
+                   "void foo() { std::is_reference<A&&>::value; }";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+
+            code = "void foo() {\n"
+                   "    int bar;\n"
+                   "    std::is_void<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "void foo(int bar) {\n"
+                   "    std::is_lvalue_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "void foo(int& bar) {\n"
+                   "    std::is_lvalue_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+
+            code = "void foo(int&& bar) {\n"
+                   "    std::is_lvalue_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "void foo(int bar) {\n"
+                   "    std::is_rvalue_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "void foo(int& bar) {\n"
+                   "    std::is_rvalue_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "void foo(int&& bar) {\n"
+                   "    std::is_rvalue_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+
+            code = "void foo(int bar) {\n"
+                   "    std::is_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 0));
+
+            code = "void foo(int& bar) {\n"
+                   "    std::is_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+
+            code = "void foo(int&& bar) {\n"
+                   "    std::is_reference<decltype(bar)>::value;\n"
+                   "}\n";
+            ASSERT_EQUALS(true, testKnownValueOfTok(code, ":: value", 1));
+        }
     }
 
     void valueFlowPointerAlias() {
@@ -743,6 +889,17 @@ private:
             lifetimes = lifetimeValues(code, "return"); // don't crash
             ASSERT_EQUALS(true, lifetimes.empty());
         }
+
+        {
+            const char code[] = "void f() {\n" // #13076
+                                "    char a[10];\n"
+                                "    struct S s = { sizeof(a), 0 };\n"
+                                "    s.p = a;\n"
+                                "}\n";
+            lifetimes = lifetimeValues(code, "= a");
+            ASSERT_EQUALS(true, lifetimes.size() == 1);
+            ASSERT_EQUALS(true, lifetimes.front() == "a");
+        }
     }
 
     void valueFlowArrayElement() {
@@ -777,7 +934,7 @@ private:
                 "    const char *x = \"abcd\";\n"
                 "    return x[0];\n"
                 "}";
-        ASSERT_EQUALS((int)('a'), valueOfTok(code, "[").intvalue);
+        ASSERT_EQUALS(static_cast<int>('a'), valueOfTok(code, "[").intvalue);
 
         code  = "char f() {\n"
                 "    const char *x = \"\";\n"
@@ -940,15 +1097,35 @@ private:
         ASSERT_EQUALS(10, valueOfTok("x = static_cast<int>(10);", "( 10 )").intvalue);
         ASSERT_EQUALS(0, valueOfTok("x = sizeof (struct {int a;}) * 0;", "*").intvalue);
 
-        // Don't calculate if there is UB
+        // Don't calculate or crash if there is UB or invalid operations
         ASSERT(tokenValues(";-1<<10;","<<").empty());
         ASSERT(tokenValues(";10<<-1;","<<").empty());
         ASSERT(tokenValues(";10<<64;","<<").empty());
         ASSERT(tokenValues(";-1>>10;",">>").empty());
         ASSERT(tokenValues(";10>>-1;",">>").empty());
         ASSERT(tokenValues(";10>>64;",">>").empty());
+        ASSERT_EQUALS(tokenValues(";1%-1;","%").size(), 1);
+        ASSERT_EQUALS(tokenValues(";1%-10;","%").size(), 1);
+        ASSERT_EQUALS(tokenValues(";1.5%-1;","%").size(), 1);
+        ASSERT_EQUALS(tokenValues(";1.5%-10;","%").size(), 1);
+        ASSERT(tokenValues(";1%-1.5;","%").empty());
+        ASSERT(tokenValues(";1%-10.5;","%").empty());
+        ASSERT(tokenValues(";1.5%-1.5;","%").empty());
+        ASSERT(tokenValues(";1.5%-10.5;","%").empty());
+        ASSERT(tokenValues(";1/-1;","/").empty());
+        ASSERT(tokenValues(";1/-10;","/").empty());
+        ASSERT(tokenValues(";1.5/-1;","/").empty());
+        ASSERT(tokenValues(";1.5/-10;","/").empty());
+        ASSERT(tokenValues(";1/-1.5;","/").empty());
+        ASSERT(tokenValues(";1/-10.5;","/").empty());
+        ASSERT(tokenValues(";1.5/-1.5;","/").empty());
+        ASSERT(tokenValues(";1.5/-10.5;","/").empty());
+        ASSERT(tokenValues(";1/0;","/").empty());
+        ASSERT(tokenValues(";1/0;","/").empty());
+        ASSERT(tokenValues(";1.5/0;","/").empty());
+        ASSERT(tokenValues(";1.5/0;","/").empty());
         ASSERT(tokenValues(";((-1) * 9223372036854775807LL - 1) / (-1);", "/").empty()); // #12109
-        ASSERT_EQUALS(tokenValues(";((-1) * 9223372036854775807LL - 1) % (-1);", "%").size(), 1);
+        ASSERT_EQUALS(tokenValues(";((-1) * 9223372036854775807LL - 1) % (-1);", "%").size(), 1); // #12109
 
         code = "float f(const uint16_t& value) {\n"
                "    const uint16_t uVal = value; \n"
@@ -1510,6 +1687,16 @@ private:
         values = tokenValues(code, "=");
         ASSERT_EQUALS(1U, values.size());
         ASSERT_EQUALS(4LL * 5, values.back().intvalue);
+
+        // #13734
+        code = "void f() {\n"
+               "    int a[N + 1];"
+               "    x = sizeof(a) / sizeof(a[0]);\n"
+               "}";
+        values = tokenValues(code,"/");
+        ASSERT_EQUALS(1U, values.size());
+        ASSERT_EQUALS(-1, values.back().intvalue);
+        ASSERT_EQUALS_ENUM(ValueFlow::Value::ValueKind::Impossible, values.back().valueKind);
     }
 
     void valueFlowComma()
@@ -3697,7 +3884,7 @@ private:
                "    x += 67;\n"
                "    return x;\n"
                "}";
-        ASSERT_EQUALS(true, testValueOfX(code, 4U, (double)123.45f + 67, 0.01));
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, static_cast<double>(123.45f) + 67, 0.01));
 
         code = "double f() {\n"
                "    double x = 123.45;\n"
@@ -4210,7 +4397,7 @@ private:
                "    do {\n"
                "        if (pvd.descr_type == 0xff) {}\n"
                "        dostuff(&pvd);\n"
-               "    } while (condition)\n"
+               "    } while (condition);\n"
                "}";
         values = removeImpossible(tokenValues(code, "=="));
         ASSERT_EQUALS(1, values.size());
@@ -7121,6 +7308,18 @@ private:
                "    return x;\n"
                "}";
         ASSERT_EQUALS(false, testValueOfXKnown(code, 5U, 2));
+
+        code = "auto f() {\n" // #13450
+               "    auto v = std::vector<std::vector<S*>>(3, std::vector<S*>());\n"
+               "    return v[2];\n"
+               "}";
+        ASSERT(isKnownContainerSizeValue(tokenValues(code, "v ["), 3).empty());
+
+        code = "auto f() {\n" // #13654
+               "    std::array<uint8_t, 6 * sizeof(uint16_t)> a{};\n"
+               "    return a[0];\n"
+               "}";
+        ASSERT(!isKnownContainerSizeValue(tokenValues(code, "a ["), 6).empty());
     }
 
     void valueFlowContainerElement()
@@ -7333,6 +7532,11 @@ private:
                "    int j;\n"
                "};\n";
         (void)valueOfTok(code, "B");
+
+        code = "void f(int& r) {\n" // #13515
+               "    [0].p = &r;\n"
+               "}\n";
+        (void)valueOfTok(code, "=");
     }
 
     void valueFlowCrash() {
@@ -7698,6 +7902,11 @@ private:
                "            break;\n"
                "        g((int[256]) { 0 });\n"
                "    } while (true);\n"
+               "}\n";
+        (void)valueOfTok(code, "0");
+
+        code = "bool f() {\n"
+               "    return (!std::is_reference<decltype(a)>::value);\n"
                "}\n";
         (void)valueOfTok(code, "0");
     }

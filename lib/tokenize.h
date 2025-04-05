@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -133,7 +133,7 @@ private:
 
     /** Insert array size where it isn't given */
     void arraySize();
-    void arraySizeAfterValueFlow(); // cppcheck-suppress functionConst
+    void arraySizeAfterValueFlow();
 
     /** Simplify labels and 'case|default' syntaxes.
      */
@@ -165,7 +165,7 @@ private:
      * \param only_k_r_fpar Only simplify K&R function parameters
      */
     void simplifyVarDecl( bool only_k_r_fpar);
-    void simplifyVarDecl(Token * tokBegin, const Token * tokEnd, bool only_k_r_fpar); // cppcheck-suppress functionConst // has side effects
+    void simplifyVarDecl(Token * tokBegin, const Token * tokEnd, bool only_k_r_fpar);
 
     /**
      * Simplify variable initialization
@@ -317,6 +317,8 @@ private:
 
     void simplifySQL();
 
+    void simplifyParenthesizedLibraryFunctions();
+
     void checkForEnumsWithTypedef();
 
     void findComplicatedSyntaxErrorsInTemplates();
@@ -330,14 +332,6 @@ private:
     static std::string simplifyString(const std::string &source);
 
 public:
-    /**
-     * is token pointing at function head?
-     * @param tok         A '(' or ')' token in a possible function head
-     * @param endsWith    string after function head
-     * @return token matching with endsWith if syntax seems to be a function head else nullptr
-     */
-    static const Token * isFunctionHead(const Token *tok, const std::string &endsWith);
-
     bool hasIfdef(const Token *start, const Token *end) const;
 
     bool isPacked(const Token * bodyStart) const;
@@ -374,7 +368,7 @@ private:
 public:
 
     /** Syntax error */
-    NORETURN void syntaxError(const Token *tok, const std::string &code = emptyString) const;
+    NORETURN void syntaxError(const Token *tok, const std::string &code = "") const;
 
     /** Syntax error. Unmatched character. */
     NORETURN void unmatchedToken(const Token *tok) const;
@@ -390,11 +384,13 @@ public:
 private:
 
     /** Report that there is an unhandled "class x y {" code */
-    void unhandled_macro_class_x_y(const Token *tok) const;
+    void unhandled_macro_class_x_y(const Token *tok, const std::string& type, const std::string& x, const std::string& y, const std::string& bracket) const;
 
     /** Check configuration (unknown macros etc) */
     void checkConfiguration() const;
     void macroWithSemicolonError(const Token *tok, const std::string &macroName) const;
+
+    void invalidConstFunctionTypeError(const Token *tok) const;
 
     /**
      * Is there C++ code in C file?
@@ -628,6 +624,8 @@ public:
     void setDirectives(std::list<Directive> directives);
 
     std::string dumpTypedefInfo() const;
+
+    static void getErrorMessages(ErrorLogger& errorLogger, const Settings& settings);
 private:
     const Token *processFunc(const Token *tok2, bool inOperator) const;
     Token *processFunc(Token *tok2, bool inOperator);

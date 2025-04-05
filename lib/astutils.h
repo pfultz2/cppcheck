@@ -36,10 +36,14 @@
 #include "library.h"
 #include "mathlib.h"
 #include "smallvector.h"
-#include "symboldatabase.h"
 #include "token.h"
 
 class Settings;
+class Variable;
+class ValueType;
+class Function;
+class Scope;
+enum class ScopeType : std::uint8_t;
 
 enum class ChildrenToVisit : std::uint8_t {
     none,
@@ -119,7 +123,7 @@ const Token* findExpression(nonneg int exprid,
 const Token* findExpression(const Token* start, nonneg int exprid);
 
 /** Does code execution escape from the given scope? */
-const Token* findEscapeStatement(const Scope* scope, const Library* library);
+const Token* findEscapeStatement(const Scope* scope, const Library& library);
 
 std::vector<const Token*> astFlatten(const Token* tok, const char* op);
 std::vector<Token*> astFlatten(Token* tok, const char* op);
@@ -160,8 +164,8 @@ bool astIsContainerView(const Token* tok);
 bool astIsContainerOwned(const Token* tok);
 bool astIsContainerString(const Token* tok);
 
-Library::Container::Action astContainerAction(const Token* tok, const Token** ftok = nullptr, const Settings* settings = nullptr);
-Library::Container::Yield astContainerYield(const Token* tok, const Token** ftok = nullptr, const Settings* settings = nullptr);
+Library::Container::Action astContainerAction(const Token* tok, const Library& library, const Token** ftok = nullptr);
+Library::Container::Yield astContainerYield(const Token* tok, const Library& library, const Token** ftok = nullptr);
 
 Library::Container::Yield astFunctionYield(const Token* tok, const Settings& settings, const Token** ftok = nullptr);
 
@@ -230,10 +234,10 @@ const Token *findNextTokenFromBreak(const Token *breakToken);
 bool extractForLoopValues(const Token *forToken,
                           nonneg int &varid,
                           bool &knownInitValue,
-                          long long &initValue,
+                          MathLib::bigint &initValue,
                           bool &partialCond,
-                          long long &stepValue,
-                          long long &lastValue);
+                          MathLib::bigint &stepValue,
+                          MathLib::bigint &lastValue);
 
 bool precedes(const Token * tok1, const Token * tok2);
 bool succeeds(const Token* tok1, const Token* tok2);
@@ -294,7 +298,7 @@ bool isWithoutSideEffects(const Token* tok, bool checkArrayAccess = false, bool 
 
 bool isUniqueExpression(const Token* tok);
 
-bool isEscapeFunction(const Token* ftok, const Library* library);
+bool isEscapeFunction(const Token* ftok, const Library& library);
 
 /** Is scope a return scope (scope will unconditionally return) */
 CPPCHECKLIB bool isReturnScope(const Token* endToken,
@@ -305,7 +309,7 @@ CPPCHECKLIB bool isReturnScope(const Token* endToken,
 /** Is tok within a scope of the given type, nested within var's scope? */
 bool isWithinScope(const Token* tok,
                    const Variable* var,
-                   Scope::ScopeType type);
+                   ScopeType type);
 
 /// Return the token to the function and the argument number
 const Token * getTokenArgumentFunction(const Token * tok, int& argn);

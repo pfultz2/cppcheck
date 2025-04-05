@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,10 +23,28 @@
 
 #ifdef USE_WINDOWS_SEH
 
-class CppCheckExecutor;
-class Settings;
+#include <cstdio>
 
-int check_wrapper_seh(CppCheckExecutor& executor, int (CppCheckExecutor::*f)(const Settings&) const, const Settings& settings);
+/**
+ * @param f Output file
+ */
+void set_seh_output(FILE* f);
+
+namespace internal
+{
+    int filter_seh_exeception(int code, void* ex);
+}
+
+/**
+ * Signal/SEH handling
+ * Has to be clean for using with SEH on windows, i.e. no construction of C++ object instances is allowed!
+ */
+#define CALL_WITH_SEH_WRAPPER(f) \
+    __try {                      \
+        return (f);              \
+    } __except (internal::filter_seh_exeception(GetExceptionCode(), GetExceptionInformation())) { \
+        return -1; \
+    }
 
 #endif
 

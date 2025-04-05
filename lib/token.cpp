@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 #include "astutils.h"
 #include "errortypes.h"
 #include "library.h"
+#include "mathlib.h"
 #include "settings.h"
 #include "simplecpp.h"
 #include "symboldatabase.h"
@@ -33,6 +34,7 @@
 #include <cassert>
 #include <cctype>
 #include <climits>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -56,6 +58,7 @@ namespace {
 }
 
 const std::list<ValueFlow::Value> TokenImpl::mEmptyValueList;
+const std::string Token::mEmptyString;
 
 Token::Token(TokensFrontBack &tokensFrontBack)
     : mTokensFrontBack(tokensFrontBack)
@@ -104,7 +107,10 @@ static const std::unordered_set<std::string> controlFlowKeywords = {
 
 void Token::update_property_info()
 {
-    setFlag(fIsControlFlowKeyword, controlFlowKeywords.find(mStr) != controlFlowKeywords.end());
+    assert(mImpl);
+
+    setFlag(fIsControlFlowKeyword, false);
+    // TODO: clear fIsLong
     isStandardType(false);
 
     if (!mStr.empty()) {
@@ -118,15 +124,25 @@ void Token::update_property_info()
             tokType(eChar);
             isLong(isPrefixStringCharLiteral(mStr, '\'', "L"));
         }
-        else if (std::isalpha((unsigned char)mStr[0]) || mStr[0] == '_' || mStr[0] == '$') { // Name
+        else if (std::isalpha(static_cast<unsigned char>(mStr[0])) || mStr[0] == '_' || mStr[0] == '$') { // Name
             if (mImpl->mVarId)
                 tokType(eVariable);
-            else if (mTokensFrontBack.list.isKeyword(mStr) || mStr == "asm") // TODO: not a keyword
+            else if (mTokensFrontBack.list.isKeyword(mStr)) {
                 tokType(eKeyword);
-            else if (mTokType != eVariable && mTokType != eFunction && mTokType != eType && mTokType != eKeyword)
+                update_property_isStandardType();
+                if (mTokType != eType) // cannot be a control-flow keyword when it is a type
+                    setFlag(fIsControlFlowKeyword, controlFlowKeywords.find(mStr) != controlFlowKeywords.end());
+            }
+            else if (mStr == "asm") { // TODO: not a keyword
+                tokType(eKeyword);
+            }
+            else {
                 tokType(eName);
+                // some types are not being treated as keywords
+                update_property_isStandardType();
+            }
         } else if (simplecpp::Token::isNumberLike(mStr)) {
-            if (MathLib::isInt(mStr) || MathLib::isFloat(mStr))
+            if ((MathLib::isInt(mStr) || MathLib::isFloat(mStr)) && mStr.find('_') == std::string::npos)
                 tokType(eNumber);
             else
                 tokType(eName); // assume it is a user defined literal
@@ -144,6 +160,7 @@ void Token::update_property_info()
                   mStr == "||" ||
                   mStr == "!"))
             tokType(eLogicalOp);
+        // TODO: should link check only apply to < and >? Token::link() suggests so
         else if (mStr.size() <= 2 && !mLink &&
                  (mStr == "==" ||
                   mStr == "!=" ||
@@ -164,11 +181,11 @@ void Token::update_property_info()
             tokType(eEllipsis);
         else
             tokType(eOther);
-
-        update_property_isStandardType();
     } else {
         tokType(eNone);
     }
+    assert(!mImpl->mVarId || mTokType == eVariable);
+    // TODO: validate type for linked token?
 }
 
 static const std::unordered_set<std::string> stdTypes = { "bool"
@@ -182,14 +199,21 @@ static const std::unordered_set<std::string> stdTypes = { "bool"
                                                           , "size_t"
                                                           , "void"
                                                           , "wchar_t"
+                                                          , "signed"
+                                                          , "unsigned"
 };
+
+bool Token::isStandardType(const std::string& str)
+{
+    return stdTypes.find(str) != stdTypes.end();
+}
 
 void Token::update_property_isStandardType()
 {
     if (mStr.size() < 3 || mStr.size() > 7)
         return;
 
-    if (stdTypes.find(mStr)!=stdTypes.end()) {
+    if (isStandardType(mStr)) {
         isStandardType(true);
         tokType(eType);
     }
@@ -737,7 +761,7 @@ nonneg int Token::getStrArraySize(const Token *tok)
     // cppcheck-suppress shadowFunction - TODO: fix this
     const std::string str(getStringLiteral(tok->str()));
     int sizeofstring = 1;
-    for (int i = 0; i < (int)str.size(); i++) {
+    for (int i = 0; i < static_cast<int>(str.size()); i++) {
         if (str[i] == '\\')
             ++i;
         ++sizeofstring;
@@ -1036,8 +1060,10 @@ Token* Token::insertToken(const std::string& tokenStr, const std::string& origin
     else
         newToken = new Token(mTokensFrontBack);
     newToken->str(tokenStr);
-    newToken->originalName(originalNameStr);
-    newToken->setMacroName(macroNameStr);
+    if (!originalNameStr.empty())
+        newToken->originalName(originalNameStr);
+    if (!macroNameStr.empty())
+        newToken->setMacroName(macroNameStr);
 
     if (newToken != this) {
         newToken->mImpl->mLineNumber = mImpl->mLineNumber;
@@ -1154,7 +1180,7 @@ Token* Token::insertToken(const std::string& tokenStr, const std::string& origin
                             nameSpace += tok1->str();
                             tok1 = tok1->next();
                         }
-                        mImpl->mScopeInfo->usingNamespaces.insert(nameSpace);
+                        mImpl->mScopeInfo->usingNamespaces.insert(std::move(nameSpace));
                     }
                 }
             }
@@ -1194,11 +1220,21 @@ void Token::printOut(std::ostream& out, const char *title) const
     out << stringifyList(stringifyOptions::forPrintOut(), nullptr, nullptr) << std::endl;
 }
 
-void Token::printOut(std::ostream& out, const char *title, const std::vector<std::string> &fileNames) const
+void Token::printOut(std::ostream& out, bool xml, const char *title, const std::vector<std::string> &fileNames) const
 {
+    if (xml)
+    {
+        out << "<file>" << std::endl;
+        out << "<![CDATA[";
+    }
     if (title && title[0])
         out << "\n### " << title << " ###\n";
     out << stringifyList(stringifyOptions::forPrintOut(), &fileNames, nullptr) << std::endl;
+    if (xml)
+    {
+        out << "]]>" << std::endl;
+        out << "</file>" << std::endl;
+    }
 }
 
 // cppcheck-suppress unusedFunction - used for debugging
@@ -1766,12 +1802,12 @@ void Token::printValueFlow(bool xml, std::ostream &out) const
                 case ValueFlow::Value::ValueType::INT:
                     if (tok->valueType() && tok->valueType()->sign == ValueType::UNSIGNED) {
                         outs += "intvalue=\"";
-                        outs += std::to_string(static_cast<MathLib::biguint>(value.intvalue));
+                        outs += MathLib::toString(static_cast<MathLib::biguint>(value.intvalue));
                         outs += '\"';
                     }
                     else {
                         outs += "intvalue=\"";
-                        outs += std::to_string(value.intvalue);
+                        outs += MathLib::toString(value.intvalue);
                         outs += '\"';
                     }
                     break;
@@ -1782,7 +1818,7 @@ void Token::printValueFlow(bool xml, std::ostream &out) const
                     break;
                 case ValueFlow::Value::ValueType::FLOAT:
                     outs += "floatvalue=\"";
-                    outs += std::to_string(value.floatValue); // TODO: should this be MathLib::toString()?
+                    outs += MathLib::toString(value.floatValue);
                     outs += '\"';
                     break;
                 case ValueFlow::Value::ValueType::MOVED:
@@ -1795,22 +1831,22 @@ void Token::printValueFlow(bool xml, std::ostream &out) const
                     break;
                 case ValueFlow::Value::ValueType::BUFFER_SIZE:
                     outs += "buffer-size=\"";
-                    outs += std::to_string(value.intvalue);
+                    outs += MathLib::toString(value.intvalue);
                     outs += "\"";
                     break;
                 case ValueFlow::Value::ValueType::CONTAINER_SIZE:
                     outs += "container-size=\"";
-                    outs += std::to_string(value.intvalue);
+                    outs += MathLib::toString(value.intvalue);
                     outs += '\"';
                     break;
                 case ValueFlow::Value::ValueType::ITERATOR_START:
                     outs +=  "iterator-start=\"";
-                    outs += std::to_string(value.intvalue);
+                    outs += MathLib::toString(value.intvalue);
                     outs += '\"';
                     break;
                 case ValueFlow::Value::ValueType::ITERATOR_END:
                     outs +=  "iterator-end=\"";
-                    outs += std::to_string(value.intvalue);
+                    outs += MathLib::toString(value.intvalue);
                     outs += '\"';
                     break;
                 case ValueFlow::Value::ValueType::LIFETIME:
@@ -1829,7 +1865,7 @@ void Token::printValueFlow(bool xml, std::ostream &out) const
                     outs += id_string(value.tokvalue);
                     outs += '\"';
                     outs += " symbolic-delta=\"";
-                    outs += std::to_string(value.intvalue);
+                    outs += MathLib::toString(value.intvalue);
                     outs += '\"';
                     break;
                 }
@@ -1851,12 +1887,11 @@ void Token::printValueFlow(bool xml, std::ostream &out) const
                     outs += " inconclusive=\"true\"";
 
                 outs += " path=\"";
-                outs += std::to_string(value.path);
+                outs += MathLib::toString(value.path);
                 outs += "\"";
 
                 outs += "/>\n";
             }
-
             else {
                 if (&value != &values->front())
                     outs += ",";
@@ -1909,7 +1944,7 @@ const ValueFlow::Value * Token::getInvalidValue(const Token *ftok, nonneg int ar
     if (!mImpl->mValues)
         return nullptr;
     const ValueFlow::Value *ret = nullptr;
-    for (std::list<ValueFlow::Value>::const_iterator it = mImpl->mValues->begin(); it != mImpl->mValues->end(); ++it) {
+    for (auto it = mImpl->mValues->begin(); it != mImpl->mValues->end(); ++it) {
         if (it->isImpossible())
             continue;
         if ((it->isIntValue() && !settings.library.isIntArgValid(ftok, argnr, it->intvalue)) ||
@@ -1935,7 +1970,7 @@ const Token *Token::getValueTokenMinStrSize(const Settings &settings, MathLib::b
         return nullptr;
     const Token *ret = nullptr;
     int minsize = INT_MAX;
-    for (std::list<ValueFlow::Value>::const_iterator it = mImpl->mValues->begin(); it != mImpl->mValues->end(); ++it) {
+    for (auto it = mImpl->mValues->begin(); it != mImpl->mValues->end(); ++it) {
         if (it->isTokValue() && it->tokvalue && it->tokvalue->tokType() == Token::eString) {
             const int size = getStrSize(it->tokvalue, settings);
             if (!ret || size < minsize) {
@@ -1955,7 +1990,7 @@ const Token *Token::getValueTokenMaxStrLength() const
         return nullptr;
     const Token *ret = nullptr;
     int maxlength = 0;
-    for (std::list<ValueFlow::Value>::const_iterator it = mImpl->mValues->begin(); it != mImpl->mValues->end(); ++it) {
+    for (auto it = mImpl->mValues->cbegin(); it != mImpl->mValues->end(); ++it) {
         if (it->isTokValue() && it->tokvalue && it->tokvalue->tokType() == Token::eString) {
             const int length = getStrLength(it->tokvalue);
             if (!ret || length > maxlength) {
@@ -2198,8 +2233,8 @@ bool Token::addValue(const ValueFlow::Value &value)
             return false;
 
         // if value already exists, don't add it again
-        std::list<ValueFlow::Value>::iterator it;
-        for (it = mImpl->mValues->begin(); it != mImpl->mValues->end(); ++it) {
+        auto it = mImpl->mValues->begin();
+        for (; it != mImpl->mValues->end(); ++it) {
             // different types => continue
             if (it->valueType != value.valueType)
                 continue;
@@ -2468,13 +2503,15 @@ std::shared_ptr<ScopeInfo2> Token::scopeInfo() const
     return mImpl->mScopeInfo;
 }
 
+// if there is a known INT value it will always be the first entry
 bool Token::hasKnownIntValue() const
 {
     if (!mImpl->mValues)
         return false;
-    return std::any_of(mImpl->mValues->begin(), mImpl->mValues->end(), [](const ValueFlow::Value& value) {
-        return value.isKnown() && value.isIntValue();
-    });
+    if (mImpl->mValues->empty())
+        return false;
+    const ValueFlow::Value& value = mImpl->mValues->front();
+    return value.isIntValue() && value.isKnown();
 }
 
 bool Token::hasKnownValue() const
@@ -2505,6 +2542,15 @@ const ValueFlow::Value* Token::getKnownValue(ValueFlow::Value::ValueType t) cons
 {
     if (!mImpl->mValues)
         return nullptr;
+    if (mImpl->mValues->empty())
+        return nullptr;
+    // known INT values are always the first entry
+    if (t == ValueFlow::Value::ValueType::INT) {
+        const auto& v = mImpl->mValues->front();
+        if (!v.isKnown() || !v.isIntValue())
+            return nullptr;
+        return &v;
+    }
     auto it = std::find_if(mImpl->mValues->begin(), mImpl->mValues->end(), [&](const ValueFlow::Value& value) {
         return value.isKnown() && value.valueType == t;
     });
@@ -2579,6 +2625,7 @@ const ValueFlow::Value* Token::getContainerSizeValue(const MathLib::bigint val) 
 
 TokenImpl::~TokenImpl()
 {
+    delete mMacroName;
     delete mOriginalName;
     delete mValueType;
     delete mValues;

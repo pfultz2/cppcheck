@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +15,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+#if defined(__CYGWIN__)
+#define _BSD_SOURCE // required to have popen() and pclose()
+#endif
 
 #include "cppcheckexecutor.h"
 
@@ -50,6 +54,7 @@
 #include <fstream>
 #include <iostream>
 #include <list>
+#include <map>
 #include <set>
 #include <sstream>
 #include <unordered_set>
@@ -61,7 +66,7 @@
 #endif
 
 #ifdef USE_WINDOWS_SEH
-#include "cppcheckexecutorseh.h"
+#include "sehwrapper.h"
 #endif
 
 #ifdef _WIN32
@@ -236,7 +241,7 @@ namespace {
 
         void printRaw(const std::string &message) override
         {
-            std::cout << message << std::endl;
+            std::cout << message << std::endl; // TODO: should not append newline
         }
     };
 
@@ -245,6 +250,7 @@ namespace {
     public:
         explicit StdLogger(const Settings& settings)
             : mSettings(settings)
+            , mGuidelineMapping(createGuidelineMapping(settings.reportType))
         {
             if (!mSettings.outputFile.empty()) {
                 mErrorOutput = new std::ofstream(settings.outputFile);
@@ -274,7 +280,7 @@ namespace {
         /**
          * @brief Write the checkers report
          */
-        void writeCheckersReport();
+        void writeCheckersReport(const Suppressions& supprs);
 
         bool hasCriticalErrors() const {
             return !mCriticalErrors.empty();
@@ -299,7 +305,7 @@ namespace {
         void reportProgress(const std::string &filename, const char stage[], std::size_t value) override;
 
         /**
-         * Pointer to current settings; set while check() is running for reportError().
+         * Reference to current settings; set while check() is running for reportError().
          */
         const Settings& mSettings;
 
@@ -338,6 +344,11 @@ namespace {
          * SARIF report generator
          */
         SarifReport mSarifReport;
+
+        /**
+         * Coding standard guideline mapping
+         */
+        std::map<std::string, std::string> mGuidelineMapping;
     };
 }
 
@@ -345,7 +356,8 @@ int CppCheckExecutor::check(int argc, const char* const argv[])
 {
     Settings settings;
     CmdLineLoggerStd logger;
-    CmdLineParser parser(logger, settings, settings.supprs);
+    Suppressions supprs;
+    CmdLineParser parser(logger, settings, supprs);
     if (!parser.fillSettingsFromArgs(argc, argv)) {
         return EXIT_FAILURE;
     }
@@ -360,21 +372,22 @@ int CppCheckExecutor::check(int argc, const char* const argv[])
 
     settings.setMisraRuleTexts(executeCommand);
 
-    const int ret = check_wrapper(settings);
+    const int ret = check_wrapper(settings, supprs);
 
     return ret;
 }
 
-int CppCheckExecutor::check_wrapper(const Settings& settings)
+int CppCheckExecutor::check_wrapper(const Settings& settings, Suppressions& supprs)
 {
 #ifdef USE_WINDOWS_SEH
-    if (settings.exceptionHandling)
-        return check_wrapper_seh(*this, &CppCheckExecutor::check_internal, settings);
+    if (settings.exceptionHandling) {
+        CALL_WITH_SEH_WRAPPER(check_internal(settings, supprs));
+    }
 #elif defined(USE_UNIX_SIGNAL_HANDLING)
     if (settings.exceptionHandling)
         register_signal_handler(settings.exceptionOutput);
 #endif
-    return check_internal(settings);
+    return check_internal(settings, supprs);
 }
 
 bool CppCheckExecutor::reportSuppressions(const Settings &settings, const SuppressionList& suppressions, bool unusedFunctionCheckEnabled, const std::list<FileWithDetails> &files, const std::list<FileSettings>& fileSettings, ErrorLogger& errorLogger) {
@@ -389,16 +402,22 @@ bool CppCheckExecutor::reportSuppressions(const Settings &settings, const Suppre
         // the two inputs may only be used exclusively
         assert(!(!files.empty() && !fileSettings.empty()));
 
-        for (std::list<FileWithDetails>::const_iterator i = files.cbegin(); i != files.cend(); ++i) {
+        for (auto i = files.cbegin(); i != files.cend(); ++i) {
             err |= SuppressionList::reportUnmatchedSuppressions(
                 suppressions.getUnmatchedLocalSuppressions(*i, unusedFunctionCheckEnabled), errorLogger);
         }
 
-        for (std::list<FileSettings>::const_iterator i = fileSettings.cbegin(); i != fileSettings.cend(); ++i) {
+        for (auto i = fileSettings.cbegin(); i != fileSettings.cend(); ++i) {
             err |= SuppressionList::reportUnmatchedSuppressions(
                 suppressions.getUnmatchedLocalSuppressions(i->file, unusedFunctionCheckEnabled), errorLogger);
         }
     }
+    if (settings.inlineSuppressions) {
+        // report unmatched unusedFunction suppressions
+        err |= SuppressionList::reportUnmatchedSuppressions(
+            suppressions.getUnmatchedInlineSuppressions(unusedFunctionCheckEnabled), errorLogger);
+    }
+
     err |= SuppressionList::reportUnmatchedSuppressions(suppressions.getUnmatchedGlobalSuppressions(unusedFunctionCheckEnabled), errorLogger);
     return err;
 }
@@ -406,20 +425,20 @@ bool CppCheckExecutor::reportSuppressions(const Settings &settings, const Suppre
 /*
  * That is a method which gets called from check_wrapper
  * */
-int CppCheckExecutor::check_internal(const Settings& settings) const
+int CppCheckExecutor::check_internal(const Settings& settings, Suppressions& supprs) const
 {
     StdLogger stdLogger(settings);
 
     if (settings.reportProgress >= 0)
         stdLogger.resetLatestProgressOutputTime();
 
-    if (settings.xml) {
+    if (settings.outputFormat == Settings::OutputFormat::xml) {
         stdLogger.reportErr(ErrorMessage::getXMLHeader(settings.cppcheckCfgProductName, settings.xml_version));
     }
 
     if (!settings.buildDir.empty()) {
         std::list<std::string> fileNames;
-        for (std::list<FileWithDetails>::const_iterator i = mFiles.cbegin(); i != mFiles.cend(); ++i)
+        for (auto i = mFiles.cbegin(); i != mFiles.cend(); ++i)
             fileNames.emplace_back(i->path());
         AnalyzerInformation::writeFilesTxt(settings.buildDir, fileNames, settings.userDefines, mFileSettings);
     }
@@ -427,25 +446,23 @@ int CppCheckExecutor::check_internal(const Settings& settings) const
     if (!settings.checkersReportFilename.empty())
         std::remove(settings.checkersReportFilename.c_str());
 
-    CppCheck cppcheck(stdLogger, true, executeCommand);
-    cppcheck.settings() = settings; // this is a copy
-    auto& suppressions = cppcheck.settings().supprs.nomsg;
+    CppCheck cppcheck(settings, supprs, stdLogger, true, executeCommand);
 
     unsigned int returnValue = 0;
     if (settings.useSingleJob()) {
         // Single process
-        SingleExecutor executor(cppcheck, mFiles, mFileSettings, settings, suppressions, stdLogger);
+        SingleExecutor executor(cppcheck, mFiles, mFileSettings, settings, supprs, stdLogger);
         returnValue = executor.check();
     } else {
 #if defined(HAS_THREADING_MODEL_THREAD)
         if (settings.executor == Settings::ExecutorType::Thread) {
-            ThreadExecutor executor(mFiles, mFileSettings, settings, suppressions, stdLogger, CppCheckExecutor::executeCommand);
+            ThreadExecutor executor(mFiles, mFileSettings, settings, supprs, stdLogger, CppCheckExecutor::executeCommand);
             returnValue = executor.check();
         }
 #endif
 #if defined(HAS_THREADING_MODEL_FORK)
         if (settings.executor == Settings::ExecutorType::Process) {
-            ProcessExecutor executor(mFiles, mFileSettings, settings, suppressions, stdLogger, CppCheckExecutor::executeCommand);
+            ProcessExecutor executor(mFiles, mFileSettings, settings, supprs, stdLogger, CppCheckExecutor::executeCommand);
             returnValue = executor.check();
         }
 #endif
@@ -454,18 +471,18 @@ int CppCheckExecutor::check_internal(const Settings& settings) const
     returnValue |= cppcheck.analyseWholeProgram(settings.buildDir, mFiles, mFileSettings, stdLogger.getCtuInfo());
 
     if (settings.severity.isEnabled(Severity::information) || settings.checkConfiguration) {
-        const bool err = reportSuppressions(settings, suppressions, settings.checks.isEnabled(Checks::unusedFunction), mFiles, mFileSettings, stdLogger);
+        const bool err = reportSuppressions(settings, supprs.nomsg, settings.checks.isEnabled(Checks::unusedFunction), mFiles, mFileSettings, stdLogger);
         if (err && returnValue == 0)
             returnValue = settings.exitCode;
     }
 
     if (!settings.checkConfiguration) {
-        cppcheck.tooManyConfigsError(emptyString,0U);
+        cppcheck.tooManyConfigsError("",0U);
     }
 
-    stdLogger.writeCheckersReport();
+    stdLogger.writeCheckersReport(supprs);
 
-    if (settings.xml) {
+    if (settings.outputFormat == Settings::OutputFormat::xml) {
         stdLogger.reportErr(ErrorMessage::getXMLFooter(settings.xml_version));
     }
 
@@ -477,10 +494,10 @@ int CppCheckExecutor::check_internal(const Settings& settings) const
     return EXIT_SUCCESS;
 }
 
-void StdLogger::writeCheckersReport()
+void StdLogger::writeCheckersReport(const Suppressions& supprs)
 {
     const bool summary = mSettings.safety || mSettings.severity.isEnabled(Severity::information);
-    const bool xmlReport = mSettings.xml && mSettings.xml_version == 3;
+    const bool xmlReport = mSettings.outputFormat == Settings::OutputFormat::xml && mSettings.xml_version == 3;
     const bool textReport = !mSettings.checkersReportFilename.empty();
 
     if (!summary && !xmlReport && !textReport)
@@ -488,7 +505,7 @@ void StdLogger::writeCheckersReport()
 
     CheckersReport checkersReport(mSettings, mActiveCheckers);
 
-    const auto& suppressions = mSettings.supprs.nomsg.getSuppressions();
+    const auto& suppressions = supprs.nomsg.getSuppressions();
     const bool summarySuppressed = std::any_of(suppressions.cbegin(), suppressions.cend(), [](const SuppressionList::Suppression& s) {
         return s.errorId == "checkersReport";
     });
@@ -521,6 +538,15 @@ void StdLogger::writeCheckersReport()
 
     if (xmlReport) {
         reportErr("    </errors>\n");
+        if (mSettings.safety)
+            reportErr("    <safety/>\n");
+        if (mSettings.inlineSuppressions)
+            reportErr("    <inline-suppr/>\n");
+        if (!suppressions.empty()) {
+            std::ostringstream suppressionsXml;
+            supprs.nomsg.dump(suppressionsXml);
+            reportErr(suppressionsXml.str());
+        }
         reportErr(checkersReport.getXmlReport(mCriticalErrors));
     }
 }
@@ -554,7 +580,7 @@ void StdLogger::reportErr(const std::string &errmsg)
     if (mErrorOutput)
         *mErrorOutput << errmsg << std::endl;
     else {
-        std::cerr << ansiToOEM(errmsg, !mSettings.xml) << std::endl;
+        std::cerr << ansiToOEM(errmsg, mSettings.outputFormat != Settings::OutputFormat::xml) << std::endl;
     }
 }
 
@@ -615,18 +641,24 @@ void StdLogger::reportErr(const ErrorMessage &msg)
     if (msg.severity == Severity::internal)
         return;
 
-    // TODO: we generate a different message here then we log below
+    ErrorMessage msgCopy = msg;
+    msgCopy.guideline = getGuideline(msgCopy.id, mSettings.reportType,
+                                     mGuidelineMapping, msgCopy.severity);
+    msgCopy.classification = getClassification(msgCopy.guideline, mSettings.reportType);
+
     // TODO: there should be no need for verbose and default messages here
+    const std::string msgStr = msgCopy.toString(mSettings.verbose, mSettings.templateFormat, mSettings.templateLocation);
+
     // Alert only about unique errors
-    if (!mShownErrors.insert(msg.toString(mSettings.verbose)).second)
+    if (!mSettings.emitDuplicates && !mShownErrors.insert(msgStr).second)
         return;
 
     if (mSettings.outputFormat == Settings::OutputFormat::sarif)
-        mSarifReport.addFinding(msg);
-    else if (mSettings.xml)
-        reportErr(msg.toXML());
+        mSarifReport.addFinding(std::move(msgCopy));
+    else if (mSettings.outputFormat == Settings::OutputFormat::xml)
+        reportErr(msgCopy.toXML());
     else
-        reportErr(msg.toString(mSettings.verbose, mSettings.templateFormat, mSettings.templateLocation));
+        reportErr(msgStr);
 }
 
 /**

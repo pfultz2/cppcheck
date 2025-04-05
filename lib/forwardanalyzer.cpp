@@ -111,10 +111,10 @@ namespace {
                 return std::make_pair(false, false);
             std::vector<MathLib::bigint> result = analyzer->evaluate(tok, ctx);
             // TODO: We should convert to bool
-            const bool checkThen = std::any_of(result.cbegin(), result.cend(), [](int x) {
+            const bool checkThen = std::any_of(result.cbegin(), result.cend(), [](MathLib::bigint x) {
                 return x != 0;
             });
-            const bool checkElse = std::any_of(result.cbegin(), result.cend(), [](int x) {
+            const bool checkElse = std::any_of(result.cbegin(), result.cend(), [](MathLib::bigint x) {
                 return x == 0;
             });
             return std::make_pair(checkThen, checkElse);
@@ -143,7 +143,7 @@ namespace {
                 traverseRecursive(tok->astOperand2(), f, traverseUnknown);
                 traverseRecursive(tok->astOperand1(), f, traverseUnknown);
                 return Break(Analyzer::Terminate::Escape);
-            } else if (Token::Match(tok, "%name% (") && isEscapeFunction(tok, &settings.library)) {
+            } else if (Token::Match(tok, "%name% (") && isEscapeFunction(tok, settings.library)) {
                 // Traverse the parameters of the function before escaping
                 traverseRecursive(tok->next()->astOperand2(), f, traverseUnknown);
                 return Break(Analyzer::Terminate::Escape);
@@ -607,17 +607,17 @@ namespace {
                         return Break(Analyzer::Terminate::Bail);
                 } else if (tok->link() && tok->str() == "}" && tok == tok->scope()->bodyEnd) { // might be an init list
                     const Scope* scope = tok->scope();
-                    if (contains({Scope::eDo, Scope::eFor, Scope::eWhile, Scope::eIf, Scope::eElse, Scope::eSwitch}, scope->type)) {
-                        const bool inElse = scope->type == Scope::eElse;
-                        const bool inDoWhile = scope->type == Scope::eDo;
-                        const bool inLoop = contains({Scope::eDo, Scope::eFor, Scope::eWhile}, scope->type);
+                    if (contains({ScopeType::eDo, ScopeType::eFor, ScopeType::eWhile, ScopeType::eIf, ScopeType::eElse, ScopeType::eSwitch}, scope->type)) {
+                        const bool inElse = scope->type == ScopeType::eElse;
+                        const bool inDoWhile = scope->type == ScopeType::eDo;
+                        const bool inLoop = contains({ScopeType::eDo, ScopeType::eFor, ScopeType::eWhile}, scope->type);
                         Token* condTok = getCondTokFromEnd(tok);
                         if (!condTok)
                             return Break();
                         if (!condTok->hasKnownIntValue() || inLoop) {
                             if (!analyzer->lowerToPossible())
                                 return Break(Analyzer::Terminate::Bail);
-                        } else if (condTok->values().front().intvalue == inElse) {
+                        } else if (condTok->getKnownIntValue() == inElse) {
                             return Break();
                         }
                         // Handle loop
@@ -642,10 +642,10 @@ namespace {
                         assert(!inDoWhile || Token::simpleMatch(tok, "} while ("));
                         if (Token::simpleMatch(tok, "} else {") || inDoWhile)
                             tok = tok->linkAt(2);
-                    } else if (contains({Scope::eTry, Scope::eCatch}, scope->type)) {
+                    } else if (contains({ScopeType::eTry, ScopeType::eCatch}, scope->type)) {
                         if (!analyzer->lowerToPossible())
                             return Break(Analyzer::Terminate::Bail);
-                    } else if (scope->type == Scope::eLambda) {
+                    } else if (scope->type == ScopeType::eLambda) {
                         return Break();
                     }
                 } else if (tok->isControlFlowKeyword() && Token::Match(tok, "if|while|for (") &&

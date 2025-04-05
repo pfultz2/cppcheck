@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,12 +41,12 @@ private:
         TEST_CASE(assignment);
     }
 
-#define check(code) check_(code, __FILE__, __LINE__)
+#define check(...) check_(__FILE__, __LINE__, __VA_ARGS__)
     template<size_t size>
-    void check_(const char (&code)[size], const char* file, int line) {
+    void check_(const char* file, int line, const char (&code)[size], bool cpp = true) {
         // Tokenize..
         SimpleTokenizer tokenizer(settings, *this);
-        ASSERT_LOC(tokenizer.tokenize(code), file, line);
+        ASSERT_LOC(tokenizer.tokenize(code, cpp), file, line);
 
         // Check char variable usage..
         Check64BitPortability check64BitPortability(&tokenizer, &settings, this);
@@ -155,6 +155,12 @@ private:
         check("char* f(char* p) {\n"
               "    return p ? p : 0;\n"
               "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("int f(int* p) {\n"
+              "    int n = (int)(size_t)*p;\n"
+              "    return n;\n"
+              "}\n", false);
         ASSERT_EQUALS("", errout_str());
     }
 

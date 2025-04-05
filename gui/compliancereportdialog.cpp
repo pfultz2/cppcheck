@@ -122,7 +122,7 @@ void ComplianceReportDialog::buttonClicked(QAbstractButton* button)
         break;
     default:
         break;
-    };
+    }
 }
 
 void ComplianceReportDialog::save()
@@ -197,7 +197,7 @@ void ComplianceReportDialog::save()
                 QCryptographicHash hash(QCryptographicHash::Algorithm::Md5);
                 if (hash.addData(&f)) {
                     for (auto b: hash.result())
-                        out << QString::number((unsigned char)b,16);
+                        out << QString::number(static_cast<unsigned char>(b),16);
                     out << " " << fileName << "\n";
                 }
             }

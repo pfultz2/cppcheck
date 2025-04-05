@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,14 +31,21 @@ public:
 private:
     const Settings settings = settingsBuilder().severity(Severity::warning).severity(Severity::style).library("std.cfg").library("qt.cfg").build();
 
+    struct CheckOptions
+    {
+        CheckOptions() = default;
+        bool inconclusive = true;
+        bool cpp = true;
+    };
+
 #define check(...) check_(__FILE__, __LINE__, __VA_ARGS__)
     template<size_t size>
-    void check_(const char* file, int line, const char (&code)[size], bool inconclusive = true, bool cpp = true) {
-        const Settings settings1 = settingsBuilder(settings).certainty(Certainty::inconclusive, inconclusive).build();
+    void check_(const char* file, int line, const char (&code)[size], const CheckOptions& options = make_default_obj()) {
+        const Settings settings1 = settingsBuilder(settings).certainty(Certainty::inconclusive, options.inconclusive).build();
 
         // Tokenize..
         SimpleTokenizer tokenizer(settings1, *this);
-        ASSERT_LOC(tokenizer.tokenize(code, cpp), file, line);
+        ASSERT_LOC(tokenizer.tokenize(code, options.cpp), file, line);
 
         runChecks<CheckAutoVariables>(tokenizer, this);
     }
@@ -148,7 +155,7 @@ private:
         TEST_CASE(danglingLifetime);
         TEST_CASE(danglingLifetimeFunction);
         TEST_CASE(danglingLifetimeUserConstructor);
-        TEST_CASE(danglingLifetimeAggegrateConstructor);
+        TEST_CASE(danglingLifetimeAggregateConstructor);
         TEST_CASE(danglingLifetimeInitList);
         TEST_CASE(danglingLifetimeImplicitConversion);
         TEST_CASE(danglingTemporaryLifetime);
@@ -248,14 +255,14 @@ private:
               "{\n"
               "    char a[10];\n"
               "    x->str = a;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("", errout_str());
 
         check("void foo(struct X *x)\n"
               "{\n"
               "    char a[10];\n"
               "    x->str = a;\n"
-              "}", true);
+              "}");
         ASSERT_EQUALS("[test.cpp:4]: (error, inconclusive) Address of local auto-variable assigned to a function parameter.\n", errout_str());
     }
 
@@ -265,7 +272,7 @@ private:
               "    struct txt_scrollpane_s * scrollpane;\n"
               "    target->parent = &scrollpane->widget;\n"
               "    return scrollpane;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -273,12 +280,12 @@ private:
         check("void foo(int*& p) {\n"
               "    int i = 0;\n"
               "    p = &i;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("[test.cpp:3]: (error) Address of local auto-variable assigned to a function parameter.\n", errout_str());
 
         check("void foo(std::string& s) {\n"
               "    s = foo;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -289,7 +296,7 @@ private:
               "    FN fn;\n"
               "    FP fp;\n"
               "    p = &fn.i;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("[test.cpp:6]: (error) Address of local auto-variable assigned to a function parameter.\n", errout_str());
 
         check("struct FN {int i;};\n"
@@ -298,7 +305,7 @@ private:
               "    FN fn;\n"
               "    FP fp;\n"
               "    p = &p_fp->i;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("", errout_str());
 
         check("struct FN {int i;};\n"
@@ -307,7 +314,7 @@ private:
               "    FN fn;\n"
               "    FP fp;\n"
               "    p = &fp.f->i;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -385,7 +392,7 @@ private:
               "    int i = d;\n"
               "    d = i;\n"
               "    return d;"
-              "}",false);
+              "}",dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("", errout_str());
 
         check("void foo(int* ptr) {\n" // #4793
@@ -482,7 +489,7 @@ private:
               "    if (lumdiff > 5.0f)\n"
               "        return &darkOutline;\n"
               "    return 0;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -917,7 +924,7 @@ private:
         check("void svn_repos_dir_delta2() {\n"
               "  struct context c;\n"
               "      SVN_ERR(delete(&c, root_baton, src_entry, pool));\n"
-              "}\n", false, /* cpp= */ false);
+              "}\n", dinit(CheckOptions, $.inconclusive = false, $.cpp = false));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -989,6 +996,21 @@ private:
               "  }\n"
               "  int *ptr;\n"
               "};");
+        ASSERT_EQUALS("", errout_str());
+
+        check("struct R {\n" // #11393
+              "    void pop() { p = nullptr; };\n"
+              "    int* p;\n"
+              "};\n"
+              "struct T {\n"
+              "    void f();\n"
+              "    R* r;\n"
+              "};\n"
+              "void T::f() {\n"
+              "    int i = 0;\n"
+              "    r->p = &i;\n"
+              "    r->pop();\n"
+              "}\n");
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -1323,7 +1345,7 @@ private:
               "    double ret = getValue();\n"
               "    rd = ret;\n"
               "    return rd;\n"
-              "}", false);
+              "}", dinit(CheckOptions, $.inconclusive = false));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -1799,8 +1821,7 @@ private:
               "const int& bar(const std::unordered_map<int, int>& m, int k) {\n"
               "    auto x = 0;\n"
               "    return get_default(m, k, x);\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS(
             "[test.cpp:2] -> [test.cpp:4] -> [test.cpp:9] -> [test.cpp:9]: (error, inconclusive) Reference to local variable returned.\n",
             errout_str());
@@ -1813,8 +1834,7 @@ private:
               "}\n"
               "const int& bar(const std::unordered_map<int, int>& m, int k) {\n"
               "    return get_default(m, k, 0);\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS(
             "[test.cpp:2] -> [test.cpp:4] -> [test.cpp:8] -> [test.cpp:8]: (error, inconclusive) Reference to temporary returned.\n",
             errout_str());
@@ -2564,8 +2584,7 @@ private:
               "const int* bar(const std::unordered_map<int, int>& m, int k) {\n"
               "    auto x = 0;\n"
               "    return get_default(m, k, &x);\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS(
             "[test.cpp:9] -> [test.cpp:9] -> [test.cpp:8] -> [test.cpp:9]: (error, inconclusive) Returning pointer to local variable 'x' that will be invalid when returning.\n",
             errout_str());
@@ -2798,15 +2817,13 @@ private:
 
         check("std::string f(std::string Str, int first, int last) {\n"
               "    return { Str.begin() + first, Str.begin() + last + 1 };\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS("", errout_str());
 
         check("std::string f(std::string s) {\n"
               "    std::string r = { s.begin(), s.end() };\n"
               "    return r;\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS("", errout_str());
 
         check("struct A {\n"
@@ -2849,6 +2866,13 @@ private:
               "    std::cerr << str;\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+
+        check("auto f() {\n" // #11420
+              "    std::vector<int> x;\n"
+              "    std::vector<int>::iterator it = x.begin();\n"
+              "    return it;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2] -> [test.cpp:4]: (error) Returning iterator to local container 'x' that will be invalid when returning.\n", errout_str());
     }
 
     void danglingLifetimeContainerView()
@@ -3063,6 +3087,14 @@ private:
 
         check("std::span<const int> f() {\n" // #12966
               "    int a[10]{};\n"
+              "    return a;\n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:3] -> [test.cpp:2] -> [test.cpp:3]: (error) Returning pointer to local variable 'a' that will be invalid when returning.\n",
+            errout_str());
+
+        check("std::string_view f() {\n" // #10995
+              "    char a[10]{};\n"
               "    return a;\n"
               "}\n");
         ASSERT_EQUALS(
@@ -3434,6 +3466,25 @@ private:
               "    std::vector<int*> v;\n"
               "};\n");
         ASSERT_EQUALS("", errout_str());
+
+        // #13560
+        check("void f() {\n"
+              "    int a[] = { 1 };\n"
+              "    static int* p = nullptr;\n"
+              "    if (!p) {\n"
+              "        p = &a[0];\n"
+              "    }\n"
+              "    *p = 0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5] -> [test.cpp:2] -> [test.cpp:7]: (error) Static variable 'p' will use pointer to local variable 'a'.\n", errout_str());
+
+        // #10902
+        check("void f() {\n"
+              "    static int* x;\n"
+              "    int y;\n"
+              "    x = &y;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4] -> [test.cpp:3] -> [test.cpp:4]: (error) Static variable 'x' will use pointer to local variable 'y'.\n", errout_str());
     }
 
     void danglingLifetimeFunction() {
@@ -3550,8 +3601,7 @@ private:
               "    int i = 0;\n"
               "    A a{i};\n"
               "    return a;\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS(
             "[test.cpp:7] -> [test.cpp:6] -> [test.cpp:8]: (error, inconclusive) Returning object that points to local variable 'i' that will be invalid when returning.\n",
             errout_str());
@@ -3564,8 +3614,7 @@ private:
               "    int i = 0;\n"
               "    A a{i};\n"
               "    return a;\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS("", errout_str());
 
         check("struct A {\n"
@@ -3718,8 +3767,7 @@ private:
               "S f() {\n"
               "    std::string m(\"abc\");\n"
               "    return S(m);\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS("", errout_str());
 
         check("struct S {\n"
@@ -3729,8 +3777,7 @@ private:
               "S f() {\n"
               "    std::string s(\"abc\");\n"
               "    return S(s.c_str());\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS("", errout_str());
 
         check("struct S {\n"
@@ -3742,12 +3789,11 @@ private:
               "void f(const std::stringstream& buffer) {\n"
               "    S s(buffer.str().c_str());\n"
               "    s.g();\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS("", errout_str());
     }
 
-    void danglingLifetimeAggegrateConstructor() {
+    void danglingLifetimeAggregateConstructor() {
         check("struct A {\n"
               "    const int& x;\n"
               "    int y;\n"
@@ -3844,6 +3890,30 @@ private:
               "    return { m.data() };\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+
+        check("struct S { std::string s; };\n" // #13167
+              "std::vector<S> f() {\n"
+              "    std::vector<S> v;\n"
+              "    {\n"
+              "        std::string a{ \"abc\" };\n"
+              "        v.push_back({ a.c_str() });\n"
+              "    }\n"
+              "    return v;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("struct S { std::string_view sv; };\n"
+              "std::vector<S> f() {\n"
+              "    std::vector<S> v;\n"
+              "    {\n"
+              "        std::string a{ \"abc\" };\n"
+              "        v.push_back({ a.c_str() });\n"
+              "    }\n"
+              "    return v;\n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:6] -> [test.cpp:6] -> [test.cpp:6] -> [test.cpp:5] -> [test.cpp:8]: (error) Returning object that points to local variable 'a' that will be invalid when returning.\n",
+            errout_str());
     }
 
     void danglingLifetimeInitList() {
@@ -4101,16 +4171,14 @@ private:
               "void T::f() {\n"
               "    U u(p->g().c_str());\n"
               "    if (u.h()) {}\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS("", errout_str());
 
         // #11442
         check("const std::string& f(const P< std::string >& value) {\n"
               "   static const std::string empty;\n"
               "   return value.get() == nullptr ? empty : *value;\n"
-              "}\n",
-              true);
+              "}\n");
         ASSERT_EQUALS("", errout_str());
 
         // #11472
@@ -4288,6 +4356,35 @@ private:
               "    *p = ret;\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+
+        check("struct A {\n"
+              "    int val=42;\n"
+              "    const A& Get() const & {\n"
+              "        return *this;\n"
+              "    }\n"
+              "};\n"
+              "const A *ptr;\n"
+              "int main() {\n"
+              "    ptr = &A().Get();\n"
+              "    return ptr->val;\n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:4] -> [test.cpp:9] -> [test.cpp:9] -> [test.cpp:9] -> [test.cpp:10]: (error) Using pointer that is a temporary.\n",
+            errout_str());
+
+        check("struct A {\n"
+              "    int val = 42;\n"
+              "    const A& Get() const {\n"
+              "        return *this;\n"
+              "    }\n"
+              "};\n"
+              "int main() {\n"
+              "    const A& r = A().Get();\n"
+              "    return r.val;\n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:8] -> [test.cpp:4] -> [test.cpp:8] -> [test.cpp:9]: (error) Using reference to dangling temporary.\n",
+            errout_str());
     }
 
     void invalidLifetime() {

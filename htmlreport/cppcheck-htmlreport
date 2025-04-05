@@ -3,14 +3,15 @@
 from __future__ import unicode_literals
 
 from datetime import date
+import argparse
 import io
 import locale
 import operator
-import optparse
 import os
 import re
 import sys
 import subprocess
+import time
 
 from collections import Counter
 from pygments import highlight
@@ -470,7 +471,7 @@ def blame_lookup(blame_data, line):
     return next((data for start, end, data in blame_data if line >= start and line < end), {})
 
 
-def tr_str(td_th, line, id, cwe, severity, message, author, author_mail, date, add_author, tr_class=None, htmlfile=None, message_class=None):
+def tr_str(td_th, line, id, cwe, severity, message, timestamp, author, author_mail, date, add_author, tr_class=None, htmlfile=None, message_class=None):
     ret = ''
     if htmlfile:
         ret += '<%s><a href="%s#line-%d">%d</a></%s>' % (td_th, htmlfile, line, line, td_th)
@@ -484,6 +485,9 @@ def tr_str(td_th, line, id, cwe, severity, message, author, author_mail, date, a
     else:
         message_attribute = ''
     ret += '<%s%s>%s</%s>' % (td_th, message_attribute, html_escape(message), td_th)
+
+    if timestamp:
+        ret += '<%s>%s</%s>' % (td_th, timestamp, td_th)
 
     for field in  add_author:
         if field == 'name':
@@ -556,6 +560,7 @@ class CppCheckHandler(XmlContentHandler):
         self.errors = []
         self.version = '1'
         self.versionCppcheck = ''
+        self.timestamp = ''
 
     def startElement(self, name, attributes):
         if name == 'results':
@@ -579,6 +584,7 @@ class CppCheckHandler(XmlContentHandler):
             }],
             'id': attributes['id'],
             'severity': attributes['severity'],
+            'timestamp': self.timestamp,
             'msg': attributes['msg']
         })
 
@@ -592,6 +598,7 @@ class CppCheckHandler(XmlContentHandler):
                 'line': 0,
                 'id': attributes['id'],
                 'severity': attributes['severity'],
+                'timestamp': self.timestamp,
                 'msg': attributes['msg'],
                 'verbose': attributes.get('verbose')
             }
@@ -619,35 +626,38 @@ class CppCheckHandler(XmlContentHandler):
 
 def main() -> None:
     # Configure all the options this little utility is using.
-    parser = optparse.OptionParser()
-    parser.add_option('--title', dest='title',
-                      help='The title of the project.',
-                      default='[project name]')
-    parser.add_option('--file', dest='file', action="append",
-                      help='The cppcheck xml output file to read defects '
-                           'from. You can combine results from several '
-                           'xml reports i.e. "--file file1.xml --file file2.xml ..". '
-                           'Default is reading from stdin.')
-    parser.add_option('--report-dir', dest='report_dir',
-                      help='The directory where the HTML report content is '
-                           'written.')
-    parser.add_option('--source-dir', dest='source_dir',
-                      help='Base directory where source code files can be '
-                           'found.')
-    parser.add_option('--add-author-information', dest='add_author_information',
-                      help='Blame information to include. '
-                           'Adds specified author information. '
-                           'Specify as comma-separated list of either "name", "email", "date" or "n","e","d". '
-                           'Default: "n,e,d"')
-    parser.add_option('--source-encoding', dest='source_encoding',
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--title', dest='title',
+                        help='The title of the project.',
+                        default='[project name]')
+    parser.add_argument('--file', dest='file', action="append",
+                        help='The cppcheck xml output file to read defects '
+                             'from. You can combine results from several '
+                             'xml reports i.e. "--file file1.xml --file file2.xml ..". '
+                             'Default is reading from stdin.')
+    parser.add_argument('--checkers-report-file', dest='checkers_report',
+                      help='The cppcheck checkers report file as produced '
+                           'with the "--checkers-report" option of cppcheck.')
+    parser.add_argument('--report-dir', dest='report_dir',
+                         help='The directory where the HTML report content is '
+                              'written.')
+    parser.add_argument('--source-dir', dest='source_dir',
+                         help='Base directory where source code files can be '
+                              'found.')
+    parser.add_argument('--add-author-information', dest='add_author_information',
+                        help='Blame information to include. '
+                             'Adds specified author information. '
+                             'Specify as comma-separated list of either "name", "email", "date" or "n","e","d". '
+                             'Default: "n,e,d"')
+    parser.add_argument('--source-encoding', dest='source_encoding',
                       help='Encoding of source code.', default='utf-8')
-    parser.add_option('--blame-options', dest='blame_options',
-                      help='[-w, -M] blame options which you can use to get author and author mail  '
-                           '-w --> not including white spaces and returns original author of the line  '
-                           '-M --> not including moving of lines and returns original author of the line')
+    parser.add_argument('--blame-options', dest='blame_options',
+                        help='[-w, -M] blame options which you can use to get author and author mail  '
+                             '-w --> not including white spaces and returns original author of the line  '
+                             '-M --> not including moving of lines and returns original author of the line')
 
     # Parse options and make sure that we have an output directory set.
-    options, _ = parser.parse_args()
+    options = parser.parse_args()
 
     try:
         sys.argv[1]
@@ -691,6 +701,13 @@ def main() -> None:
     try:
         contentHandler = CppCheckHandler()
         for fname in options.file or [sys.stdin]:
+            if options.file is not None:
+                t = os.path.getmtime(fname)
+            else:
+                t = time.time()
+            t_s = time.ctime(t)
+            if t_s is not None:
+                contentHandler.timestamp = t_s
             xml_parse(fname, contentHandler)
     except (XmlParseException, ValueError) as msg:
         print('Failed to parse cppcheck xml file: %s' % msg)
@@ -855,12 +872,14 @@ def main() -> None:
         output_file.write('\n           <tr><td></td><td>' + str(stats_count) + '</td><td>total</td></tr>')
         output_file.write('\n       </table>')
         output_file.write('\n       <p><a href="stats.html">Statistics</a></p>')
+        if options.checkers_report:
+            output_file.write('\n       <p><a href="checkers.html">Checkers</a></p>')
         output_file.write(HTML_MENU_END.replace("content", "content_index", 1))
 
         output_file.write('\n       <table class=\"summaryTable\">')
         output_file.write(
             '\n       %s' %
-            tr_str('th', 'Line', 'Id', 'CWE', 'Severity', 'Message', 'Author', 'Author mail', 'Date (DD/MM/YYYY)', add_author=add_author_information))
+            tr_str('th', 'Line', 'Id', 'CWE', 'Severity', 'Message', 'Timestamp', 'Author', 'Author mail', 'Date (DD/MM/YYYY)', add_author=add_author_information))
 
         for filename, data in sorted(files.items()):
             file_error = filename in decode_errors or filename.endswith('*')
@@ -900,7 +919,7 @@ def main() -> None:
 
                 output_file.write(
                     '\n         %s' %
-                    tr_str('td', line, error["id"], cwe_url, error["severity"], error["msg"],
+                    tr_str('td', line, error["id"], cwe_url, error["severity"], error["msg"], error["timestamp"],
                            git_blame_dict.get('author', 'Unknown'), git_blame_dict.get('author-mail', '---'),
                            git_blame_dict.get('author-time', '---'),
                            tr_class=to_css_selector(error["id"]) + ' sev_' + error["severity"] + ' issue',
@@ -982,6 +1001,26 @@ def main() -> None:
             stats_file.write("</p>\n")
 
         stats_file.write(HTML_FOOTER % contentHandler.versionCppcheck)
+
+    if options.checkers_report:
+        print("Creating checkers.html (checkers report)\n")
+
+        with io.open(os.path.join(options.report_dir, 'checkers.html'), 'w') as checkers_file:
+
+            checkers_file.write(HTML_HEAD % (options.title, '', options.title, ': Checkers'))
+            checkers_file.write(HTML_HEAD_END)
+
+            checkers_file.write(HTML_MENU.replace('id="menu"', 'id="menu_index"', 1).replace("Defects:", "Back to summary", 1) % (''))
+            checkers_file.write(HTML_MENU_END.replace("content", "content_index", 1))
+
+            with io.open(options.checkers_report, 'r', encoding=options.source_encoding) as checkers_report:
+                content = checkers_report.read()
+
+                checkers_file.write("<pre>\n")
+                checkers_file.write(html_escape(content))
+                checkers_file.write("</pre>\n")
+
+            checkers_file.write(HTML_FOOTER % contentHandler.versionCppcheck)
 
     print("\nOpen '" + options.report_dir + "/index.html' to see the results.")
 

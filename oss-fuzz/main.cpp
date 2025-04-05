@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 #include "errortypes.h"
 #include "filesettings.h"
 #include "settings.h"
+#include "suppressions.h"
 
 #include <string>
 
@@ -41,17 +42,27 @@ public:
     void reportErr(const ErrorMessage& /*msg*/) override {}
     void reportProgress(const std::string& /*filename*/,
                         const char /*stage*/[],
-                        const std::size_t /*value*/) override {} // FN
+                        const std::size_t /*value*/) override {}
 };
 
+static Settings create_settings()
+{
+    // TODO: load std.cfg
+    Settings s;
+    s.templateFormat = "{bold}{file}:{line}:{column}: {red}{inconclusive:{magenta}}{severity}:{inconclusive: inconclusive:}{default} {message} [{id}]{reset}\\n{code}";
+    s.templateLocation = "{bold}{file}:{line}:{column}: {dim}note:{reset} {info}\\n{code}";
+    s.addEnabled("all");
+    s.certainty.setEnabled(Certainty::inconclusive, true);
+    return s;
+}
+static const Settings s_settings = create_settings();
 static DummyErrorLogger s_errorLogger;
 static const FileWithDetails s_file("test.cpp");
 
 static void doCheck(const std::string& code)
 {
-    CppCheck cppcheck(s_errorLogger, false, nullptr);
-    cppcheck.settings().addEnabled("all");
-    cppcheck.settings().certainty.setEnabled(Certainty::inconclusive, true);
+    Suppressions supprs;
+    CppCheck cppcheck(s_settings, supprs, s_errorLogger, false, nullptr);
     cppcheck.check(s_file, code);
 }
 

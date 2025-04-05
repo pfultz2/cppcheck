@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2023 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -60,9 +60,9 @@ void TimerResults::showResults(SHOWTIME_MODES mode) const
     std::cout << std::endl;
 
     size_t ordinal = 1; // maybe it would be nice to have an ordinal in output later!
-    for (std::vector<dataElementType>::const_iterator iter=data.cbegin(); iter!=data.cend(); ++iter) {
+    for (auto iter=data.cbegin(); iter!=data.cend(); ++iter) {
         const double sec = iter->second.seconds();
-        const double secAverage = sec / (double)(iter->second.mNumberOfResults);
+        const double secAverage = sec / static_cast<double>(iter->second.mNumberOfResults);
         bool hasParent = false;
         {
             // Do not use valueFlow.. in "Overall time" because those are included in Tokenizer already
@@ -127,11 +127,11 @@ void Timer::stop()
         const std::clock_t diff = end - mStart;
 
         if (mShowTimeMode == SHOWTIME_MODES::SHOWTIME_FILE) {
-            const double sec = (double)diff / CLOCKS_PER_SEC;
+            const double sec = static_cast<double>(diff) / CLOCKS_PER_SEC;
             std::lock_guard<std::mutex> l(stdCoutLock);
             std::cout << mStr << ": " << sec << "s" << std::endl;
         } else if (mShowTimeMode == SHOWTIME_MODES::SHOWTIME_FILE_TOTAL) {
-            const double sec = (double)diff / CLOCKS_PER_SEC;
+            const double sec = static_cast<double>(diff) / CLOCKS_PER_SEC;
             std::lock_guard<std::mutex> l(stdCoutLock);
             std::cout << "Check time: " << mStr << ": " << sec << "s" << std::endl;
         } else {

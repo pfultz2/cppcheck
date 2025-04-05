@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,6 @@
 #include "errortypes.h"
 #include "fixture.h"
 #include "helpers.h"
-#include "platform.h"
 #include "settings.h"
 #include "templatesimplifier.h"
 #include "token.h"
@@ -216,6 +215,8 @@ private:
         TEST_CASE(template176); // #11146
         TEST_CASE(template177);
         TEST_CASE(template178);
+        TEST_CASE(template179);
+        TEST_CASE(template180);
         TEST_CASE(template_specialization_1);  // #7868 - template specialization template <typename T> struct S<C<T>> {..};
         TEST_CASE(template_specialization_2);  // #7868 - template specialization template <typename T> struct S<C<T>> {..};
         TEST_CASE(template_specialization_3);
@@ -239,6 +240,8 @@ private:
         TEST_CASE(template_namespace_9);
         TEST_CASE(template_namespace_10);
         TEST_CASE(template_namespace_11); // #7145
+        TEST_CASE(template_namespace_12);
+        TEST_CASE(template_namespace_13);
         TEST_CASE(template_pointer_type);
         TEST_CASE(template_array_type);
 
@@ -307,10 +310,16 @@ private:
         TEST_CASE(explicitBool2);
     }
 
+    struct CheckOptions
+    {
+        CheckOptions() = default;
+        bool debugwarnings = false;
+    };
+
 #define tok(...) tok_(__FILE__, __LINE__, __VA_ARGS__)
     template<size_t size>
-    std::string tok_(const char* file, int line, const char (&code)[size], bool debugwarnings = false, Platform::Type type = Platform::Type::Native) {
-        const Settings settings1 = settingsBuilder(settings).library("std.cfg").debugwarnings(debugwarnings).platform(type).build();
+    std::string tok_(const char* file, int line, const char (&code)[size], const CheckOptions& options = make_default_obj()) {
+        const Settings settings1 = settingsBuilder(settings).library("std.cfg").debugwarnings(options.debugwarnings).build();
         SimpleTokenizer tokenizer(settings1, *this);
 
         ASSERT_LOC(tokenizer.tokenize(code), file, line);
@@ -1203,7 +1212,7 @@ private:
                                 "struct TypeMath<int,Constants::fourtytwo> { "
                                 "static const int mult = sizeof ( int ) * Constants :: fourtytwo ; "
                                 "} ;";
-        ASSERT_EQUALS(expected, tok(code, true));
+        ASSERT_EQUALS(expected, tok(code, dinit(CheckOptions, $.debugwarnings = true)));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -1331,7 +1340,7 @@ private:
                                 "struct Factorial<1> { "
                                 "enum Anonymous0 { value = 1 * Factorial<0> :: value } ; "
                                 "} ;";
-        ASSERT_EQUALS(expected, tok(code, true));
+        ASSERT_EQUALS(expected, tok(code, dinit(CheckOptions, $.debugwarnings = true)));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -1391,7 +1400,7 @@ private:
                                 "} struct Foo<true> { "
                                 "std :: array < int , 1 > mfoo ; "
                                 "} ;";
-        ASSERT_EQUALS(expected, tok(code, true));
+        ASSERT_EQUALS(expected, tok(code, dinit(CheckOptions, $.debugwarnings = true)));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -4546,6 +4555,44 @@ private:
         ASSERT_EQUALS(exp2, tok(code2));
     }
 
+    void template179() {
+        const char code[] = "template <typename T, typename C>\n" // #13498
+                            "struct B {\n"
+                            "    int a;\n"
+                            "    int b;\n"
+                            "};\n"
+                            "template <typename T>\n"
+                            "struct B<T, void> {\n"
+                            "    int a;\n"
+                            "};\n"
+                            "void f() {\n"
+                            "    B<int, int>{ 0, {} };\n"
+                            "}\n";
+        const char exp[] = "struct B<int,int> ; "
+                           "template < typename T > struct B < T , void > { int a ; } ; "
+                           "void f ( ) { B<int,int> { 0 , { } } ; } "
+                           "struct B<int,int> { int a ; int b ; } ;";
+        ASSERT_EQUALS(exp, tok(code));
+    }
+
+    void template180() {
+        const char code[] = "template<int C>\n" // #13680
+                            "int f() {\n"
+                            "    return dostuff(C);\n"
+                            "}\n"
+                            "void g() {\n"
+                            "    f<static_cast<int>(0U)>();\n"
+                            "}\n";
+        const char exp[] = "int f<static_cast<int>(0U)> ( ) ; "
+                           "void g ( ) { "
+                           "f<static_cast<int>(0U)> ( ) ; "
+                           "} "
+                           "int f<static_cast<int>(0U)> ( ) { "
+                           "return dostuff ( static_cast < int > ( 0U ) ) ; "
+                           "}";
+        ASSERT_EQUALS(exp, tok(code));
+    }
+
     void template_specialization_1() {  // #7868 - template specialization template <typename T> struct S<C<T>> {..};
         const char code[] = "template <typename T> struct C {};\n"
                             "template <typename T> struct S {a};\n"
@@ -5264,6 +5311,43 @@ private:
                       "} int MyNamespace :: TestClass :: TemplatedMethod<int> ( int t ) { return t ; }", tok(code));
     }
 
+    void template_namespace_12() {
+        const char code[] = "struct S {};\n" // #13444
+                            "namespace N {\n"
+                            "    template<>\n"
+                            "    struct hash<S> {};\n"
+                            "}\n"
+                            "struct T {\n"
+                            "    T(int i) : hash(i) {}\n"
+                            "    int hash;\n"
+                            "};\n";
+        ASSERT_EQUALS("struct S { } ; "
+                      "namespace N { "
+                      "struct hash<S> { } ; "
+                      "} "
+                      "struct T { "
+                      "T ( int i ) : hash ( i ) { } "
+                      "int hash ; "
+                      "} ;",
+                      tok(code));
+    }
+
+    void template_namespace_13() {
+        const char code[] = "namespace N {\n" // #13593
+                            "    template<typename T>\n"
+                            "    struct S {\n"
+                            "        using U = T*;\n"
+                            "    };\n"
+                            "}\n"
+                            "::N::S<int>::U u;\n";
+        ASSERT_EQUALS("namespace N { "
+                      "struct S<int> ; "
+                      "} "
+                      "int * u ; "
+                      "struct N :: S<int> { } ;",
+                      tok(code));
+    }
+
     void template_pointer_type() {
         const char code[] = "template<class T> void foo(const T x) {}\n"
                             "void bar() { foo<int*>(0); }";
@@ -5774,9 +5858,9 @@ private:
         ASSERT_EQUALS(expected, tok(code));
     }
 
-#define instantiateMatch(code, numberOfArguments, patternAfter) instantiateMatch_(code, numberOfArguments, patternAfter, __FILE__, __LINE__)
+#define instantiateMatch(...) instantiateMatch_(__FILE__, __LINE__, __VA_ARGS__)
     template<size_t size>
-    bool instantiateMatch_(const char (&code)[size], const std::size_t numberOfArguments, const char patternAfter[], const char* file, int line) {
+    bool instantiateMatch_(const char* file, int line, const char (&code)[size], const std::size_t numberOfArguments, const char patternAfter[]) {
         SimpleTokenizer tokenizer(settings, *this);
 
         ASSERT_LOC(tokenizer.tokenize(code), file, line);
@@ -6368,11 +6452,11 @@ private:
                             "typedef Derived<C<static_cast<int>(-1)> > C_;\n"
                             "class C3 { C_ c; };";
         const char expected[] = "template < int N > class C { } ; "
-                                "class Base<C<static_cast<int>-1>> ; "
-                                "class Derived<C<static_cast<int>-1>> ; "
-                                "class C3 { Derived<C<static_cast<int>-1>> c ; } ; "
-                                "class Derived<C<static_cast<int>-1>> : private Base<C<static_cast<int>-1>> { } ; "
-                                "class Base<C<static_cast<int>-1>> { } ;";
+                                "class Base<C<static_cast<int>(-1)>> ; "
+                                "class Derived<C<static_cast<int>(-1)>> ; "
+                                "class C3 { Derived<C<static_cast<int>(-1)>> c ; } ; "
+                                "class Derived<C<static_cast<int>(-1)>> : private Base<C<static_cast<int>(-1)>> { } ; "
+                                "class Base<C<static_cast<int>(-1)>> { } ;";
         ASSERT_EQUALS(expected, tok(code));
     }
 

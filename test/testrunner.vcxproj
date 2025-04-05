@@ -26,10 +26,10 @@
   <ItemGroup Label="SourceFiles">
     <ClCompile Include="..\cli\cmdlineparser.cpp" />
     <ClCompile Include="..\cli\cppcheckexecutor.cpp" />
-    <ClCompile Include="..\cli\cppcheckexecutorseh.cpp" />
     <ClCompile Include="..\cli\executor.cpp" />
     <ClCompile Include="..\cli\filelister.cpp" />
     <ClCompile Include="..\cli\processexecutor.cpp" />
+    <ClCompile Include="..\cli\sehwrapper.cpp" />
     <ClCompile Include="..\cli\signalhandler.cpp" />
     <ClCompile Include="..\cli\singleexecutor.cpp" />
     <ClCompile Include="..\cli\stacktrace.cpp" />
@@ -49,7 +49,6 @@
     <ClCompile Include="testastutils.cpp" />
     <ClCompile Include="testautovariables.cpp" />
     <ClCompile Include="testbool.cpp" />
-    <ClCompile Include="testboost.cpp" />
     <ClCompile Include="testbufferoverrun.cpp" />
     <ClCompile Include="testcharvar.cpp" />
     <ClCompile Include="testcheck.cpp" />
@@ -62,6 +61,7 @@
     <ClCompile Include="testcppcheck.cpp" />
     <ClCompile Include="testerrorlogger.cpp" />
     <ClCompile Include="testexceptionsafety.cpp" />
+    <ClCompile Include="testexecutor.cpp" />
     <ClCompile Include="testfilelister.cpp" />
     <ClCompile Include="testfilesettings.cpp" />
     <ClCompile Include="testfunctions.cpp" />
@@ -112,14 +112,15 @@
     <ClCompile Include="testvaarg.cpp" />
     <ClCompile Include="testvalueflow.cpp" />
     <ClCompile Include="testvarid.cpp" />
+    <ClCompile Include="testvfvalue.cpp" />
   </ItemGroup>
   <ItemGroup Label="HeaderFiles">
     <ClInclude Include="..\cli\cmdlineparser.h" />
     <ClInclude Include="..\cli\cppcheckexecutor.h" />
-    <ClInclude Include="..\cli\cppcheckexecutorseh.h" />
     <ClInclude Include="..\cli\executor.h" />
     <ClInclude Include="..\cli\filelister.h" />
     <ClInclude Include="..\cli\processexecutor.h" />
+    <ClInclude Include="..\cli\sehwrapper.h" />
     <ClInclude Include="..\cli\signalhandler.h" />
     <ClInclude Include="..\cli\singleexecutor.h" />
     <ClInclude Include="..\cli\stacktrace.h" />

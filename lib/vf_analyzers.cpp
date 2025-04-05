@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -85,7 +85,7 @@ struct ValueFlowAnalyzer : Analyzer {
     virtual bool dependsOnThis() const {
         return false;
     }
-    virtual bool isVariable() const {
+    virtual bool isClassVariable() const {
         return false;
     }
 
@@ -203,7 +203,7 @@ struct ValueFlowAnalyzer : Analyzer {
                           Library::Container::Action::INSERT,
                           Library::Container::Action::APPEND,
                           Library::Container::Action::CHANGE_INTERNAL},
-                         astContainerAction(tok)))
+                         astContainerAction(tok, getSettings().library)))
                 return read;
         }
         bool inconclusive = false;
@@ -342,7 +342,7 @@ struct ValueFlowAnalyzer : Analyzer {
             if (dst) {
                 const size_t sz = ValueFlow::getSizeOf(*dst, settings);
                 if (sz > 0 && sz < sizeof(MathLib::biguint)) {
-                    long long newvalue = ValueFlow::truncateIntValue(value->intvalue, sz, dst->sign);
+                    MathLib::bigint newvalue = ValueFlow::truncateIntValue(value->intvalue, sz, dst->sign);
 
                     /* Handle overflow/underflow for value bounds */
                     if (value->bound != ValueFlow::Value::Bound::Point) {
@@ -435,7 +435,8 @@ private:
             {"^=", "^="}};
         auto it = lookup.find(assign);
         if (it == lookup.end()) {
-            return emptyString;
+            static const std::string s_empty_string;
+            return s_empty_string;
         }
         return it->second;
     }
@@ -470,7 +471,7 @@ private:
             return T{};
         }
         if (assign == "=")
-            return y;
+            return static_cast<T>(y);
         return calculate<T, T>(removeAssign(assign), x, y, error);
     }
 
@@ -526,6 +527,8 @@ private:
             if (!v.isKnown() && !toImpossible)
                 continue;
             if (exact && v.intvalue != 0 && !isPoint)
+                continue;
+            if (astIsUnsigned(tok) != astIsUnsigned(v.tokvalue))
                 continue;
             std::vector<MathLib::bigint> r;
             ValueFlow::Value::Bound bound = currValue->bound;
@@ -640,7 +643,7 @@ private:
             if (a != Action::None)
                 return a;
         }
-        if (dependsOnThis() && exprDependsOnThis(tok, !isVariable()))
+        if (dependsOnThis() && exprDependsOnThis(tok, !isClassVariable()))
             return isThisModified(tok);
 
         // bailout: global non-const variables
@@ -654,8 +657,8 @@ private:
     template<class F>
     std::vector<MathLib::bigint> evaluateInt(const Token* tok, F getProgramMemory) const
     {
-        if (tok->hasKnownIntValue())
-            return {static_cast<int>(tok->values().front().intvalue)};
+        if (const ValueFlow::Value* v = tok->getKnownValue(ValueFlow::Value::ValueType::INT))
+            return {static_cast<int>(v->intvalue)};
         std::vector<MathLib::bigint> result;
         ProgramMemory pm = getProgramMemory();
         if (Token::Match(tok, "&&|%oror%")) {
@@ -1023,13 +1026,13 @@ struct MultiValueFlowAnalyzer : ValueFlowAnalyzer {
         const Scope* scope = endBlock->scope();
         if (!scope)
             return false;
-        if (scope->type == Scope::eLambda) {
+        if (scope->type == ScopeType::eLambda) {
             return std::all_of(values.cbegin(), values.cend(), [](const std::pair<nonneg int, ValueFlow::Value>& p) {
                 return p.second.isLifetimeValue();
             });
         }
-        if (scope->type == Scope::eIf || scope->type == Scope::eElse || scope->type == Scope::eWhile ||
-            scope->type == Scope::eFor) {
+        if (scope->type == ScopeType::eIf || scope->type == ScopeType::eElse || scope->type == ScopeType::eWhile ||
+            scope->type == ScopeType::eFor) {
             auto pred = [](const ValueFlow::Value& value) {
                 if (value.isKnown())
                     return true;
@@ -1194,10 +1197,10 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
         const Scope* scope = endBlock->scope();
         if (!scope)
             return false;
-        if (scope->type == Scope::eLambda)
+        if (scope->type == ScopeType::eLambda)
             return value.isLifetimeValue();
-        if (scope->type == Scope::eIf || scope->type == Scope::eElse || scope->type == Scope::eWhile ||
-            scope->type == Scope::eFor) {
+        if (scope->type == ScopeType::eIf || scope->type == ScopeType::eElse || scope->type == ScopeType::eWhile ||
+            scope->type == ScopeType::eFor) {
             if (value.isKnown() || value.isImpossible())
                 return true;
             if (value.isLifetimeValue())
@@ -1319,7 +1322,12 @@ struct ExpressionAnalyzer : SingleValueFlowAnalyzer {
         return !local;
     }
 
-    bool isVariable() const override {
+    bool isClassVariable() const override
+    {
+        if (expr->variable()) {
+            const Variable* var = expr->variable();
+            return !var->isLocal() && !var->isArgument() && !var->isStatic() && !var->isGlobal();
+        }
         return expr->varId() > 0;
     }
 
@@ -1489,7 +1497,7 @@ struct ContainerExpressionAnalyzer : ExpressionAnalyzer {
             return;
         const Token* parent = tok->astParent();
         const Library::Container* container = getLibraryContainer(tok);
-        int n = 0;
+        MathLib::bigint n = 0;
 
         if (container->stdStringLike && Token::simpleMatch(parent, "+=") && parent->astOperand2()) {
             const Token* rhs = parent->astOperand2();
@@ -1558,8 +1566,8 @@ static const Token* solveExprValue(const Token* expr, ValueFlow::Value& value)
     return ValueFlow::solveExprValue(
         expr,
         [](const Token* tok) -> std::vector<MathLib::bigint> {
-        if (tok->hasKnownIntValue())
-            return {tok->values().front().intvalue};
+        if (const ValueFlow::Value* v = tok->getKnownValue(ValueFlow::Value::ValueType::INT))
+            return {v->intvalue};
         return {};
     },
         value);

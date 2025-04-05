@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@
 #include <functional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 FORCE_WARNING_CLANG_PUSH("-Wpadded")
@@ -43,7 +44,7 @@ namespace ValueFlow
     public:
         enum class Bound : std::uint8_t { Upper, Lower, Point };
 
-        explicit Value(long long val = 0, Bound b = Bound::Point) :
+        explicit Value(MathLib::bigint val = 0, Bound b = Bound::Point) :
             bound(b),
             safe(false),
             conditional(false),
@@ -53,7 +54,7 @@ namespace ValueFlow
             varvalue(val),
             wideintvalue(val)
         {}
-        Value(const Token* c, long long val, Bound b = Bound::Point);
+        Value(const Token* c, MathLib::bigint val, Bound b = Bound::Point);
 
         static Value unknown() {
             Value v;
@@ -316,7 +317,7 @@ namespace ValueFlow
         std::int8_t indirect{}; // TODO: can we reduce the size?
 
         /** int value (or sometimes bool value?) */
-        long long intvalue{};
+        MathLib::bigint intvalue{};
 
         /** token value - the token that has the value. this is used for pointer aliases, strings, etc. */
         const Token* tokvalue{};
@@ -325,7 +326,7 @@ namespace ValueFlow
         double floatValue{};
 
         /** For calculated values - variable value that calculated value depends on */
-        long long varvalue{};
+        MathLib::bigint varvalue{};
 
         /** Condition that this value depends on */
         const Token* condition{};
@@ -351,7 +352,7 @@ namespace ValueFlow
         MathLib::bigint path{};
 
         /** int value before implicit truncation */
-        long long wideintvalue{};
+        MathLib::bigint wideintvalue{};
 
         std::vector<std::string> subexpressions;
 

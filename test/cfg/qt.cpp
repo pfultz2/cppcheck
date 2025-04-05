@@ -665,9 +665,9 @@ namespace {
     class Fred : public QObject {
         Q_OBJECT
     private slots:
-        // cppcheck-suppress functionStatic
         void foo();
     };
+    // cppcheck-suppress functionStatic
     void Fred::foo() {}
 
     // bitfields14
@@ -812,3 +812,17 @@ struct BQObject_missingOverride { // #13406
 struct DQObject_missingOverride : BQObject_missingOverride {
     Q_OBJECT
 };
+
+namespace {
+    class TestUnusedFunction : public QObject { // #13236
+        TestUnusedFunction();
+        void doStuff();
+    };
+
+    TestUnusedFunction::TestUnusedFunction() {
+        QObject::connect(this, SIGNAL(doStuff()), SLOT(doStuff()));
+    }
+
+    // cppcheck-suppress functionStatic
+    void TestUnusedFunction::doStuff() {} // Should not warn here with unusedFunction
+}

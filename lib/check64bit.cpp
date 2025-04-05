@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2023 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -65,7 +65,7 @@ void Check64BitPortability::pointerassignment()
         for (const Token* tok = scope->bodyStart->next(); tok != scope->bodyEnd; tok = tok->next()) {
             // skip nested functions
             if (tok->str() == "{") {
-                if (tok->scope()->type == Scope::ScopeType::eFunction || tok->scope()->type == Scope::ScopeType::eLambda)
+                if (tok->scope()->type == ScopeType::eFunction || tok->scope()->type == ScopeType::eLambda)
                     tok = tok->link();
             }
 
@@ -160,4 +160,19 @@ void Check64BitPortability::returnIntegerError(const Token *tok)
                 "platforms and compilers. For example in 32-bit Windows and Linux they are same width, but in 64-bit Windows "
                 "and Linux they are of different width. In worst case you end up casting 64-bit integer down to 32-bit pointer. "
                 "The safe way is to always return a pointer.", CWE758, Certainty::normal);
+}
+
+void Check64BitPortability::runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger)
+{
+    Check64BitPortability check64BitPortability(&tokenizer, &tokenizer.getSettings(), errorLogger);
+    check64BitPortability.pointerassignment();
+}
+
+void Check64BitPortability::getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const
+{
+    Check64BitPortability c(nullptr, settings, errorLogger);
+    c.assignmentAddressToIntegerError(nullptr);
+    c.assignmentIntegerToAddressError(nullptr);
+    c.returnIntegerError(nullptr);
+    c.returnPointerError(nullptr);
 }

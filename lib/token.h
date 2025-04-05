@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -101,7 +101,7 @@ struct TokenImpl {
     std::string* mOriginalName{};
 
     // If this token came from a macro replacement list, this is the name of that macro
-    std::string mMacroName;
+    std::string* mMacroName{};
 
     // ValueType
     ValueType* mValueType{};
@@ -166,6 +166,8 @@ class CPPCHECKLIB Token {
 
 private:
     TokensFrontBack& mTokensFrontBack;
+
+    static const std::string mEmptyString;
 
 public:
     Token(const Token &) = delete;
@@ -256,7 +258,7 @@ public:
     const std::string &strAt(int index) const
     {
         const Token *tok = this->tokAt(index);
-        return tok ? tok->mStr : emptyString;
+        return tok ? tok->mStr : mEmptyString;
     }
 
     /**
@@ -478,7 +480,7 @@ public:
         setFlag(fIsStandardType, b);
     }
     bool isExpandedMacro() const {
-        return !mImpl->mMacroName.empty();
+        return !!mImpl->mMacroName;
     }
     bool isCast() const {
         return getFlag(fIsCast);
@@ -725,6 +727,13 @@ public:
         setFlag(fIsInitComma, b);
     }
 
+    bool isInitBracket() const {
+        return getFlag(fIsInitBracket);
+    }
+    void isInitBracket(bool b) {
+        setFlag(fIsInitBracket, b);
+    }
+
     // cppcheck-suppress unusedFunction
     bool isBitfield() const {
         return mImpl->mBits > 0;
@@ -796,10 +805,13 @@ public:
     }
 
     const std::string& getMacroName() const {
-        return mImpl->mMacroName;
+        return mImpl->mMacroName ? *mImpl->mMacroName : mEmptyString;
     }
     void setMacroName(std::string name) {
-        mImpl->mMacroName = std::move(name);
+        if (!mImpl->mMacroName)
+            mImpl->mMacroName = new std::string(std::move(name));
+        else
+            *mImpl->mMacroName = std::move(name);
     }
 
     template<size_t count>
@@ -940,13 +952,11 @@ public:
         return mImpl->mVarId;
     }
     void varId(nonneg int id) {
+        if (mImpl->mVarId == id)
+            return;
+
         mImpl->mVarId = id;
-        if (id != 0) {
-            tokType(eVariable);
-            isStandardType(false);
-        } else {
-            update_property_info();
-        }
+        update_property_info();
     }
 
     nonneg int exprId() const {
@@ -983,12 +993,13 @@ public:
 
     /**
      * For debugging purposes, prints token and all tokens followed by it.
+     * @param xml print in XML format
      * @param title Title for the printout or use default parameter or 0
      * for no title.
      * @param fileNames Prints out file name instead of file index.
      * File index should match the index of the string in this vector.
      */
-    void printOut(std::ostream& out, const char *title, const std::vector<std::string> &fileNames) const;
+    void printOut(std::ostream& out, bool xml, const char *title, const std::vector<std::string> &fileNames) const;
 
     /**
      * print out tokens - used for debugging
@@ -1085,6 +1096,9 @@ public:
      * to.
      */
     void link(Token *linkToToken) {
+        if (mLink == linkToToken)
+            return;
+
         mLink = linkToToken;
         if (mStr == "<" || mStr == ">")
             update_property_info();
@@ -1177,6 +1191,8 @@ public:
 
     static std::string typeStr(const Token* tok);
 
+    static bool isStandardType(const std::string& str);
+
     /**
      * @return a pointer to the Enumerator associated with this token.
      */
@@ -1263,7 +1279,7 @@ public:
      * @return the original name.
      */
     const std::string & originalName() const {
-        return mImpl->mOriginalName ? *mImpl->mOriginalName : emptyString;
+        return mImpl->mOriginalName ? *mImpl->mOriginalName : mEmptyString;
     }
 
     const std::list<ValueFlow::Value>& values() const {
@@ -1288,6 +1304,9 @@ public:
 
     const ValueFlow::Value* getKnownValue(ValueFlow::Value::ValueType t) const;
     MathLib::bigint getKnownIntValue() const {
+        assert(!mImpl->mValues->empty());
+        assert(mImpl->mValues->front().isKnown());
+        assert(mImpl->mValues->front().valueType == ValueFlow::Value::ValueType::INT);
         return mImpl->mValues->front().intvalue;
     }
 
@@ -1399,6 +1418,7 @@ private:
         fIsSimplifiedTypedef    = (1ULL << 40),
         fIsFinalType            = (1ULL << 41), // Is this a type with final specifier
         fIsInitComma            = (1ULL << 42), // Is this comma located inside some {..}. i.e: {1,2,3,4}
+        fIsInitBracket          = (1ULL << 43), // Is this bracket used as a part of variable initialization i.e: int a{5}, b(2);
     };
 
     enum : std::uint8_t  {

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2023 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -106,7 +106,7 @@ std::string Check::getMessageId(const ValueFlow::Value &value, const char id[])
     if (value.condition != nullptr)
         return id + std::string("Cond");
     if (value.safe)
-        return std::string("safe") + (char)std::toupper(id[0]) + (id + 1);
+        return std::string("safe") + static_cast<char>(std::toupper(id[0])) + (id + 1);
     return id;
 }
 
@@ -115,7 +115,7 @@ ErrorPath Check::getErrorPath(const Token* errtok, const ValueFlow::Value* value
     ErrorPath errorPath;
     if (!value) {
         errorPath.emplace_back(errtok, std::move(bug));
-    } else if (mSettings->verbose || mSettings->xml || !mSettings->templateLocation.empty()) {
+    } else if (mSettings->verbose || mSettings->outputFormat == Settings::OutputFormat::xml || !mSettings->templateLocation.empty()) {
         errorPath = value->errorPath;
         errorPath.emplace_back(errtok, std::move(bug));
     } else {

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstring>
 #include <iterator>
 #include <stack>
 #include <utility>
@@ -41,9 +40,9 @@ int caseInsensitiveStringCompare(const std::string &lhs, const std::string &rhs)
 
 bool isValidGlobPattern(const std::string& pattern)
 {
-    for (std::string::const_iterator i = pattern.cbegin(); i != pattern.cend(); ++i) {
+    for (auto i = pattern.cbegin(); i != pattern.cend(); ++i) {
         if (*i == '*' || *i == '?') {
-            const std::string::const_iterator j = i + 1;
+            const auto j = i + 1;
             if (j != pattern.cend() && (*j == '*' || *j == '?')) {
                 return false;
             }
@@ -186,20 +185,18 @@ std::string replaceEscapeSequences(const std::string &source) {
 }
 
 
-std::list<std::string> splitString(const std::string& str, char sep)
+std::vector<std::string> splitString(const std::string& str, char sep)
 {
-    if (std::strchr(str.c_str(), sep) == nullptr)
-        return {str};
+    std::vector<std::string> l;
 
-    std::list<std::string> l;
-    std::string p(str);
-    for (;;) {
-        const std::string::size_type pos = p.find(sep);
-        if (pos == std::string::npos)
+    std::string::size_type pos1 = 0;
+    std::string::size_type pos2;
+    while (true) {
+        pos2 = str.find(sep, pos1);
+        l.push_back(str.substr(pos1, pos2 - pos1));
+        if (pos2 == std::string::npos)
             break;
-        l.push_back(p.substr(0,pos));
-        p = p.substr(pos+1);
+        pos1 = pos2 + 1;
     }
-    l.push_back(std::move(p));
     return l;
 }

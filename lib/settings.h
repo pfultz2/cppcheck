@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,11 +27,10 @@
 #include "library.h"
 #include "platform.h"
 #include "standards.h"
-#include "suppressions.h"
+#include "checkers.h"
 
 #include <algorithm>
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <list>
@@ -47,6 +46,7 @@
 #include <cstdio>
 #endif
 
+struct Suppressions;
 enum class SHOWTIME_MODES : std::uint8_t;
 namespace ValueFlow {
     class Value;
@@ -69,16 +69,16 @@ public:
         mFlags = 0xFFFFFFFF;
     }
     bool isEnabled(T flag) const {
-        return (mFlags & (1U << (uint32_t)flag)) != 0;
+        return (mFlags & (1U << static_cast<uint32_t>(flag))) != 0;
     }
     void enable(T flag) {
-        mFlags |= (1U << (uint32_t)flag);
+        mFlags |= (1U << static_cast<uint32_t>(flag));
     }
     void enable(SimpleEnableGroup<T> group) {
         mFlags |= group.intValue();
     }
     void disable(T flag) {
-        mFlags &= ~(1U << (uint32_t)flag);
+        mFlags &= ~(1U << static_cast<uint32_t>(flag));
     }
     void disable(SimpleEnableGroup<T> group) {
         mFlags &= ~(group.intValue());
@@ -97,6 +97,7 @@ public:
  * to pass individual values to functions or constructors now or in the
  * future when we might have even more detailed settings.
  */
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
 class CPPCHECKLIB WARN_UNUSED Settings {
 private:
 
@@ -109,6 +110,9 @@ public:
     static std::string loadCppcheckCfg(Settings& settings, Suppressions& suppressions, bool debug = false);
 
     static std::pair<std::string, std::string> getNameAndVersion(const std::string& productName);
+
+    /** @brief Report type */
+    ReportType reportType = ReportType::normal;
 
     /** @brief addons, either filename of python/json file or json data */
     std::unordered_set<std::string> addons;
@@ -146,7 +150,7 @@ public:
     std::string checkersReportFilename;
 
     /** @brief check unknown function return values */
-    std::set<std::string> checkUnknownFunctionReturn;
+    std::set<std::string> checkUnknownFunctionReturn; // TODO: move to Library?
 
     /** Check unused/uninstantiated templates */
     bool checkUnusedTemplates = true;
@@ -158,10 +162,10 @@ public:
     std::string clangExecutable = "clang";
 
     /** Use clang-tidy */
-    bool clangTidy{};
+    bool clangTidy{}; // TODO: CLI
 
     /** Internal: Clear the simplecpp non-existing include cache */
-    bool clearIncludeCache{};
+    bool clearIncludeCache{}; // internal
 
     /** @brief include paths excluded from checking the configuration */
     std::set<std::string> configExcludePaths;
@@ -177,6 +181,12 @@ public:
 
     /** @brief Are we running from DACA script? */
     bool daca{};
+
+    /** @brief Is --debug-clang-output given? */
+    bool debugClangOutput{};
+
+    /** @brief Is --debug-ignore given? */
+    bool debugignore{};
 
     /** @brief Internal: Is --debug-lookup or --debug-lookup=all given? */
     bool debuglookup{};
@@ -207,6 +217,9 @@ public:
 
     /** @brief Is --dump given? */
     bool dump{};
+
+    /** @brief Do not filter duplicated errors. */
+    bool emitDuplicates{};
 
     /** @brief Name of the language that is enforced. Empty per default. */
     Standards::Language enforcedLang{};
@@ -260,8 +273,10 @@ public:
     /** Library */
     Library library;
 
+#ifdef HAS_THREADING_MODEL_FORK
     /** @brief Load average value */
     int loadAverage{};
+#endif
 
     /** @brief Maximum number of configurations to check before bailing.
         Default is 12. (--max-configs=N) */
@@ -282,7 +297,7 @@ public:
     Platform platform;
 
     /** @brief pid of cppcheck. Intention is that this is set in the main process. */
-    int pid;
+    int pid; // internal
 
     /** @brief plist output (--plist-output=&lt;dir&gt;) */
     std::string plistOutput;
@@ -383,9 +398,6 @@ public:
     /** Struct contains standards settings */
     Standards standards;
 
-    /** @brief suppressions */
-    Suppressions supprs;
-
     /** @brief The output format in which the errors are printed in text mode,
         e.g. "{severity} {file}:{line} {message} {id}" */
     std::string templateFormat;
@@ -449,11 +461,8 @@ public:
     /** @brief Is --verbose given? */
     bool verbose{};
 
-    /** @brief write XML results (--xml) */
-    bool xml{};
-
     /** @brief XML version (--xml-version=..) */
-    int xml_version = 2;
+    int xml_version = 2; // TODO: integrate into outputFormat enum?
 
     /**
      * @brief return true if a included file is to be excluded in Preprocessor::getConfigs
