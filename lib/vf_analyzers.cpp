@@ -741,6 +741,7 @@ private:
             }
         }
         bool absolute = (flags & Assume::Absolute) || std::none_of(tok->values().begin(), tok->values().end(), [&](const ValueFlow::Value& v) {
+            // TODO: Check the children as well since not all possible values propagate
             if(!v.isIntValue())
                 return false;
             if(astIsBool(tok) && v.isImpossible())
