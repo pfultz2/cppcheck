@@ -52,6 +52,7 @@ else()
     set(USE_MATCHCOMPILER_OPT "Off")
 endif()
 
+option(BUILD_OBJECTS       "Build as objects libraries instead of static libraries"             OFF)
 option(BUILD_CORE_DLL       "Build lib as cppcheck-core.dll with Visual Studio"             OFF)
 if(BUILD_CORE_DLL AND NOT MSVC)
     message(FATAL_ERROR "Building of lib as DLL is only supported with Visual Studio")

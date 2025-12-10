@@ -4,7 +4,7 @@ file(GLOB srcs "*.cpp")
 file(GLOB mainfile "main.cpp")
 list(REMOVE_ITEM srcs ${mainfile})
 
-add_library(cli ${hdrs} ${srcs})
+cppcheck_add_library(cli ${hdrs} ${srcs})
 target_include_directories(cli PUBLIC .)
 target_link_libraries(cli PRIVATE cppcheck-core frontend tinyxml2 simplecpp picojson)
 if (NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)

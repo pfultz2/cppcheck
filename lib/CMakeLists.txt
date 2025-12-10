@@ -38,10 +38,11 @@ else()
 endif()
 
 if(BUILD_SHARED_LIBS)
-    add_library(cppcheck-core ${srcs_lib} ${hdrs})
+    cppcheck_add_library(cppcheck-core ${srcs_lib} ${hdrs})
 else()
-    # A OBJECT library is used because the auto-registration doesn't work with static libraries
+    # An OBJECT library is used because the auto-registration doesn't work with static libraries
     add_library(cppcheck-core OBJECT ${srcs_lib} ${hdrs})
+    target_sources(cppcheck-core INTERFACE $<TARGET_OBJECTS:cppcheck-core>)
 endif()
 if (BUILD_SHARED_LIBS AND MSVC)
     target_sources(cppcheck-core PRIVATE version.rc)

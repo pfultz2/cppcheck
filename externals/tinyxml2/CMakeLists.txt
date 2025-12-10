@@ -1,7 +1,7 @@
 file(GLOB hdrs "*.h")
 file(GLOB srcs "*.cpp")
 
-add_library(tinyxml2 ${srcs} ${hdrs})
+cppcheck_add_library(tinyxml2 ${srcs} ${hdrs})
 target_dll_compile_definitions(tinyxml2 EXPORT TINYXML2_EXPORT IMPORT TINYXML2_IMPORT)
 
 # TODO: needs to be fixed upstream
