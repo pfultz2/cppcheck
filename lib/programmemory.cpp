@@ -519,12 +519,12 @@ static ProgramMemory getInitialProgramState(const Token* tok,
 ProgramMemoryState::ProgramMemoryState(const Settings& s) : settings(s)
 {}
 
-void ProgramMemoryState::replace(ProgramMemory pm, const Token* origin)
+void ProgramMemoryState::replace(ProgramMemory pm, const Token* origin, bool skipUnknown)
 {
     if (origin)
         for (const auto& p : pm)
             origins[p.first.getExpressionId()] = origin;
-    state.replace(std::move(pm), /*skipUnknown*/ true);
+    state.replace(std::move(pm), skipUnknown);
 }
 
 static void addVars(ProgramMemory& pm, const ProgramMemory::Map& vars)
@@ -562,7 +562,10 @@ void ProgramMemoryState::assume(const Token* tok, bool b, bool isEmpty)
             origin = origin->link();
         }
     }
-    replace(std::move(pm), origin);
+    // An assumed condition is authoritative: it must override any existing unknown value for the
+    // variable (e.g. a variable assigned from an unknown function), otherwise the assumption is
+    // lost and later conditions on the same variable cannot be evaluated.
+    replace(std::move(pm), origin, /*skipUnknown*/ false);
 }
 
 void ProgramMemoryState::removeModifiedVars(const Token* tok)

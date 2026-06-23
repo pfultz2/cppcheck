@@ -6072,10 +6072,11 @@ private:
                "    c = 0;\n"
                "  if (e)\n"
                "    return;\n"
-               "  c++;\n"
+               "  c++;\n" // <- c is uninitialized when d and e are both false
                "}\n";
         values = tokenValues(code, "c ++ ; }");
-        ASSERT_EQUALS(true, values.empty());
+        values.remove_if(&isNotUninitValue);
+        ASSERT_EQUALS(1, values.size());
 
         code = "void b(bool d, bool e) {\n"
                "  int c;\n"
@@ -6083,10 +6084,11 @@ private:
                "    c = 0;\n"
                "  if (e)\n"
                "    exit();\n"
-               "  c++;\n"
+               "  c++;\n" // <- c is uninitialized when d and e are both false
                "}\n";
         values = tokenValues(code, "c ++ ; }");
-        ASSERT_EQUALS(true, values.empty());
+        values.remove_if(&isNotUninitValue);
+        ASSERT_EQUALS(1, values.size());
 
         code = "void b(bool d, bool e) {\n"
                "  int c;\n"

@@ -59,10 +59,6 @@ namespace {
         Analyzer::Terminate terminate = Analyzer::Terminate::None;
         std::vector<Token*> loopEnds;
         int branchCount = 0;
-        // Set once the tracked value has flowed out of a branch that only modifies it conditionally
-        // (see checkBranch). Such a value is already known to be uncertain, so a subsequent
-        // conditional escape that cannot be evaluated should not silently suppress it.
-        bool fromConditionalBranch = false;
 
         Progress Break(Analyzer::Terminate t = Analyzer::Terminate::None) {
             if ((!analyzeOnly || analyzeTerminate) && t != Analyzer::Terminate::None)
@@ -804,12 +800,14 @@ namespace {
                             } else if (thenBranch.check) {
                                 return Break();
                             } else {
-                                // If the value flowed out of a conditionally-modifying branch then it is
-                                // already known to be uncertain. Let it flow past an escape whose condition
-                                // can be reasoned about (no unknown function call), instead of bailing out,
-                                // so the value can be reported at a later use.
-                                const bool flowPast = fromConditionalBranch && !hasUnknownFunctionCall(condTok);
-                                if (analyzer->isConditional() && !flowPast && stopUpdates())
+                                // Let the value flow past an escape whose condition can be reasoned about,
+                                // instead of bailing out, so it can be reported at a later use. A condition
+                                // with an unknown function call may be correlated with the condition that
+                                // produced the value, so keep bailing out in that case to avoid a false
+                                // positive. Correlated conditions on known variables are handled by the
+                                // program memory, which evaluates the condition from the assumptions made
+                                // while traversing and short-circuits above via thenBranch.check.
+                                if (analyzer->isConditional() && hasUnknownFunctionCall(condTok) && stopUpdates())
                                     return Break(Analyzer::Terminate::Conditional);
                                 analyzer->assume(condTok, false);
                             }
@@ -828,7 +826,6 @@ namespace {
                                 // program memory (assumptions made inside the branch) is carried out and used
                                 // to evaluate later conditions.
                                 analyzer = survivor.conditionalAnalyzer;
-                                fromConditionalBranch = true;
                             }
                             if (!analyzer->lowerToPossible())
                                 return Break(Analyzer::Terminate::Bail);
