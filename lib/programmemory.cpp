@@ -519,12 +519,32 @@ static ProgramMemory getInitialProgramState(const Token* tok,
 ProgramMemoryState::ProgramMemoryState(const Settings& s) : settings(s)
 {}
 
-void ProgramMemoryState::replace(ProgramMemory pm, const Token* origin, bool skipUnknown)
+void ProgramMemoryState::replace(ProgramMemory pm, const Token* origin)
 {
     if (origin)
         for (const auto& p : pm)
             origins[p.first.getExpressionId()] = origin;
-    state.replace(std::move(pm), skipUnknown);
+    state.replace(std::move(pm), /*skipUnknown*/ true);
+}
+
+void ProgramMemoryState::replaceWithLastUse(ProgramMemory pm, const Token* origin)
+{
+    // Order-aware merge: a value is only overwritten by an update that happens at the same point or
+    // later on the path. If we already hold a value for an expression whose origin comes after this
+    // update, keep it (it is the more recent assignment/condition). This makes assignments and
+    // conditions merge consistently by which one comes last, e.g.
+    //   x = 1; if (x == 2) {}          // inside: x == 2  (condition is later)
+    //   if (x == 2) { x = 1; }         // after:  x == 1  (assignment is later)
+    //   if (x == 2) { x = unknown(); } // after:  x is unknown (assignment is later)
+    if (origin) {
+        pm.erase_if([&](const ExprIdToken& e) {
+            auto it = origins.find(e.getExpressionId());
+            return it != origins.end() && it->second && precedes(origin, it->second);
+        });
+        for (const auto& p : pm)
+            origins[p.first.getExpressionId()] = origin;
+    }
+    state.replace(std::move(pm));
 }
 
 static void addVars(ProgramMemory& pm, const ProgramMemory::Map& vars)
@@ -562,10 +582,10 @@ void ProgramMemoryState::assume(const Token* tok, bool b, bool isEmpty)
             origin = origin->link();
         }
     }
-    // An assumed condition is authoritative: it must override any existing unknown value for the
-    // variable (e.g. a variable assigned from an unknown function), otherwise the assumption is
-    // lost and later conditions on the same variable cannot be evaluated.
-    replace(std::move(pm), origin, /*skipUnknown*/ false);
+    // An assumed condition must merge order-aware: it overrides an older value for the variable
+    // (e.g. one assigned from an unknown function before the condition) but is itself overridden by
+    // a later assignment inside the conditional block.
+    replaceWithLastUse(std::move(pm), origin);
 }
 
 void ProgramMemoryState::removeModifiedVars(const Token* tok)
