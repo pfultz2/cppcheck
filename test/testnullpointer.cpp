@@ -1032,8 +1032,7 @@ private:
               "        p = new FooCar; } }\n"
               "    p->abcd();\n"
               "}");
-        TODO_ASSERT_EQUALS("[test.cpp:8]: (error) Possible null pointer dereference: p\n",
-                           "", errout_str());
+        ASSERT_EQUALS("[test.cpp:8:5]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
 
         check("static void foo() {\n"
               "    int &r = *(int*)0;\n"

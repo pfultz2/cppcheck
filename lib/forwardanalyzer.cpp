@@ -59,6 +59,10 @@ namespace {
         Analyzer::Terminate terminate = Analyzer::Terminate::None;
         std::vector<Token*> loopEnds;
         int branchCount = 0;
+        // Set once the tracked value has flowed out of a branch that only modifies it conditionally
+        // (see checkBranch). Such a value is already known to be uncertain, so a subsequent
+        // conditional escape that cannot be evaluated should not silently suppress it.
+        bool fromConditionalBranch = false;
 
         Progress Break(Analyzer::Terminate t = Analyzer::Terminate::None) {
             if ((!analyzeOnly || analyzeTerminate) && t != Analyzer::Terminate::None)
@@ -74,6 +78,14 @@ namespace {
             bool escape = false;
             bool escapeUnknown = false;
             bool active = false;
+            // The branch modifies the value, but only on some paths (e.g. the
+            // write is nested in an inner condition), so the value can still
+            // flow out of the branch unmodified.
+            bool conditional = false;
+            // When conditional, the analyzer that traversed the branch. It carries the program
+            // memory accumulated inside the branch (assumptions about other variables), which is
+            // needed to correctly evaluate later conditions once the value flows out.
+            ValuePtr<Analyzer> conditionalAnalyzer;
             bool isEscape() const {
                 return escape || escapeUnknown;
             }
@@ -83,11 +95,14 @@ namespace {
             bool isModified() const {
                 return action.isModified() && !isConclusiveEscape();
             }
+            bool isConclusivelyModified() const {
+                return isModified() && !conditional;
+            }
             bool isInconclusive() const {
                 return action.isInconclusive() && !isConclusiveEscape();
             }
             bool isDead() const {
-                return action.isModified() || action.isInconclusive() || isEscape();
+                return (action.isModified() && !conditional) || action.isInconclusive() || isEscape();
             }
         };
 
@@ -405,6 +420,13 @@ namespace {
                         branch.escapeUnknown = false;
                     }
                 }
+            } else if (a.isModified() && !bail && !ft1.empty() && ft1.front().terminate == Analyzer::Terminate::None) {
+                // The branch was forked and traversed to its end without the value being
+                // modified on every path, so the value is only modified conditionally and
+                // can still flow out of the branch. Keep the forked analyzer so the program
+                // memory from inside the branch is carried out of the if/else.
+                branch.conditional = true;
+                branch.conditionalAnalyzer = ft1.front().analyzer;
             }
             return bail;
         }
@@ -768,7 +790,7 @@ namespace {
                         if (bail)
                             return Break(Analyzer::Terminate::Bail);
                         if (thenBranch.isDead() && elseBranch.isDead()) {
-                            if (thenBranch.isModified() && elseBranch.isModified())
+                            if (thenBranch.isConclusivelyModified() && elseBranch.isConclusivelyModified())
                                 return Break(Analyzer::Terminate::Modified);
                             if (thenBranch.isConclusiveEscape() && elseBranch.isConclusiveEscape())
                                 return Break(Analyzer::Terminate::Escape);
@@ -782,7 +804,12 @@ namespace {
                             } else if (thenBranch.check) {
                                 return Break();
                             } else {
-                                if (analyzer->isConditional() && stopUpdates())
+                                // If the value flowed out of a conditionally-modifying branch then it is
+                                // already known to be uncertain. Let it flow past an escape whose condition
+                                // can be reasoned about (no unknown function call), instead of bailing out,
+                                // so the value can be reported at a later use.
+                                const bool flowPast = fromConditionalBranch && !hasUnknownFunctionCall(condTok);
+                                if (analyzer->isConditional() && !flowPast && stopUpdates())
                                     return Break(Analyzer::Terminate::Conditional);
                                 analyzer->assume(condTok, false);
                             }
@@ -793,9 +820,19 @@ namespace {
                         } else if (thenBranch.isModified() || elseBranch.isModified()) {
                             if (!hasElse && analyzer->isConditional() && stopUpdates())
                                 return Break(Analyzer::Terminate::Conditional);
+                            // The condition is assumed to take the branch that does not modify the value.
+                            const bool thenPath = elseBranch.isConclusivelyModified();
+                            Branch& survivor = thenPath ? thenBranch : elseBranch;
+                            if (survivor.conditional && survivor.conditionalAnalyzer) {
+                                // Continue with the analyzer that traversed the conditional branch, so its
+                                // program memory (assumptions made inside the branch) is carried out and used
+                                // to evaluate later conditions.
+                                analyzer = survivor.conditionalAnalyzer;
+                                fromConditionalBranch = true;
+                            }
                             if (!analyzer->lowerToPossible())
                                 return Break(Analyzer::Terminate::Bail);
-                            analyzer->assume(condTok, elseBranch.isModified());
+                            analyzer->assume(condTok, thenPath);
                         }
                     }
                 } else if (Token::simpleMatch(tok, "try {")) {
@@ -892,6 +929,16 @@ namespace {
             if (isUnevaluated(tok->previous()))
                 return false;
             return Token::Match(tok->previous(), "%name%|)|]|>");
+        }
+
+        // Whether the condition contains a call to a function whose result we cannot determine.
+        // Such a condition may be correlated with the condition that produced the tracked value,
+        // so we must not assume it is independent.
+        static bool hasUnknownFunctionCall(const Token* condTok)
+        {
+            return findAstNode(condTok, [](const Token* tok) {
+                return Token::Match(tok, "%name% (") && !tok->isKeyword() && !tok->function();
+            });
         }
 
         static Token* assignExpr(Token* tok) {

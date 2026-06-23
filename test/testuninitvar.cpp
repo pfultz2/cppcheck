@@ -4062,7 +4062,7 @@ private:
                         "    else { if (y == 2) { x = 1; } }\n"
                         "    return x;\n"
                         "}");
-        TODO_ASSERT_EQUALS("[test.cpp:5:12]: (error) Uninitialized variable: x [legacyUninitvar]\n", "", errout_str());
+        ASSERT_EQUALS("[test.cpp:4:18] -> [test.cpp:3:11] -> [test.cpp:5:12]: (warning) Uninitialized variable: x [uninitvar]\n", errout_str());
 
         valueFlowUninit("void f() {\n"
                         "    int x;\n"
@@ -4071,7 +4071,25 @@ private:
                         "    if (y == 3) { }\n" // <- ignore condition
                         "    return x;\n"
                         "}");
-        TODO_ASSERT_EQUALS("[test.cpp:6:24]: (error) Uninitialized variable: x [legacyUninitvar]\n", "", errout_str());
+        ASSERT_EQUALS("[test.cpp:4:18] -> [test.cpp:3:11] -> [test.cpp:6:12]: (warning) Uninitialized variable: x [uninitvar]\n", errout_str());
+
+        valueFlowUninit("int g();\n" // #9049 - conditional write nested in a branch
+                        "void f(bool a, bool b) {\n"
+                        "    unsigned int dimensions = 0;\n"
+                        "    bool mightBeLarger;\n"
+                        "    if (a) {\n"
+                        "        dimensions = g();\n"
+                        "        if (dimensions >= 1 && b) {\n"
+                        "            mightBeLarger = false;\n"
+                        "        }\n"
+                        "    } else {\n"
+                        "        mightBeLarger = false;\n"
+                        "    }\n"
+                        "    if (dimensions == 0)\n"
+                        "        return;\n"
+                        "    if (!mightBeLarger) {}\n"
+                        "}\n");
+        ASSERT_EQUALS("[test.cpp:7:29] -> [test.cpp:5:9] -> [test.cpp:13:20] -> [test.cpp:15:10]: (warning) Uninitialized variable: mightBeLarger [uninitvar]\n", errout_str());
 
         // initialization in condition
         valueFlowUninit("void f() {\n"
