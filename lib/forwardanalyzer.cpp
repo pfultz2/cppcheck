@@ -91,9 +91,6 @@ namespace {
             bool isModified() const {
                 return action.isModified() && !isConclusiveEscape();
             }
-            bool isConclusivelyModified() const {
-                return isModified() && !conditional;
-            }
             bool isInconclusive() const {
                 return action.isInconclusive() && !isConclusiveEscape();
             }
@@ -786,7 +783,9 @@ namespace {
                         if (bail)
                             return Break(Analyzer::Terminate::Bail);
                         if (thenBranch.isDead() && elseBranch.isDead()) {
-                            if (thenBranch.isConclusivelyModified() && elseBranch.isConclusivelyModified())
+                            // Only unconditionally-modified branches are dead, so isModified() here
+                            // means "modified on every path".
+                            if (thenBranch.isModified() && elseBranch.isModified())
                                 return Break(Analyzer::Terminate::Modified);
                             if (thenBranch.isConclusiveEscape() && elseBranch.isConclusiveEscape())
                                 return Break(Analyzer::Terminate::Escape);
@@ -818,9 +817,25 @@ namespace {
                         } else if (thenBranch.isModified() || elseBranch.isModified()) {
                             if (!hasElse && analyzer->isConditional() && stopUpdates())
                                 return Break(Analyzer::Terminate::Conditional);
-                            // The condition is assumed to take the branch that does not modify the value.
-                            const bool thenPath = elseBranch.isConclusivelyModified();
+                            // The value survives via the branch that is not dead, so assume we took the
+                            // then-branch when the else-branch is the one that is dead (unconditionally
+                            // modified). A conditionally-modified branch is not dead, so the value flows
+                            // out through it.
+                            const bool thenPath = elseBranch.isDead();
                             Branch& survivor = thenPath ? thenBranch : elseBranch;
+                            Branch& other = thenPath ? elseBranch : thenBranch;
+                            // If both branches modify the value only conditionally, it flows out of both.
+                            // Fork the other branch and continue it past the if/else so neither surviving
+                            // path is missed; the main analysis continues with this branch below.
+                            if (survivor.conditional && other.conditional && other.conditionalAnalyzer &&
+                                tok->next() && precedes(tok->next(), end)) {
+                                ForwardTraversal ft = fork();
+                                ft.analyzer = other.conditionalAnalyzer;
+                                if (ft.analyzer->lowerToPossible()) {
+                                    ft.analyzer->assume(condTok, !thenPath);
+                                    ft.updateRange(tok->next(), end);
+                                }
+                            }
                             if (survivor.conditional && survivor.conditionalAnalyzer) {
                                 // Continue with the analyzer that traversed the conditional branch, so its
                                 // program memory (assumptions made inside the branch) is carried out and used

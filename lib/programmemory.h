@@ -169,10 +169,6 @@ struct ProgramMemoryState {
 
     void replace(ProgramMemory pm, const Token* origin = nullptr);
 
-    /// Like replace(), but order-aware: an expression's value is only overwritten by an update whose
-    /// origin is at the same point or later on the path, so the most recent assignment/condition wins.
-    void replaceWithLastUse(ProgramMemory pm, const Token* origin = nullptr);
-
     void addState(const Token* tok, const ProgramMemory::Map& vars);
 
     void assume(const Token* tok, bool b, bool isEmpty = false);
