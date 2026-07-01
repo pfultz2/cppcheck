@@ -123,6 +123,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -5502,12 +5503,78 @@ static bool productParams(const Settings& settings, const std::unordered_map<Key
     return !bail;
 }
 
+// A 128-bit + count fingerprint of a multiset of hashed values. A false match (which would wrongly skip
+// an injection) needs both 64-bit words and the element count to coincide (~2^-128). The combine is
+// commutative, so the fingerprint is independent of iteration order (needed for the unordered argument map).
+struct ValuesFingerprint {
+    std::uint64_t a = 0;
+    std::uint64_t b = 0;
+    std::size_t count = 0;
+    void add(std::uint64_t h) {
+        std::uint64_t m = h * 0xff51afd7ed558ccdULL;
+        m ^= m >> 33;
+        a += m;
+        b += (h ^ 0x9e3779b97f4a7c15ULL) * 0xc4ceb9fe1a85ec53ULL;
+        ++count;
+    }
+    bool operator==(const ValuesFingerprint& o) const {
+        return a == o.a && b == o.b && count == o.count;
+    }
+    bool operator<(const ValuesFingerprint& o) const {
+        return std::tie(a, b, count) < std::tie(o.a, o.b, o.count);
+    }
+};
+
+// Memoizes valueFlowSubFunction's per-call-site injections across fixpoint iterations: maps
+// (called function, argument-values fingerprint) to the function's body-value fingerprint after that injection.
+using SubFunctionCache = std::map<std::pair<const void*, ValuesFingerprint>, ValuesFingerprint>;
+
+static std::uint64_t hashValue(const ValueFlow::Value& v)
+{
+    std::uint64_t h = static_cast<std::uint64_t>(v.intvalue);
+    h = h * 8 + static_cast<std::uint64_t>(v.valueType);
+    h = h * 8 + static_cast<std::uint64_t>(v.bound);
+    h = h * 8 + static_cast<std::uint64_t>(v.valueKind);
+    h += static_cast<std::uint64_t>(v.path) * 0x9e3779b97f4a7c15ULL;
+    h += reinterpret_cast<std::uintptr_t>(v.tokvalue);
+    return h;
+}
+
+// Fingerprint of all values currently attached to a function body, each tied to its token. ValueFlow only
+// accumulates values, so an unchanged fingerprint means the body is unchanged (see valueFlowInjectParameter).
+static ValuesFingerprint bodyValuesFingerprint(const Scope* functionScope)
+{
+    ValuesFingerprint fp;
+    for (const Token* tok = functionScope->bodyStart; tok && tok != functionScope->bodyEnd; tok = tok->next()) {
+        const std::uint64_t tokseed = reinterpret_cast<std::uintptr_t>(tok) * 0x100000001b3ULL;
+        for (const ValueFlow::Value& v : tok->values())
+            fp.add(hashValue(v) ^ tokseed);
+    }
+    return fp;
+}
+
 static void valueFlowInjectParameter(const TokenList& tokenlist,
                                      ErrorLogger& errorLogger,
                                      const Settings& settings,
                                      const Scope* functionScope,
-                                     const std::unordered_map<const Variable*, std::list<ValueFlow::Value>>& vars)
+                                     const std::unordered_map<const Variable*, std::list<ValueFlow::Value>>& vars,
+                                     SubFunctionCache& cache)
 {
+    // Injecting the same argument values into the same function reproduces the same forward analysis
+    // when the function body is unchanged. Since ValueFlow only accumulates values, skip the re-analysis
+    // if the body fingerprint matches the one recorded after the previous identical injection.
+    ValuesFingerprint argFp;
+    for (const auto& p : vars) {
+        const std::uint64_t vid = p.first ? static_cast<std::uint64_t>(p.first->declarationId()) : 0;
+        argFp.add(vid * 3 + p.second.size()); // variable id and how many values it carries
+        for (const ValueFlow::Value& v : p.second)
+            argFp.add(hashValue(v) ^ (vid * 0x100000001b3ULL)); // tie each value to its variable
+    }
+    const auto key = std::make_pair(static_cast<const void*>(functionScope), argFp);
+    const auto it = cache.find(key);
+    if (it != cache.end() && it->second == bodyValuesFingerprint(functionScope))
+        return;
+
     const bool r = productParams(settings, vars, [&](const std::unordered_map<const Variable*, ValueFlow::Value>& arg) {
         auto a = makeMultiValueFlowAnalyzer(arg, settings);
         valueFlowGenericForward(const_cast<Token*>(functionScope->bodyStart),
@@ -5517,6 +5584,7 @@ static void valueFlowInjectParameter(const TokenList& tokenlist,
                                 errorLogger,
                                 settings);
     });
+    cache[key] = bodyValuesFingerprint(functionScope);
     if (!r) {
         std::string fname = "<unknown>";
         if (const Function* f = functionScope->function)
@@ -5671,7 +5739,8 @@ static void valueFlowLibraryFunction(Token* tok, const std::string& returnValue,
 static void valueFlowSubFunction(const TokenList& tokenlist,
                                  const SymbolDatabase& symboldatabase,
                                  ErrorLogger& errorLogger,
-                                 const Settings& settings)
+                                 const Settings& settings,
+                                 SubFunctionCache& cache)
 {
     int id = 0;
     for (auto it = symboldatabase.functionScopes.crbegin(); it != symboldatabase.functionScopes.crend(); ++it) {
@@ -5744,7 +5813,7 @@ static void valueFlowSubFunction(const TokenList& tokenlist,
 
                 argvars[argvar] = std::move(argvalues);
             }
-            valueFlowInjectParameter(tokenlist, errorLogger, settings, calledFunctionScope, argvars);
+            valueFlowInjectParameter(tokenlist, errorLogger, settings, calledFunctionScope, argvars, cache);
         }
     }
 }
@@ -7217,6 +7286,8 @@ struct ValueFlowState {
     ErrorLogger& errorLogger;
     const Settings& settings;
     std::set<const Scope*> skippedFunctions;
+    // Persists across fixpoint iterations to skip redundant sub-function parameter injections.
+    mutable SubFunctionCache subFunctionCache;
 };
 
 struct ValueFlowPass {
@@ -7371,7 +7442,7 @@ struct ValueFlowPassAdaptor : ValueFlowPass {
     }
     void run(const ValueFlowState& state) const override
     {
-        mRun(state.tokenlist, state.symboldatabase, state.errorLogger, state.settings, state.skippedFunctions);
+        mRun(state.tokenlist, state.symboldatabase, state.errorLogger, state.settings, state.skippedFunctions, state.subFunctionCache);
     }
     bool cpp() const override {
         return mCPP;
@@ -7391,12 +7462,14 @@ static ValueFlowPassAdaptor<F> makeValueFlowPassAdaptor(const char* name, bool c
                                 SymbolDatabase& symboldatabase,                                                        \
                                 ErrorLogger& errorLogger,                                                              \
                                 const Settings& settings,                                                              \
-                                const std::set<const Scope*>& skippedFunctions) {                                      \
+                                const std::set<const Scope*>& skippedFunctions,                                        \
+                                SubFunctionCache& subFunctionCache) {                                                  \
         (void)tokenlist;                                                                      \
         (void)symboldatabase;                                                                 \
         (void)errorLogger;                                                                    \
         (void)settings;                                                                       \
         (void)skippedFunctions;                                                               \
+        (void)subFunctionCache;                                                               \
         __VA_ARGS__;                                                                          \
     })
 
@@ -7461,7 +7534,7 @@ void ValueFlow::setValues(TokenList& tokenlist,
         VFA(valueFlowInferCondition(tokenlist, settings)),
         VFA(valueFlowSwitchVariable(tokenlist, symboldatabase, errorLogger, settings)),
         VFA(valueFlowForLoop(tokenlist, symboldatabase, errorLogger, settings)),
-        VFA(valueFlowSubFunction(tokenlist, symboldatabase, errorLogger, settings)),
+        VFA(valueFlowSubFunction(tokenlist, symboldatabase, errorLogger, settings, subFunctionCache)),
         VFA(valueFlowFunctionReturn(tokenlist, errorLogger, settings)),
         VFA(valueFlowLifetime(tokenlist, errorLogger, settings)),
         VFA(valueFlowFunctionDefaultParameter(tokenlist, symboldatabase, errorLogger, settings)),
