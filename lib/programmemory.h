@@ -181,6 +181,8 @@ struct CPPCHECKLIB ProgramMemory {
     }
 
 private:
+    /** Record the value for exactly this expression, without solving the expression */
+    void record(const Token* expr, const ValueFlow::Value& value);
     void copyOnWrite();
     Map::const_iterator find(nonneg int exprid) const;
     Map::iterator find(nonneg int exprid);

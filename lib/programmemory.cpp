@@ -169,18 +169,20 @@ void ProgramMemory::setValue(const Token* expr, const ValueFlow::Value& value) {
     },
         subvalue);
 
-    auto record = [&](const Token* tok, const ValueFlow::Value& v) {
-        const Values* existing = getValues(tok->exprId());
-        Values values = existing ? *existing : Values{};
-        if (!mergeValue(values, v))
-            return;
-        copyOnWrite();
-        (*mValues)[tok] = std::move(values);
-    };
     if (expr != subexpr)
         record(expr, value);
     if (subexpr)
-        record(subexpr, std::move(subvalue));
+        record(subexpr, subvalue);
+}
+
+void ProgramMemory::record(const Token* expr, const ValueFlow::Value& value)
+{
+    const Values* existing = getValues(expr->exprId());
+    Values values = existing ? *existing : Values{};
+    if (!mergeValue(values, value))
+        return;
+    copyOnWrite();
+    (*mValues)[expr] = std::move(values);
 }
 
 void ProgramMemory::setValues(const Token* expr, const Values& values)
