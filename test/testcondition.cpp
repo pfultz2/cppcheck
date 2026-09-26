@@ -934,6 +934,18 @@ private:
               "}\n");
         ASSERT_EQUALS("", errout_str());
 
+        check("int dst;\n" // a nested condition correlated with the outer one is not decided by it
+              "void f(int length) {\n"
+              "    unsigned int src2 = 0U;\n"
+              "    if (length > 1) {\n"
+              "        if (length > 2)\n"
+              "            src2 = 15U;\n"
+              "    }\n"
+              "    if (length >= 2)\n"
+              "        dst = (0x80 | (src2 >> 2));\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
         check("const int FEATURE_BITS = x |\n"
               "#if FOO_ENABLED\n"
               "    FEATURE_FOO |\n"

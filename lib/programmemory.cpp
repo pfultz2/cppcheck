@@ -96,10 +96,26 @@ const ValueFlow::Value* ProgramMemory::getValue(nonneg int exprid, bool impossib
     return nullptr;
 }
 
+// A possible int value with an Upper/Lower bound describes a range ('x >= 2' after 'if (x > 1)' was
+// assumed true), not an exact value, so it must not be used as one.
+static bool isRangeValue(const ValueFlow::Value& v)
+{
+    return v.isIntValue() && !v.isImpossible() && v.bound != ValueFlow::Value::Bound::Point;
+}
+
+static ValueFlow::Value::Bound flipBound(ValueFlow::Value::Bound b)
+{
+    if (b == ValueFlow::Value::Bound::Lower)
+        return ValueFlow::Value::Bound::Upper;
+    if (b == ValueFlow::Value::Bound::Upper)
+        return ValueFlow::Value::Bound::Lower;
+    return b;
+}
+
 bool ProgramMemory::getIntValue(nonneg int exprid, MathLib::bigint& result) const
 {
     const ValueFlow::Value* value = getValue(exprid);
-    if (value && value->isIntValue()) {
+    if (value && value->isIntValue() && !isRangeValue(*value)) {
         result = value->intvalue;
         return true;
     }
@@ -262,11 +278,6 @@ ProgramMemory::Map::iterator ProgramMemory::find(nonneg int exprid)
     return mValues->find(ExprIdToken::create(exprid));
 }
 
-static ValueFlow::Value execute(const Token* expr,
-                                ProgramMemory& pm,
-                                const Settings& settings,
-                                const ProgramMemory::Map& vars = {});
-
 static bool evaluateCondition(MathLib::bigint r,
                               const Token* condition,
                               ProgramMemory& pm,
@@ -306,6 +317,11 @@ static bool isTrue(const ValueFlow::Value& v)
         return false;
     if (v.isImpossible())
         return v.intvalue == 0;
+    if (isRangeValue(v)) {
+        if (v.bound == ValueFlow::Value::Bound::Lower)
+            return v.intvalue > 0;
+        return v.intvalue < 0;
+    }
     return v.intvalue != 0;
 }
 
@@ -314,6 +330,8 @@ static bool isFalse(const ValueFlow::Value& v)
     if (v.isUninitValue())
         return false;
     if (v.isImpossible())
+        return false;
+    if (isRangeValue(v))
         return false;
     return v.intvalue == 0;
 }
@@ -342,6 +360,76 @@ static bool isBasicForLoop(const Token* tok)
     if (!Token::simpleMatch(start->astOperand2(), ";"))
         return false;
     return true;
+}
+
+// Represent an impossible value with a bound as the possible range it leaves ('!<= 1' is '>= 2')
+static ValueFlow::Value asPossibleRange(ValueFlow::Value v)
+{
+    if (v.isImpossible() && v.bound != ValueFlow::Value::Bound::Point) {
+        v.intvalue += v.bound == ValueFlow::Value::Bound::Upper ? 1 : -1;
+        v.bound = flipBound(v.bound);
+        v.setPossible();
+    }
+    return v;
+}
+
+// Does the fact allow the exact value x?
+static bool factAllows(const ValueFlow::Value& fact, MathLib::bigint x)
+{
+    bool inside = false;
+    if (fact.bound == ValueFlow::Value::Bound::Lower)
+        inside = x >= fact.intvalue;
+    else if (fact.bound == ValueFlow::Value::Bound::Upper)
+        inside = x <= fact.intvalue;
+    else
+        inside = x == fact.intvalue;
+    return fact.isImpossible() ? !inside : inside;
+}
+
+// Narrow the value already in the program memory by a new fact about the same expression ('n != 0'
+// after 'n >= 0' gives 'n >= 1'): the intersection when it fits in a single value, else the fact.
+static ValueFlow::Value narrowValue(const ValueFlow::Value* current, const ValueFlow::Value& fact)
+{
+    if (!current || !current->isIntValue() || !fact.isIntValue())
+        return fact;
+    if (!current->isImpossible() && current->bound == ValueFlow::Value::Bound::Point)
+        return factAllows(fact, current->intvalue) ? *current : fact;
+    if (!fact.isImpossible() && fact.bound == ValueFlow::Value::Bound::Point)
+        return fact;
+    const ValueFlow::Value cur = asPossibleRange(*current);
+    const ValueFlow::Value f = asPossibleRange(fact);
+    const bool curRange = isRangeValue(cur);
+    const bool factRange = isRangeValue(f);
+    if (curRange && factRange) {
+        if (cur.bound == f.bound) {
+            ValueFlow::Value result = cur;
+            const bool lower = cur.bound == ValueFlow::Value::Bound::Lower;
+            result.intvalue = lower ? std::max(cur.intvalue, f.intvalue) : std::min(cur.intvalue, f.intvalue);
+            return result;
+        }
+        if (cur.intvalue == f.intvalue) {
+            ValueFlow::Value result = cur;
+            result.bound = ValueFlow::Value::Bound::Point;
+            return result;
+        }
+        return fact;
+    }
+    if (!curRange && !factRange)
+        return fact;
+    // a range and an excluded point: the point moves the bound when it is the bound itself and is
+    // redundant when it is outside the range
+    const ValueFlow::Value& range = curRange ? cur : f;
+    const ValueFlow::Value& point = curRange ? f : cur;
+    if (!point.isImpossible() || point.bound != ValueFlow::Value::Bound::Point)
+        return fact;
+    if (point.intvalue == range.intvalue) {
+        ValueFlow::Value result = range;
+        result.intvalue += range.bound == ValueFlow::Value::Bound::Lower ? 1 : -1;
+        return result;
+    }
+    if (!factAllows(range, point.intvalue))
+        return curRange ? *current : fact;
+    return fact;
 }
 
 // findChanged: optional cached findExpressionChanged (see ProgramMemoryState::FindChangedFn).
@@ -381,8 +469,11 @@ static void programMemoryParseCondition(ProgramMemory& pm,
         if (endTok && changed(vartok, tok->next(), endTok))
             return;
         const bool impossible = (tok->str() == "==" && !then) || (tok->str() == "!=" && then);
-        const ValueFlow::Value& v = then ? truevalue : falsevalue;
-        pm.setValue(vartok, impossible ? asImpossible(v) : v);
+        ValueFlow::Value v = then ? truevalue : falsevalue;
+        // An unsigned expression that is '<= 0' is exactly 0
+        if (!impossible && v.bound == ValueFlow::Value::Bound::Upper && v.intvalue == 0 && astIsUnsigned(vartok))
+            v.bound = ValueFlow::Value::Bound::Point;
+        pm.setValue(vartok, narrowValue(pm.getValue(vartok->exprId(), true), impossible ? asImpossible(v) : v));
         const Token* containerTok = settings.library.getContainerFromYield(vartok, Library::Container::Yield::SIZE);
         if (containerTok)
             pm.setContainerSizeValue(containerTok, v.intvalue, !impossible);
@@ -408,7 +499,10 @@ static void programMemoryParseCondition(ProgramMemory& pm,
     } else if (tok && tok->exprId() > 0) {
         if (endTok && changed(tok, tok->next(), endTok))
             return;
-        pm.setIntValue(tok, 0, then);
+        ValueFlow::Value v(0);
+        if (then)
+            v.setImpossible();
+        pm.setValue(tok, narrowValue(pm.getValue(tok->exprId(), true), v));
         const Token* containerTok = settings.library.getContainerFromYield(tok, Library::Container::Yield::EMPTY);
         if (containerTok)
             pm.setContainerSizeValue(containerTok, 0, then);
@@ -690,12 +784,100 @@ static bool isIntegralValue(const ValueFlow::Value& value)
     return value.isIntValue() || value.isIteratorValue() || value.isSymbolicValue();
 }
 
+// Evaluate an operation where at least one operand is a range: a comparison is decided by interval
+// arithmetic (or not at all), '+' and '-' shift the range, anything else is unknown.
+static ValueFlow::Value evaluateRange(const Token* op, const std::string& opStr, ValueFlow::Value lhs, ValueFlow::Value rhs)
+{
+    if (!lhs.isIntValue() || !rhs.isIntValue() || lhs.isImpossible() || rhs.isImpossible())
+        return ValueFlow::Value::unknown();
+    if (op->isComparisonOp()) {
+        // infer() treats a known value as an exact point whatever its bound, so present the ranges
+        // as possible values. An unsigned range with only an upper bound is also bounded below by 0.
+        std::list<ValueFlow::Value> lhsValues{lhs};
+        std::list<ValueFlow::Value> rhsValues{rhs};
+        const Token* const operands[] = {op->astOperand1(), op->astOperand2()};
+        std::list<ValueFlow::Value>* const values[] = {&lhsValues, &rhsValues};
+        for (int i = 0; i < 2; ++i) {
+            ValueFlow::Value& v = values[i]->front();
+            if (!isRangeValue(v))
+                continue;
+            v.setPossible();
+            if (v.bound == ValueFlow::Value::Bound::Upper && astIsUnsigned(operands[i])) {
+                ValueFlow::Value nonNegative(-1);
+                nonNegative.setImpossible();
+                nonNegative.bound = ValueFlow::Value::Bound::Upper;
+                values[i]->push_back(std::move(nonNegative));
+            }
+        }
+        // The interval comparison is exact for the ranges, so the result is decided whatever kind
+        // infer() derived from the inputs.
+        std::vector<ValueFlow::Value> r = infer(makeIntegralInferModel(), opStr, std::move(lhsValues), std::move(rhsValues));
+        if (r.empty() || !r.front().isIntValue())
+            return ValueFlow::Value::unknown();
+        ValueFlow::Value result(r.front().intvalue);
+        result.valueType = ValueFlow::Value::ValueType::INT;
+        return result;
+    }
+    if (opStr == "+" || opStr == "-") {
+        // Subtracting a range flips its direction; two ranges combine only when they agree.
+        const ValueFlow::Value::Bound lb = lhs.bound;
+        const ValueFlow::Value::Bound rb = opStr == "-" ? flipBound(rhs.bound) : rhs.bound;
+        ValueFlow::Value::Bound bound = lb;
+        if (lb == ValueFlow::Value::Bound::Point)
+            bound = rb;
+        else if (rb != ValueFlow::Value::Bound::Point && lb != rb)
+            return ValueFlow::Value::unknown();
+        bool error = false;
+        const MathLib::bigint intvalue = calculate(opStr, lhs.intvalue, rhs.intvalue, &error);
+        if (error)
+            return ValueFlow::Value::unknown();
+        ValueFlow::Value result(intvalue, bound);
+        result.valueType = ValueFlow::Value::ValueType::INT;
+        return result;
+    }
+    if (opStr == "*") {
+        // Scaling by a constant keeps the direction, or flips it when the constant is negative; two
+        // ranges only combine when both are bounded away from zero.
+        ValueFlow::Value::Bound bound = ValueFlow::Value::Bound::Point;
+        const bool lp = lhs.bound == ValueFlow::Value::Bound::Point;
+        const bool rp = rhs.bound == ValueFlow::Value::Bound::Point;
+        if (lp || rp) {
+            const MathLib::bigint c = lp ? lhs.intvalue : rhs.intvalue;
+            if (c == 0)
+                return ValueFlow::Value{0};
+            const ValueFlow::Value::Bound rb = lp ? rhs.bound : lhs.bound;
+            bound = c > 0 ? rb : flipBound(rb);
+        } else {
+            const bool lNonNeg = lhs.bound == ValueFlow::Value::Bound::Lower && lhs.intvalue >= 0;
+            const bool rNonNeg = rhs.bound == ValueFlow::Value::Bound::Lower && rhs.intvalue >= 0;
+            const bool lNonPos = lhs.bound == ValueFlow::Value::Bound::Upper && lhs.intvalue <= 0;
+            const bool rNonPos = rhs.bound == ValueFlow::Value::Bound::Upper && rhs.intvalue <= 0;
+            if ((lNonNeg && rNonNeg) || (lNonPos && rNonPos))
+                bound = ValueFlow::Value::Bound::Lower;
+            else if ((lNonNeg && rNonPos) || (lNonPos && rNonNeg))
+                bound = ValueFlow::Value::Bound::Upper;
+            else
+                return ValueFlow::Value::unknown();
+        }
+        bool error = false;
+        const MathLib::bigint intvalue = calculate(opStr, lhs.intvalue, rhs.intvalue, &error);
+        if (error)
+            return ValueFlow::Value::unknown();
+        ValueFlow::Value result(intvalue, bound);
+        result.valueType = ValueFlow::Value::ValueType::INT;
+        return result;
+    }
+    return ValueFlow::Value::unknown();
+}
+
 static ValueFlow::Value evaluate(const Token* op, const ValueFlow::Value& lhs, const ValueFlow::Value& rhs, bool removeAssign = false)
 {
     const std::string opStr = removeAssign ? op->str().substr(0, op->str().size() - 1) : op->str();
     ValueFlow::Value result;
     if (lhs.isImpossible() && rhs.isImpossible())
         return ValueFlow::Value::unknown();
+    if (isRangeValue(lhs) || isRangeValue(rhs))
+        return evaluateRange(op, opStr, lhs, rhs);
     if (lhs.isImpossible() || rhs.isImpossible()) {
         // noninvertible
         if (contains({"%", "/", "&", "|"}, opStr))
@@ -1691,8 +1873,10 @@ namespace {
                     lhs.setPossible();
                     lhs.bound = ValueFlow::Value::Bound::Point;
                 }
-                if (expr->str() == "-")
+                if (expr->str() == "-") {
                     lhs.intvalue = -lhs.intvalue;
+                    lhs.bound = flipBound(lhs.bound);
+                }
                 return lhs;
             } else if (expr->str() == "?" && expr->astOperand1() && expr->astOperand2()) {
                 ValueFlow::Value cond = execute(expr->astOperand1());
@@ -1914,10 +2098,7 @@ namespace {
     };
 }     // namespace
 
-static ValueFlow::Value execute(const Token* expr,
-                                ProgramMemory& pm,
-                                const Settings& settings,
-                                const ProgramMemory::Map& vars)
+ValueFlow::Value execute(const Token* expr, ProgramMemory& pm, const Settings& settings, const ProgramMemory::Map& vars)
 {
     Executor ex{&pm, settings};
     ex.vars = &vars;
@@ -2014,7 +2195,11 @@ void execute(const Token* expr,
              const ProgramMemory::Map& vars)
 {
     ValueFlow::Value v = execute(expr, programMemory, settings, vars);
-    if (!v.isIntValue() || v.isImpossible()) {
+    // A range used as a bool is decided when it excludes zero ('n' is true for 'n >= 1'); otherwise
+    // it is not an exact value
+    if (isRangeValue(v) && isUsedAsBool(expr, settings) && isTrue(v))
+        v = ValueFlow::Value{1};
+    if (!v.isIntValue() || v.isImpossible() || isRangeValue(v)) {
         if (error)
             *error = true;
     } else if (result)

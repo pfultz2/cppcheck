@@ -550,9 +550,16 @@ private:
             if (match(v.tokvalue)) {
                 r = {currValue->intvalue};
             } else if (!exact && findMatch(v.tokvalue)) {
-                r = evaluate(Evaluate::Integral, v.tokvalue, tok);
-                if (bound == ValueFlow::Value::Bound::Point)
-                    bound = v.bound;
+                // The expression may evaluate to a range ('y*y' is '>= 9' for 'y >= 3' but '10 - y'
+                // is '<= 7'), so the bound comes from the result
+                const ValueFlow::Value ev = evaluateValue(v.tokvalue, tok);
+                if (ev.isIntValue() && !ev.isImpossible()) {
+                    r = {ev.intvalue};
+                    if (ev.bound != ValueFlow::Value::Bound::Point)
+                        bound = ev.bound;
+                    else if (bound == ValueFlow::Value::Bound::Point)
+                        bound = v.bound;
+                }
             }
             if (!r.empty()) {
                 if (value) {
@@ -703,6 +710,16 @@ private:
         return evaluateInt(tok, [](const ProgramState& vars) {
             return ProgramMemory{vars};
         });
+    }
+
+    // Evaluate the expression with the tracked values; unlike evaluate() the result may be a range
+    ValueFlow::Value evaluateValue(const Token* tok, const Token* ctx) const
+    {
+        if (const ValueFlow::Value* v = tok->getKnownValue(ValueFlow::Value::ValueType::INT))
+            return *v;
+        const ProgramState vars = getProgramState();
+        ProgramMemory pm = pms.get(tok, ctx, vars);
+        return execute(tok, pm, getSettings(), vars);
     }
 
     std::vector<MathLib::bigint> evaluate(Evaluate e, const Token* tok, const Token* ctx = nullptr) const override
@@ -1231,8 +1248,10 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
         if (value.isLifetimeValue())
             return false;
         // 'conditional' flag (uninit, or lowered after a modifying branch): may depend on a
-        // condition that doesn't mention the variable -> stop
-        if (value.conditional && !value.isKnown())
+        // condition that doesn't mention the variable -> stop. A condition on nothing but an int
+        // value is evaluated against it, so an undecided result means both branches are consistent
+        // with the value (e.g. 'i == 1' for 'i <= 19').
+        if (value.conditional && !value.isKnown() && !(value.isIntValue() && conditionDependsOnlyOnValue(condTok)))
             return true;
         if (value.isNonValue())
             return false;
@@ -1245,6 +1264,21 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
             return true;
         ConditionState cs = analyzeCondition(condTok);
         return cs.isUnknownDependent();
+    }
+
+    // Is the condition determined by the tracked value alone - no other variable, call or unknown
+    // name - so that evaluating it captures every correlation with the value?
+    bool conditionDependsOnlyOnValue(const Token* condTok) const
+    {
+        bool found = false;
+        const Token* other = findAstNode(condTok, [&](const Token* tok) {
+            if (match(tok)) {
+                found = true;
+                return false;
+            }
+            return tok->isName();
+        });
+        return found && !other;
     }
 
     // Does the condition mention the tracked value, either directly or through a symbolic alias?

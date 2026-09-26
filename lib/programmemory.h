@@ -201,6 +201,16 @@ struct ProgramMemoryState {
 
 std::vector<ValueFlow::Value> execute(const Scope* scope, ProgramMemory& pm, const Settings& settings);
 
+/**
+ * Evaluate the expression in the program memory. The result may be a range (a possible int value
+ * with an Upper/Lower bound) or impossible; the integer overload below only yields exact values.
+ * \param vars  optional tracked values that take precedence over the program memory
+ */
+ValueFlow::Value execute(const Token* expr,
+                         ProgramMemory& pm,
+                         const Settings& settings,
+                         const ProgramMemory::Map& vars = {});
+
 void execute(const Token* expr,
              ProgramMemory& programMemory,
              MathLib::bigint* result,

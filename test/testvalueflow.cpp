@@ -4195,6 +4195,74 @@ private:
                "}\n";
         ASSERT_EQUALS(false, testValueOfXKnown(code, 8U, 0));
         ASSERT_EQUALS(true, testValueOfX(code, 8U, 0));
+
+        // 'length > 1' does not decide 'length > 2': x is 0 or 15 afterwards
+        code = "int f(int length) {\n"
+               "    unsigned int x = 0U;\n"
+               "    if (length > 1) {\n"
+               "        if (length > 2)\n"
+               "            x = 15U;\n"
+               "    }\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 7U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 7U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 7U, 15));
+
+        code = "int f(int length) {\n"
+               "    unsigned int x = 0U;\n"
+               "    if (length > 1) {\n"
+               "        if (length > 2)\n"
+               "            x = 15U;\n"
+               "    }\n"
+               "    if (length > 1)\n"
+               "        return x;\n"
+               "    return 0;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 8U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 8U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 8U, 15));
+
+        // 'length > 1' does decide 'length > 0': x is never 0 afterwards
+        code = "int f(int length) {\n"
+               "    int x = 0;\n"
+               "    if (length > 1) {\n"
+               "        if (length > 0)\n"
+               "            x = 1;\n"
+               "    }\n"
+               "    if (length > 1)\n"
+               "        return x;\n"
+               "    return 0;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 8U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 8U, 1));
+
+        // a range used as a bool ('n >= 0') is not decided either
+        code = "int f(int n) {\n"
+               "    int x = 0;\n"
+               "    if (n >= 0) {\n"
+               "        if (n)\n"
+               "            x = 1;\n"
+               "    }\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 7U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 7U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 7U, 1));
+
+        // ... but 'n >= 1' is
+        code = "int f(int n) {\n"
+               "    int x = 0;\n"
+               "    if (n >= 1) {\n"
+               "        if (n)\n"
+               "            x = 1;\n"
+               "    }\n"
+               "    if (n >= 1)\n"
+               "        return x;\n"
+               "    return 0;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 8U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 8U, 1));
     }
 
     void valueFlowForwardModifiedVariables() {

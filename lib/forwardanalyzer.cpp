@@ -417,9 +417,16 @@ namespace {
         {
             // The condition is only "known" because of an earlier assumption, so the
             // skipped block could still modify the value -> lower to possible
-            if (!condTok->hasKnownIntValue() && skippedBlock && analyzeScope(skippedBlock).isModified() &&
-                !analyzer->lowerToPossible())
-                return Break(Analyzer::Terminate::Bail);
+            if (!condTok->hasKnownIntValue() && skippedBlock) {
+                const Analyzer::Action skipped = analyzeScope(skippedBlock);
+                if (skipped.isModified()) {
+                    if (!analyzer->lowerToPossible())
+                        return Break(Analyzer::Terminate::Bail);
+                    // Let the enclosing branch see the possible modification as well, so that a
+                    // fork's parent lowers its value too instead of keeping it known.
+                    actions |= skipped;
+                }
+            }
             if (!branch.endBlock)
                 return Progress::Continue;
             updateScopeState(branch.endBlock);
