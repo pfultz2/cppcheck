@@ -5485,32 +5485,29 @@ static void valueFlowForLoop(const TokenList &tokenlist, const SymbolDatabase& s
                     }
                 } else {
                     for (const auto& p : mem1) {
-                        if (!p.second.isIntValue())
-                            continue;
-                        if (p.second.isImpossible())
+                        MathLib::bigint value = 0;
+                        if (!mem1.getIntValue(p.first.getExpressionId(), value))
                             continue;
                         if (p.first.tok->varId() == 0)
                             continue;
-                        valueFlowForLoopSimplify(bodyStart, p.first.tok, false, p.second.intvalue, tokenlist, errorLogger, settings);
+                        valueFlowForLoopSimplify(bodyStart, p.first.tok, false, value, tokenlist, errorLogger, settings);
                     }
                     for (const auto& p : mem2) {
-                        if (!p.second.isIntValue())
-                            continue;
-                        if (p.second.isImpossible())
+                        MathLib::bigint value = 0;
+                        if (!mem2.getIntValue(p.first.getExpressionId(), value))
                             continue;
                         if (p.first.tok->varId() == 0)
                             continue;
-                        valueFlowForLoopSimplify(bodyStart, p.first.tok, false, p.second.intvalue, tokenlist, errorLogger, settings);
+                        valueFlowForLoopSimplify(bodyStart, p.first.tok, false, value, tokenlist, errorLogger, settings);
                     }
                 }
                 for (const auto& p : memAfter) {
-                    if (!p.second.isIntValue())
-                        continue;
-                    if (p.second.isImpossible())
+                    MathLib::bigint value = 0;
+                    if (!memAfter.getIntValue(p.first.getExpressionId(), value))
                         continue;
                     if (p.first.tok->varId() == 0)
                         continue;
-                    valueFlowForLoopSimplifyAfter(tok, p.first.getExpressionId(), p.second.intvalue, tokenlist, errorLogger, settings);
+                    valueFlowForLoopSimplifyAfter(tok, p.first.getExpressionId(), value, tokenlist, errorLogger, settings);
                 }
             }
         }
@@ -6287,9 +6284,11 @@ const Token* ValueFlow::solveExprValue(const Token* expr,
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }
         case '-': {
-            if (rhs)
+            if (rhs) {
                 value.intvalue = intval - value.intvalue;
-            else
+                // c - x >= a  <=>  x <= c - a
+                value.invertBound();
+            } else
                 value.intvalue += intval;
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }
@@ -6297,6 +6296,8 @@ const Token* ValueFlow::solveExprValue(const Token* expr,
             if (intval == 0)
                 break;
             value.intvalue /= intval;
+            if (intval < 0)
+                value.invertBound();
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }
         case '^': {

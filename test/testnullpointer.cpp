@@ -148,6 +148,7 @@ private:
         TEST_CASE(nullpointer108);
         TEST_CASE(nullpointer109);
         TEST_CASE(nullpointer110); // #14937
+        TEST_CASE(nullpointer111); // ranges from conditions
         TEST_CASE(nullpointer_addressOf); // address of
         TEST_CASE(nullpointerSwitch); // #2626
         TEST_CASE(nullpointer_cast); // #4692
@@ -3145,6 +3146,35 @@ private:
               "}\n",
               dinit(CheckOptions, $.inconclusive = true));
         ASSERT_EQUALS("", errout_str());
+    }
+
+    void nullpointer111() { // a condition 'x > 3' does not give x the value 4
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (x > 3) {\n"
+              "        if (x < 10) {}\n"
+              "        else { *p = 1; }\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5:17]: (error) Null pointer dereference: p [nullPointer]\n", errout_str());
+
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (x > 3) {\n"
+              "        if (x == 15) { *p = 1; }\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:25]: (error) Null pointer dereference: p [nullPointer]\n", errout_str());
+
+        // 3 < x < 10: x == 15 is impossible, x == 5 is not
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (x > 3 && x < 10) {\n"
+              "        if (x == 15) { *p = 1; }\n"
+              "        if (x == 5) { *p = 1; }\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5:24]: (error) Null pointer dereference: p [nullPointer]\n", errout_str());
     }
 
     void nullpointer_addressOf() { // address of
