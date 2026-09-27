@@ -109,8 +109,8 @@ struct CPPCHECKLIB ProgramMemory {
      * value with a bound is still its value; the bound is extra information about the range it lies
      * in) or a set of constraints that hold at the same time: impossible values, where a bound makes
      * the value an impossible range, so that "x > 3" is recorded as "values <= 3 are impossible".
-     * The constraints of one expression all have the same value type. A list, so that references to
-     * the values stay valid while values are added.
+     * The constraints of one expression all have the same value type. A list, so that adding a
+     * constraint does not move the values already recorded.
      */
     using Values = std::list<ValueFlow::Value>;
     using Map = std::map<ExprIdToken, Values>;

@@ -75,11 +75,10 @@ private:
         return v;
     }
 
-    static const ValueFlow::Value* findValue(const ProgramMemory::Values& values, MathLib::bigint x, ValueFlow::Value::Bound bound) {
-        const auto it = std::find_if(values.cbegin(), values.cend(), [&](const ValueFlow::Value& v) {
+    static bool hasValue(const ProgramMemory::Values& values, MathLib::bigint x, ValueFlow::Value::Bound bound) {
+        return std::any_of(values.cbegin(), values.cend(), [&](const ValueFlow::Value& v) {
             return v.intvalue == x && v.bound == bound;
         });
-        return it == values.cend() ? nullptr : &*it;
     }
 
     void copyOnWrite() const {
@@ -160,8 +159,8 @@ private:
         const ProgramMemory::Values* values = pm.getValues(id);
         ASSERT(values);
         ASSERT_EQUALS(2U, values->size());
-        ASSERT(findValue(*values, 3, ValueFlow::Value::Bound::Upper));
-        ASSERT(findValue(*values, 10, ValueFlow::Value::Bound::Lower));
+        ASSERT(hasValue(*values, 3, ValueFlow::Value::Bound::Upper));
+        ASSERT(hasValue(*values, 10, ValueFlow::Value::Bound::Lower));
 
         // several constraints are not a single value
         ASSERT(!pm.getValue(id));
@@ -176,24 +175,24 @@ private:
         // a weaker bound is dropped
         pm.setValue(tok, greaterThan(1));
         ASSERT_EQUALS(2U, pm.at(id).size());
-        ASSERT(findValue(pm.at(id), 3, ValueFlow::Value::Bound::Upper));
+        ASSERT(hasValue(pm.at(id), 3, ValueFlow::Value::Bound::Upper));
 
         // a stronger bound replaces the bound
         pm.setValue(tok, greaterThan(5));
         ASSERT_EQUALS(2U, pm.at(id).size());
-        ASSERT(findValue(pm.at(id), 5, ValueFlow::Value::Bound::Upper));
-        ASSERT(!findValue(pm.at(id), 3, ValueFlow::Value::Bound::Upper));
+        ASSERT(hasValue(pm.at(id), 5, ValueFlow::Value::Bound::Upper));
+        ASSERT(!hasValue(pm.at(id), 3, ValueFlow::Value::Bound::Upper));
 
         // an impossible value inside the range is kept
         pm.setValue(tok, impossible(7));
         ASSERT_EQUALS(3U, pm.at(id).size());
-        ASSERT(findValue(pm.at(id), 7, ValueFlow::Value::Bound::Point));
+        ASSERT(hasValue(pm.at(id), 7, ValueFlow::Value::Bound::Point));
 
         // x > 5 and x != 6 is x > 6, and then x != 7 makes it x > 7
         pm.setValue(tok, impossible(6));
         ASSERT_EQUALS(2U, pm.at(id).size());
-        ASSERT(findValue(pm.at(id), 7, ValueFlow::Value::Bound::Upper));
-        ASSERT(findValue(pm.at(id), 10, ValueFlow::Value::Bound::Lower));
+        ASSERT(hasValue(pm.at(id), 7, ValueFlow::Value::Bound::Upper));
+        ASSERT(hasValue(pm.at(id), 10, ValueFlow::Value::Bound::Lower));
     }
 
     void setValueReplacesConstraints() const {
@@ -303,18 +302,30 @@ private:
         return result;
     }
 
-    // Evaluate the expression with the program memory built from the conditions enclosing it.
-    // The result as a string, empty if it is unknown.
-    std::string evaluate(const Token* expr) const {
-        ProgramMemoryState pms(settings);
-        pms.addState(expr, {});
-        ProgramMemory pm = pms.state;
+    // Evaluate the expression with the program memory. The result as a string, empty if it is unknown.
+    std::string evaluate(const Token* expr, ProgramMemory pm) const {
         MathLib::bigint result = 0;
         bool error = false;
         execute(expr, pm, &result, &error, settings);
-        if (error)
-            return "";
-        return std::to_string(result);
+        return error ? "" : std::to_string(result);
+    }
+
+    // Evaluate the expression with the program memory built from the conditions enclosing it
+    std::string evaluate(const Token* expr) const {
+        ProgramMemoryState pms(settings);
+        pms.addState(expr, {});
+        return evaluate(expr, pms.state);
+    }
+
+    // The results of the expressions assigned to y in the code, each evaluated at its position
+    std::vector<std::string> evaluateAssignments(const char code[]) {
+        SimpleTokenizer tokenizer(settings, *this);
+        ASSERT(tokenizer.tokenize(code));
+        clearValues(tokenizer);
+        std::vector<std::string> results;
+        for (const Token* expr : assignedExpressions(tokenizer.tokens(), "y"))
+            results.push_back(evaluate(expr));
+        return results;
     }
 
     void executeRange() {
@@ -332,22 +343,19 @@ private:
                             "        }\n"
                             "    }\n"
                             "}\n";
-        SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code));
-        clearValues(tokenizer);
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
-        ASSERT_EQUALS(8U, exprs.size());
+        const std::vector<std::string> results = evaluateAssignments(code);
+        ASSERT_EQUALS(8U, results.size());
         // 3 < x < 10
-        ASSERT_EQUALS("0", evaluate(exprs[0]));
-        ASSERT_EQUALS("", evaluate(exprs[1]));
-        ASSERT_EQUALS("1", evaluate(exprs[2]));
-        ASSERT_EQUALS("1", evaluate(exprs[3]));
+        ASSERT_EQUALS("0", results[0]);
+        ASSERT_EQUALS("", results[1]);
+        ASSERT_EQUALS("1", results[2]);
+        ASSERT_EQUALS("1", results[3]);
         // the range is shifted by arithmetic
-        ASSERT_EQUALS("1", evaluate(exprs[4]));
-        ASSERT_EQUALS("1", evaluate(exprs[5]));
-        ASSERT_EQUALS("1", evaluate(exprs[6]));
+        ASSERT_EQUALS("1", results[4]);
+        ASSERT_EQUALS("1", results[5]);
+        ASSERT_EQUALS("1", results[6]);
         // a range is not a value
-        ASSERT_EQUALS("", evaluate(exprs[7]));
+        ASSERT_EQUALS("", results[7]);
     }
 
     void executeScaledRange() {
@@ -366,24 +374,21 @@ private:
                             "        y = x / -2 < -2;\n"
                             "    }\n"
                             "}\n";
-        SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code));
-        clearValues(tokenizer);
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
-        ASSERT_EQUALS(9U, exprs.size());
+        const std::vector<std::string> results = evaluateAssignments(code);
+        ASSERT_EQUALS(9U, results.size());
         // x > 3: x * 2 >= 8
-        ASSERT_EQUALS("1", evaluate(exprs[0]));
-        ASSERT_EQUALS("0", evaluate(exprs[1]));
-        ASSERT_EQUALS("1", evaluate(exprs[2]));
+        ASSERT_EQUALS("1", results[0]);
+        ASSERT_EQUALS("0", results[1]);
+        ASSERT_EQUALS("1", results[2]);
         // x * 0 is not "not zero"
-        ASSERT_EQUALS("", evaluate(exprs[3]));
-        ASSERT_EQUALS("1", evaluate(exprs[4]));
-        // remainder and right shift do not keep the range
-        ASSERT_EQUALS("", evaluate(exprs[5]));
-        ASSERT_EQUALS("", evaluate(exprs[6]));
+        ASSERT_EQUALS("", results[3]);
+        ASSERT_EQUALS("1", results[4]);
+        // the remainder does not keep the range; x >> 1 >= 2
+        ASSERT_EQUALS("", results[5]);
+        ASSERT_EQUALS("0", results[6]);
         // x > 6: x / 2 >= 3
-        ASSERT_EQUALS("1", evaluate(exprs[7]));
-        ASSERT_EQUALS("1", evaluate(exprs[8]));
+        ASSERT_EQUALS("1", results[7]);
+        ASSERT_EQUALS("1", results[8]);
     }
 
     void executeSolvedRange() {
@@ -405,23 +410,20 @@ private:
                             "        y = x == 0;\n"
                             "    }\n"
                             "}\n";
-        SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code));
-        clearValues(tokenizer);
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
-        ASSERT_EQUALS(8U, exprs.size());
+        const std::vector<std::string> results = evaluateAssignments(code);
+        ASSERT_EQUALS(8U, results.size());
         // x * 2 < 3: x <= 1
-        ASSERT_EQUALS("1", evaluate(exprs[0]));
-        ASSERT_EQUALS("", evaluate(exprs[1]));
-        ASSERT_EQUALS("0", evaluate(exprs[2]));
+        ASSERT_EQUALS("1", results[0]);
+        ASSERT_EQUALS("", results[1]);
+        ASSERT_EQUALS("0", results[2]);
         // x * 3 >= 7: x >= 3
-        ASSERT_EQUALS("1", evaluate(exprs[3]));
-        ASSERT_EQUALS("0", evaluate(exprs[4]));
+        ASSERT_EQUALS("1", results[3]);
+        ASSERT_EQUALS("0", results[4]);
         // -2 * x > 3: x <= -2
-        ASSERT_EQUALS("1", evaluate(exprs[5]));
-        ASSERT_EQUALS("0", evaluate(exprs[6]));
+        ASSERT_EQUALS("1", results[5]);
+        ASSERT_EQUALS("0", results[6]);
         // (x ^ 4) > 3 does not give a range for x
-        ASSERT_EQUALS("", evaluate(exprs[7]));
+        ASSERT_EQUALS("", results[7]);
     }
 
     void executeCompoundAssignment() {
@@ -444,29 +446,21 @@ private:
         // x > 3, then x *= -1: x < -3
         pm.setValue(xtok, greaterThan(3));
         execute(xtok->next(), pm, nullptr, nullptr, settings);
-        MathLib::bigint result = 0;
-        bool error = false;
-        execute(exprs[0], pm, &result, &error, settings);
-        ASSERT(!error);
-        ASSERT_EQUALS(1, result);
+        ASSERT_EQUALS("1", evaluate(exprs[0], pm));
 
         // u < 1, then u--: the value wraps around, nothing is known
         pm.setValue(utok, lessThan(1));
         execute(utok->next(), pm, nullptr, nullptr, settings);
-        error = false;
-        execute(exprs[1], pm, &result, &error, settings);
-        ASSERT(error);
+        ASSERT_EQUALS("", evaluate(exprs[1], pm));
 
         // u > 3, then u--: u > 2
         pm.setValue(utok, greaterThan(3));
         execute(utok->next(), pm, nullptr, nullptr, settings);
-        error = false;
-        execute(exprs[1], pm, &result, &error, settings);
-        ASSERT(error);
+        ASSERT_EQUALS("", evaluate(exprs[1], pm));
         const ProgramMemory::Values* values = pm.getValues(utok->exprId());
         ASSERT(values);
         ASSERT_EQUALS(1U, values->size());
-        ASSERT(findValue(*values, 2, ValueFlow::Value::Bound::Upper));
+        ASSERT(hasValue(*values, 2, ValueFlow::Value::Bound::Upper));
     }
 
     void executeContainerSizeRange() {
@@ -480,16 +474,13 @@ private:
                             "        }\n"
                             "    }\n"
                             "}\n";
-        SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code));
-        clearValues(tokenizer);
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
-        ASSERT_EQUALS(4U, exprs.size());
+        const std::vector<std::string> results = evaluateAssignments(code);
+        ASSERT_EQUALS(4U, results.size());
         // 3 < s.size() < 10
-        ASSERT_EQUALS("0", evaluate(exprs[0]));
-        ASSERT_EQUALS("1", evaluate(exprs[1]));
-        ASSERT_EQUALS("0", evaluate(exprs[2]));
-        ASSERT_EQUALS("", evaluate(exprs[3]));
+        ASSERT_EQUALS("0", results[0]);
+        ASSERT_EQUALS("1", results[1]);
+        ASSERT_EQUALS("0", results[2]);
+        ASSERT_EQUALS("", results[3]);
     }
 };
 

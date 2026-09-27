@@ -31,6 +31,7 @@
 #include "utils.h"
 #include "valueflow.h"
 #include "valueptr.h"
+#include "vf_common.h"
 
 #include <algorithm>
 #include <cassert>
@@ -89,69 +90,59 @@ static bool isImpossiblePoint(const ValueFlow::Value& value)
     return value.isImpossible() && value.bound == ValueFlow::Value::Bound::Point;
 }
 
-// The smallest value the expression can have according to a lower bound constraint
-static MathLib::bigint lowerBound(const ValueFlow::Value& value)
+// Is the value (a range when it is impossible with a bound) known to be nonzero?
+static bool isTrue(const ValueFlow::Value& v)
 {
-    assert(isLowerBound(value));
-    return value.intvalue + 1;
+    if (v.isUninitValue())
+        return false;
+    if (v.isImpossible()) {
+        if (v.bound == ValueFlow::Value::Bound::Point)
+            return v.intvalue == 0;
+        // An impossible range excludes zero when it lies on one side of it
+        return v.isLowerEdge() ? v.rangeEdge() > 0 : v.rangeEdge() < 0;
+    }
+    return v.intvalue != 0;
 }
 
-// The largest value the expression can have according to an upper bound constraint
-static MathLib::bigint upperBound(const ValueFlow::Value& value)
+static bool isFalse(const ValueFlow::Value& v)
 {
-    assert(isUpperBound(value));
-    return value.intvalue - 1;
+    if (v.isUninitValue())
+        return false;
+    if (v.isImpossible())
+        return false;
+    return v.intvalue == 0;
 }
 
-// Does the value satisfy the constraint? False when they are not comparable.
+// Does the value satisfy the constraint of the same type?
 static bool satisfies(const ValueFlow::Value& value, const ValueFlow::Value& constraint)
 {
-    if (value.valueType != constraint.valueType)
-        return false;
     if (isImpossiblePoint(constraint))
         return !value.equalValue(constraint);
     if (isLowerBound(constraint))
-        return value.intvalue >= lowerBound(constraint);
+        return value.intvalue >= constraint.rangeEdge();
     if (isUpperBound(constraint))
-        return value.intvalue <= upperBound(constraint);
+        return value.intvalue <= constraint.rangeEdge();
     return false;
 }
 
-// Add the constraint to the constraints recorded for an expression, merging them the way
-// Token::addValue() merges values: duplicates and weaker bounds are dropped, and an impossible value
-// next to a bound moves the bound past it. Returns false if nothing changed.
-static bool mergeConstraint(ProgramMemory::Values& values, const ValueFlow::Value& value)
+static bool sameValue(const ValueFlow::Value& x, const ValueFlow::Value& y)
 {
-    ProgramMemory::Values merged = values;
-    merged.push_back(value);
-    Token::removeContradictions(merged);
-    if (merged.size() == values.size() &&
-        std::equal(values.cbegin(), values.cend(), merged.cbegin(), [](const ValueFlow::Value& x, const ValueFlow::Value& y) {
-        return x == y && x.bound == y.bound;
-    }))
-        return false;
-    values = std::move(merged);
-    return true;
+    return x == y && x.bound == y.bound;
 }
 
-// Record the value for an expression whose values are given. Returns false if nothing changed.
-static bool mergeValue(ProgramMemory::Values& values, const ValueFlow::Value& value)
+// Is the value already recorded: as the value of the expression, as one of its constraints, or as
+// a constraint that the recorded value satisfies?
+static bool isRecorded(const ProgramMemory::Values& values, const ValueFlow::Value& value)
 {
-    // A value of the expression, a first value, or a value of another type replaces what is recorded
-    if (!value.isImpossible() || values.empty() || values.front().valueType != value.valueType) {
-        if (values.size() == 1 && values.front() == value && values.front().bound == value.bound)
-            return false;
-        values.assign(1, value);
-        return true;
-    }
-    if (!values.front().isImpossible()) {
-        // A value that satisfies the constraint is more precise than the constraint
-        if (satisfies(values.front(), value))
-            return false;
-        values.assign(1, value);
-        return true;
-    }
-    return mergeConstraint(values, value);
+    if (values.empty() || values.front().valueType != value.valueType)
+        return false;
+    if (!value.isImpossible())
+        return values.size() == 1 && sameValue(values.front(), value);
+    if (!values.front().isImpossible())
+        return satisfies(values.front(), value);
+    return std::any_of(values.cbegin(), values.cend(), [&](const ValueFlow::Value& v) {
+        return sameValue(v, value);
+    });
 }
 
 void ProgramMemory::setValue(const Token* expr, const ValueFlow::Value& value) {
@@ -180,11 +171,21 @@ void ProgramMemory::setValue(const Token* expr, const ValueFlow::Value& value) {
 void ProgramMemory::record(const Token* expr, const ValueFlow::Value& value)
 {
     const Values* existing = getValues(expr->exprId());
-    Values values = existing ? *existing : Values{};
-    if (!mergeValue(values, value))
+    if (existing && isRecorded(*existing, value))
         return;
     copyOnWrite();
-    (*mValues)[expr] = std::move(values);
+    Values& values = (*mValues)[expr];
+    // A value of the expression, a first value, a value of another type or a constraint that the
+    // recorded value violates replaces what is recorded. A constraint joins the recorded constraints,
+    // merged the way Token::addValue() merges values: weaker bounds are dropped and an impossible
+    // value next to a bound moves the bound past it.
+    if (!value.isImpossible() || values.empty() || values.front().valueType != value.valueType ||
+        !values.front().isImpossible()) {
+        values.assign(1, value);
+    } else {
+        values.push_back(value);
+        Token::removeContradictions(values);
+    }
 }
 
 void ProgramMemory::setValues(const Token* expr, const Values& values)
@@ -212,17 +213,9 @@ const ProgramMemory::Values* ProgramMemory::getValues(nonneg int exprid) const
     return &it->second;
 }
 
-// The value of the expression, if one is recorded (rather than constraints)
-static const ValueFlow::Value* getPointValue(const ProgramMemory::Values* values)
-{
-    if (!values || values->size() != 1 || values->front().isImpossible())
-        return nullptr;
-    return &values->front();
-}
-
 bool ProgramMemory::getIntValue(nonneg int exprid, MathLib::bigint& result) const
 {
-    const ValueFlow::Value* value = getPointValue(getValues(exprid));
+    const ValueFlow::Value* value = getValue(exprid);
     if (value && value->isIntValue()) {
         result = value->intvalue;
         return true;
@@ -240,7 +233,7 @@ void ProgramMemory::setIntValue(const Token* expr, MathLib::bigint value, bool i
 
 bool ProgramMemory::getTokValue(nonneg int exprid, const Token*& result) const
 {
-    const ValueFlow::Value* value = getPointValue(getValues(exprid));
+    const ValueFlow::Value* value = getValue(exprid);
     if (value && value->isTokValue()) {
         result = value->tokvalue;
         return true;
@@ -251,7 +244,7 @@ bool ProgramMemory::getTokValue(nonneg int exprid, const Token*& result) const
 // cppcheck-suppress unusedFunction
 bool ProgramMemory::getContainerSizeValue(nonneg int exprid, MathLib::bigint& result) const
 {
-    const ValueFlow::Value* value = getPointValue(getValues(exprid));
+    const ValueFlow::Value* value = getValue(exprid);
     if (value && value->isContainerSizeValue()) {
         result = value->intvalue;
         return true;
@@ -267,11 +260,9 @@ static ValueFlow::Value containerEmptyValue(const ProgramMemory::Values& values)
             continue;
         if (!value.isImpossible())
             return ValueFlow::Value{value.intvalue == 0};
-        if (isLowerBound(value) && lowerBound(value) > 0)
-            return ValueFlow::Value{0};
-        if (isUpperBound(value) && upperBound(value) <= 0)
+        if (isUpperBound(value) && value.rangeEdge() <= 0)
             return ValueFlow::Value{1};
-        if (isImpossiblePoint(value) && value.intvalue == 0)
+        if (isTrue(value))
             return ValueFlow::Value{0};
     }
     return ValueFlow::Value::unknown();
@@ -451,30 +442,6 @@ static bool frontIs(const std::vector<MathLib::bigint>& v, bool i)
     return !i;
 }
 
-static bool isTrue(const ValueFlow::Value& v)
-{
-    if (v.isUninitValue())
-        return false;
-    if (v.isImpossible()) {
-        // An impossible range excludes zero when zero is on its side of the bound
-        if (v.bound == ValueFlow::Value::Bound::Upper)
-            return v.intvalue >= 0;
-        if (v.bound == ValueFlow::Value::Bound::Lower)
-            return v.intvalue <= 0;
-        return v.intvalue == 0;
-    }
-    return v.intvalue != 0;
-}
-
-static bool isFalse(const ValueFlow::Value& v)
-{
-    if (v.isUninitValue())
-        return false;
-    if (v.isImpossible())
-        return false;
-    return v.intvalue == 0;
-}
-
 static bool isTrueOrFalse(const ValueFlow::Value& v, bool b)
 {
     if (b)
@@ -538,17 +505,16 @@ static void programMemoryParseCondition(ProgramMemory& pm,
         if (endTok && changed(vartok, tok->next(), endTok))
             return;
         const bool impossible = (tok->str() == "==" && !then) || (tok->str() == "!=" && then);
-        ValueFlow::Value v = then ? truevalue : falsevalue;
+        ValueFlow::Value& v = then ? truevalue : falsevalue;
         // A value with a bound is a range: record it as the range of impossible values so that it
         // constrains the expression instead of standing in for its value.
         if (impossible || v.bound != ValueFlow::Value::Bound::Point)
-            v = asImpossible(v);
+            v = asImpossible(std::move(v));
         pm.setValue(vartok, v);
         const Token* containerTok = settings.library.getContainerFromYield(vartok, Library::Container::Yield::SIZE);
         if (containerTok) {
-            ValueFlow::Value size = v;
-            size.valueType = ValueFlow::Value::ValueType::CONTAINER_SIZE;
-            pm.setValue(containerTok, size);
+            v.valueType = ValueFlow::Value::ValueType::CONTAINER_SIZE;
+            pm.setValue(containerTok, v);
         }
     } else if (Token::simpleMatch(tok, "!")) {
         programMemoryParseCondition(pm, tok->astOperand1(), endTok, settings, !then, findChanged);
@@ -861,50 +827,57 @@ static bool isBounded(const ValueFlow::Value& value)
     return value.bound != ValueFlow::Value::Bound::Point;
 }
 
-static bool isSaturated(MathLib::bigint value)
-{
-    return value == std::numeric_limits<MathLib::bigint>::max() || value == std::numeric_limits<MathLib::bigint>::min();
-}
-
 static bool multiplyOverflows(MathLib::bigint x, MathLib::bigint y)
 {
     if (x == 0 || y == 0)
         return false;
-    if (isSaturated(x) || isSaturated(y))
+    if (ValueFlow::isSaturated(x) || ValueFlow::isSaturated(y))
         return true;
     return std::abs(x) > std::numeric_limits<MathLib::bigint>::max() / std::abs(y);
 }
 
-// The range of "x * k", "x / k" or "x << k" when the values of x up to (or from) the bound are
-// impossible: the end of the range is transformed, and a negative factor turns the range around.
-static ValueFlow::Value scaleRange(const ValueFlow::Value& range, const std::string& op, MathLib::bigint k)
+// The operations that keep the order of the values of a range
+static bool isMonotone(const std::string& op)
 {
-    const bool lower = isLowerBound(range);
-    const MathLib::bigint edge = lower ? lowerBound(range) : upperBound(range);
-    if (k == 0 || isSaturated(edge))
+    return contains({"+", "-", "*", "/", "<<", ">>"}, op);
+}
+
+// The range of "x <op> k" (or "k <op> x") when the values of x up to (or from) the bound are
+// impossible: the end of the range is transformed; an operation that reverses the order of the
+// values turns the range around.
+static ValueFlow::Value applyToRange(const std::string& op, const ValueFlow::Value& range, MathLib::bigint k, bool rangeIsLhs)
+{
+    const MathLib::bigint edge = range.rangeEdge();
+    if (ValueFlow::isSaturated(edge) || ValueFlow::isSaturated(k))
         return ValueFlow::Value::unknown();
-    MathLib::bigint scaled = 0;
-    bool lowerAfter = lower;
-    if (op == "*") {
-        if (multiplyOverflows(edge, k))
+    bool increasing = true;
+    MathLib::bigint result = 0;
+    if (op == "+") {
+        result = edge + k;
+    } else if (op == "-") {
+        increasing = rangeIsLhs;
+        result = rangeIsLhs ? edge - k : k - edge;
+    } else if (op == "*") {
+        if (k == 0 || multiplyOverflows(edge, k))
             return ValueFlow::Value::unknown();
-        scaled = edge * k;
-        lowerAfter = (k > 0) == lower;
+        increasing = k > 0;
+        result = edge * k;
     } else if (op == "/") {
-        // Truncation towards zero keeps the order of the values
-        scaled = edge / k;
-        lowerAfter = (k > 0) == lower;
-    } else if (op == "<<") {
-        if (k < 0 || k >= 63 || edge < 0 || edge > (std::numeric_limits<MathLib::bigint>::max() >> k))
+        if (k == 0 || !rangeIsLhs)
             return ValueFlow::Value::unknown();
-        scaled = edge << k;
+        // Truncation towards zero keeps the order of the values
+        increasing = k > 0;
+        result = edge / k;
     } else {
-        return ValueFlow::Value::unknown();
+        // Shifts: calculate() rejects a negative or too large shift and a negative value
+        bool error = false;
+        result = calculate(op, edge, k, &error);
+        if (!rangeIsLhs || error || (op == "<<" && (result >> k) != edge))
+            return ValueFlow::Value::unknown();
     }
-    ValueFlow::Value result = range;
-    result.intvalue = lowerAfter ? scaled - 1 : scaled + 1;
-    result.bound = lowerAfter ? ValueFlow::Value::Bound::Upper : ValueFlow::Value::Bound::Lower;
-    return result;
+    ValueFlow::Value scaled = range;
+    scaled.setRangeEdge(result, range.isLowerEdge() == increasing);
+    return scaled;
 }
 
 static ValueFlow::Value evaluate(const Token* op, const ValueFlow::Value& lhs, const ValueFlow::Value& rhs, bool removeAssign = false)
@@ -913,30 +886,19 @@ static ValueFlow::Value evaluate(const Token* op, const ValueFlow::Value& lhs, c
     ValueFlow::Value result;
     if (lhs.isImpossible() && rhs.isImpossible())
         return ValueFlow::Value::unknown();
-    // An impossible range combined with an int: shifting moves the bound along, scaling transforms it
-    const ValueFlow::Value& range = isBounded(lhs) ? lhs : rhs;
-    const ValueFlow::Value& delta = isBounded(lhs) ? rhs : lhs;
-    if (range.isImpossible() && isBounded(range) && !isBounded(delta) && !delta.isImpossible() && range.isIntValue() &&
-        delta.isIntValue()) {
-        if (contains({"+", "-"}, opStr)) {
-            bool error = false;
-            result = range;
-            result.intvalue = calculate(opStr, lhs.intvalue, rhs.intvalue, &error);
-            if (error)
-                return ValueFlow::Value::unknown();
-            // c - x reverses the direction of the range
-            if (isBounded(rhs) && opStr == "-")
-                result.invertBound();
-            return result;
-        }
-        if (opStr == "*" || (isBounded(lhs) && contains({"/", "<<"}, opStr)))
-            return scaleRange(range, opStr, delta.intvalue);
-    }
+    // An impossible range and an int: the range of the result, for the operations that keep the order
+    const bool rangeIsLhs = lhs.isImpossible() && isBounded(lhs);
+    const ValueFlow::Value& range = rangeIsLhs ? lhs : rhs;
+    const ValueFlow::Value& k = rangeIsLhs ? rhs : lhs;
+    if (range.isImpossible() && isBounded(range) && range.isIntValue() && !k.isImpossible() && !isBounded(k) &&
+        k.isIntValue() && isMonotone(opStr))
+        return applyToRange(opStr, range, k.intvalue, rangeIsLhs);
     if (lhs.isImpossible() || rhs.isImpossible()) {
-        // noninvertible
+        // The image of an impossible value is impossible only for an injective operation
         if (contains({"%", "/", "&", "|", ">>"}, opStr))
             return ValueFlow::Value::unknown();
-        if (opStr == "*" && (lhs.equalTo(0) || rhs.equalTo(0)))
+        const ValueFlow::Value& factor = lhs.isImpossible() ? rhs : lhs;
+        if (opStr == "*" && factor.equalTo(0))
             return ValueFlow::Value::unknown();
         result.setImpossible();
     }
@@ -1635,14 +1597,16 @@ namespace {
             return values.empty() ? unknown() : values.front();
         }
 
-        // Is the expression read directly from the program memory (no known value, no tracked value)?
+        // The values recorded for the expression, when it is read from the program memory: it has no
+        // known value and does not depend on a tracked value
         const ProgramMemory::Values* getStoredValues(const Token* expr) const
         {
-            if (!expr || expr->exprId() == 0 || expr->hasKnownIntValue())
+            if (expr->exprId() == 0)
                 return nullptr;
-            if (dependsOnTrackedValue(expr))
+            const ProgramMemory::Values* stored = pm->getValues(expr->exprId());
+            if (!stored || expr->hasKnownIntValue() || dependsOnTrackedValue(expr))
                 return nullptr;
-            return pm->getValues(expr->exprId());
+            return stored;
         }
 
         static ValueFlow::Value unknown() {
@@ -1790,42 +1754,41 @@ namespace {
                 if (value.tokvalue->exprId() == 0)
                     continue;
                 const ValueFlow::Value* sizeValue = pm->getValue(value.tokvalue->exprId());
-                if (sizeValue && sizeValue->isContainerSizeValue())
-                    return {*sizeValue};
+                if (sizeValue && sizeValue->isContainerSizeValue()) {
+                    sizes.push_back(*sizeValue);
+                    break;
+                }
             }
-            return {};
+            return sizes;
         }
 
-        // The container whose size the expression yields, or nullptr
-        static const Token* getContainerFromSizeYield(const Token* expr)
+        // The size values of the container, as ints
+        ProgramMemory::Values executeSizeYield(const Token* containerTok)
         {
-            if (!Token::Match(expr->tokAt(-2), ". %name% (") || !astIsContainer(expr->tokAt(-2)->astOperand1()))
-                return nullptr;
-            const Token* containerTok = expr->tokAt(-2)->astOperand1();
-            const Library::Container::Yield yield = containerTok->valueType()->container->getYield(expr->strAt(-1));
-            return yield == Library::Container::Yield::SIZE ? containerTok : nullptr;
+            ProgramMemory::Values sizes = executeContainerSizes(containerTok);
+            for (ValueFlow::Value& v : sizes)
+                v.valueType = ValueFlow::Value::ValueType::INT;
+            return sizes;
         }
 
         // All values of the expression: the constraints of a range read from the program memory,
         // or the single result of execute()
         ProgramMemory::Values executeValues(const Token* expr)
         {
-            if (!expr)
-                return {};
-            if (const ProgramMemory::Values* stored = getStoredValues(expr)) {
-                if (stored->size() > 1)
+            if (expr->exprId() > 0) {
+                // Several constraints are read as they are. Whether they apply is checked only then,
+                // as that walks the expression.
+                const ProgramMemory::Values* stored = pm->getValues(expr->exprId());
+                if (stored && stored->size() > 1 && !expr->hasKnownIntValue() && !dependsOnTrackedValue(expr))
                     return *stored;
             }
-            if (const Token* containerTok = getContainerFromSizeYield(expr)) {
-                ProgramMemory::Values sizes = executeContainerSizes(containerTok);
-                for (ValueFlow::Value& v : sizes)
-                    v.valueType = ValueFlow::Value::ValueType::INT;
-                return sizes;
-            }
+            if (const Token* containerTok = settings.library.getContainerFromYield(expr, Library::Container::Yield::SIZE))
+                return executeSizeYield(containerTok);
+            ProgramMemory::Values values;
             ValueFlow::Value v = execute(expr);
-            if (v.isUninitValue())
-                return {};
-            return {std::move(v)};
+            if (!v.isUninitValue())
+                values.push_back(std::move(v));
+            return values;
         }
 
         ValueFlow::Value executeImpl(const Token* expr)
@@ -1852,21 +1815,13 @@ namespace {
             }
             if (expr->isBoolean())
                 return ValueFlow::Value{expr->str() == "true"};
-            if (Token::Match(expr->tokAt(-2), ". %name% (") && astIsContainer(expr->tokAt(-2)->astOperand1())) {
-                const Token* containerTok = expr->tokAt(-2)->astOperand1();
-                const Library::Container::Yield yield = containerTok->valueType()->container->getYield(expr->strAt(-1));
-                if (yield == Library::Container::Yield::SIZE) {
-                    ValueFlow::Value v = representative(executeContainerSizes(containerTok));
-                    if (!v.isContainerSizeValue())
-                        return unknown();
-                    v.valueType = ValueFlow::Value::ValueType::INT;
+            if (const Token* containerTok = settings.library.getContainerFromYield(expr, Library::Container::Yield::SIZE)) {
+                return representative(executeSizeYield(containerTok));
+            }
+            if (const Token* containerTok = settings.library.getContainerFromYield(expr, Library::Container::Yield::EMPTY)) {
+                ValueFlow::Value v = containerEmptyValue(executeContainerSizes(containerTok));
+                if (!v.isUninitValue())
                     return v;
-                }
-                if (yield == Library::Container::Yield::EMPTY) {
-                    ValueFlow::Value v = containerEmptyValue(executeContainerSizes(containerTok));
-                    if (!v.isUninitValue())
-                        return v;
-                }
             } else if (expr->isAssignmentOp() && expr->astOperand1() && expr->astOperand2() &&
                        expr->astOperand1()->exprId() > 0) {
                 ValueFlow::Value rhs = execute(expr->astOperand2());
@@ -1875,12 +1830,11 @@ namespace {
                 if (expr->str() != "=") {
                     if (!pm->hasValue(expr->astOperand1()->exprId()))
                         return unknown();
-                    // Apply the operation to every value of the variable
                     ProgramMemory::Values& lhs = pm->at(expr->astOperand1()->exprId());
                     for (ValueFlow::Value& v : lhs) {
                         const ValueFlow::Value r = evaluate(expr, v, rhs, /*removeAssign*/ true);
                         if (r.isUninitValue()) {
-                            pm->setUnknown(expr->astOperand1());
+                            lhs.assign(1, unknown());
                             return unknown();
                         }
                         if (v.isIntValue())
@@ -1906,25 +1860,17 @@ namespace {
             } else if (expr->tokType() == Token::eIncDecOp && expr->astOperand1() && expr->astOperand1()->exprId() != 0) {
                 if (!pm->hasValue(expr->astOperand1()->exprId()))
                     return ValueFlow::Value::unknown();
-                const ProgramMemory::Values& values = utils::as_const(*pm).at(expr->astOperand1()->exprId());
-                if (!std::all_of(values.cbegin(), values.cend(), std::mem_fn(&ValueFlow::Value::isIntValue)))
+                ProgramMemory::Values& lhs = pm->at(expr->astOperand1()->exprId());
+                // The values of an expression all have the same type
+                if (!lhs.front().isIntValue())
                     return unknown();
-                // An unsigned value wraps around when zero is decremented
-                if (expr->str() == "--" && astIsUnsigned(expr->astOperand1())) {
-                    const bool zero = std::any_of(values.cbegin(), values.cend(), [](const ValueFlow::Value& v) {
-                        return !v.isImpossible() && v.intvalue == 0;
-                    });
-                    const bool excludesZero = std::any_of(values.cbegin(), values.cend(), [](const ValueFlow::Value& v) {
-                        return (isLowerBound(v) && lowerBound(v) >= 1) || (isImpossiblePoint(v) && v.intvalue == 0);
-                    });
-                    if (zero || (values.front().isImpossible() && !excludesZero)) {
-                        pm->setUnknown(expr->astOperand1());
-                        return unknown();
-                    }
+                // An unsigned value wraps around when it is decremented and may be zero
+                if (expr->str() == "--" && astIsUnsigned(expr->astOperand1()) && std::none_of(lhs.cbegin(), lhs.cend(), &isTrue)) {
+                    lhs.assign(1, unknown());
+                    return unknown();
                 }
 
                 // Shift every value of the variable; bounds and impossible values move along
-                ProgramMemory::Values& lhs = pm->at(expr->astOperand1()->exprId());
                 for (ValueFlow::Value& v : lhs) {
                     if (expr->str() == "++")
                         v.intvalue++;
@@ -1956,22 +1902,22 @@ namespace {
                 if (index == strValue.size())
                     return ValueFlow::Value{};
             } else if (Token::Match(expr, "%cop%") && expr->astOperand1() && expr->astOperand2()) {
-                const ProgramMemory::Values lhsValues = executeValues(expr->astOperand1());
+                ProgramMemory::Values lhsValues = executeValues(expr->astOperand1());
                 if (lhsValues.empty())
                     return unknown();
-                const ProgramMemory::Values rhsValues = executeValues(expr->astOperand2());
+                ProgramMemory::Values rhsValues = executeValues(expr->astOperand2());
                 if (rhsValues.empty())
                     return unknown();
-                // Compare ranges: an operand with constraints is compared as the interval they describe
-                if (expr->isComparisonOp() &&
-                    (std::any_of(lhsValues.cbegin(), lhsValues.cend(), std::mem_fn(&ValueFlow::Value::isImpossible)) ||
-                     std::any_of(rhsValues.cbegin(), rhsValues.cend(), std::mem_fn(&ValueFlow::Value::isImpossible)))) {
-                    std::vector<ValueFlow::Value> result = infer(makeIntegralInferModel(), expr->str(), lhsValues, rhsValues);
+                ValueFlow::Value lhs = representative(lhsValues);
+                ValueFlow::Value rhs = representative(rhsValues);
+                // Compare ranges: an operand with constraints (the values of an operand are either one
+                // value or all constraints) is compared as the interval they describe
+                if (expr->isComparisonOp() && (lhs.isImpossible() || rhs.isImpossible())) {
+                    std::vector<ValueFlow::Value> result =
+                        infer(makeIntegralInferModel(), expr->str(), std::move(lhsValues), std::move(rhsValues));
                     if (!result.empty())
                         return std::move(result.front());
                 }
-                ValueFlow::Value lhs = representative(lhsValues);
-                ValueFlow::Value rhs = representative(rhsValues);
                 ValueFlow::Value r = evaluate(expr, lhs, rhs);
                 if (expr->isComparisonOp() && (r.isUninitValue() || r.isImpossible())) {
                     if (rhs.isIntValue() && !expr->astOperand1()->values().empty()) {
@@ -2044,9 +1990,9 @@ namespace {
             }
             if (const ProgramMemory::Values* stored = getStoredValues(expr)) {
                 // An impossible value that excludes zero makes the expression true as a bool
-                if (isUsedAsBool(expr, settings) && std::any_of(stored->cbegin(), stored->cend(), [](const ValueFlow::Value& v) {
+                if (std::any_of(stored->cbegin(), stored->cend(), [](const ValueFlow::Value& v) {
                     return v.isImpossible() && v.isIntValue() && isTrue(v);
-                })) {
+                }) && isUsedAsBool(expr, settings)) {
                     ValueFlow::Value result{1};
                     result.setKnown();
                     return result;
@@ -2104,9 +2050,10 @@ namespace {
                 }
                 // Check if function modifies argument
                 visitAstNodes(expr->astOperand2(), [&](const Token* child) {
-                    if (child->exprId() > 0 && pm->hasValue(child->exprId())) {
+                    const ProgramMemory::Values* values = child->exprId() > 0 ? pm->getValues(child->exprId()) : nullptr;
+                    if (values) {
                         // The values of an expression all have the same type
-                        const ValueFlow::Value& v = utils::as_const(*pm).at(child->exprId()).front();
+                        const ValueFlow::Value& v = values->front();
                         if (v.valueType == ValueFlow::Value::ValueType::CONTAINER_SIZE) {
                             if (ValueFlow::isContainerSizeChanged(child, v.indirect, settings))
                                 pm->setUnknown(child);
@@ -2164,9 +2111,11 @@ namespace {
                 return v;
             if (!expr)
                 return v;
-            if (expr->exprId() > 0 && pm->hasValue(expr->exprId())) {
-                if (updateValue(v, representative(utils::as_const(*pm).at(expr->exprId()))))
-                    return v;
+            if (expr->exprId() > 0) {
+                if (const ProgramMemory::Values* stored = pm->getValues(expr->exprId())) {
+                    if (updateValue(v, representative(*stored)))
+                        return v;
+                }
             }
             // Find symbolic values
             for (const ValueFlow::Value& value : expr->values()) {
@@ -2174,11 +2123,10 @@ namespace {
                     continue;
                 if (!value.isKnown())
                     continue;
-                if (value.tokvalue->exprId() > 0 && !pm->hasValue(value.tokvalue->exprId()))
+                const ProgramMemory::Values* stored = pm->getValues(value.tokvalue->exprId());
+                if (!stored || (!stored->front().isIntValue() && value.intvalue != 0))
                     continue;
-                ValueFlow::Value v2 = representative(utils::as_const(*pm).at(value.tokvalue->exprId()));
-                if (!v2.isIntValue() && value.intvalue != 0)
-                    continue;
+                ValueFlow::Value v2 = stored->front();
                 v2.intvalue += value.intvalue;
                 return v2;
             }

@@ -270,11 +270,6 @@ static void setConditionalValues(const Token* tok,
     setValueBound(false_value, tok, !lhs);
 }
 
-static bool isSaturated(MathLib::bigint value)
-{
-    return value == std::numeric_limits<MathLib::bigint>::max() || value == std::numeric_limits<MathLib::bigint>::min();
-}
-
 static void parseCompareEachInt(
     const Token* tok,
     const std::function<void(const Token* varTok, ValueFlow::Value true_value, ValueFlow::Value false_value)>& each,
@@ -292,7 +287,7 @@ static void parseCompareEachInt(
                 value1.clear();
         }
         for (const ValueFlow::Value& v1 : value1) {
-            if (isSaturated(v1.intvalue) || astIsFloat(tok->astOperand2(), /*unknown*/ false))
+            if (ValueFlow::isSaturated(v1.intvalue) || astIsFloat(tok->astOperand2(), /*unknown*/ false))
                 continue;
             ValueFlow::Value true_value = v1;
             ValueFlow::Value false_value = v1;
@@ -300,7 +295,7 @@ static void parseCompareEachInt(
             each(tok->astOperand2(), std::move(true_value), std::move(false_value));
         }
         for (const ValueFlow::Value& v2 : value2) {
-            if (isSaturated(v2.intvalue) || astIsFloat(tok->astOperand1(), /*unknown*/ false))
+            if (ValueFlow::isSaturated(v2.intvalue) || astIsFloat(tok->astOperand1(), /*unknown*/ false))
                 continue;
             ValueFlow::Value true_value = v2;
             ValueFlow::Value false_value = v2;
@@ -6278,24 +6273,12 @@ static MathLib::bigint ceilDiv(MathLib::bigint x, MathLib::bigint y)
 }
 
 // Solve "x * divisor" for x when the value is a bound: divide the end of the range, rounding towards
-// the inside of the range so that it stays exact, and turn the range around for a negative divisor.
+// the inside of the range so that it stays exact; a negative divisor turns the range around.
 static void divideBound(ValueFlow::Value& value, MathLib::bigint divisor)
 {
-    // Is the value the lower end of the range? A possible lower bound is, and so is an impossible
-    // upper bound, as the values up to it are impossible.
-    const bool lower = (value.bound == ValueFlow::Value::Bound::Lower) != value.isImpossible();
-    // The end of the range: the first value that is possible
-    MathLib::bigint edge = value.intvalue;
-    if (value.isImpossible())
-        edge += lower ? 1 : -1;
-    const bool lowerAfter = (divisor > 0) == lower;
-    edge = lowerAfter ? ceilDiv(edge, divisor) : floorDiv(edge, divisor);
-    if (divisor < 0)
-        value.invertBound();
-    if (value.isImpossible())
-        value.intvalue = lowerAfter ? edge - 1 : edge + 1;
-    else
-        value.intvalue = edge;
+    const bool lowerAfter = (divisor > 0) == value.isLowerEdge();
+    const MathLib::bigint edge = value.rangeEdge();
+    value.setRangeEdge(lowerAfter ? ceilDiv(edge, divisor) : floorDiv(edge, divisor), lowerAfter);
 }
 
 const Token* ValueFlow::solveExprValue(const Token* expr,
@@ -6330,7 +6313,7 @@ const Token* ValueFlow::solveExprValue(const Token* expr,
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }
         case '*': {
-            if (intval == 0 || isSaturated(value.intvalue))
+            if (intval == 0 || ValueFlow::isSaturated(value.intvalue))
                 break;
             if (value.bound == ValueFlow::Value::Bound::Point) {
                 // x * k is v only for a v that k divides
