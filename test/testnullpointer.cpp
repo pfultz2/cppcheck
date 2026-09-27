@@ -3175,6 +3175,72 @@ private:
               "    }\n"
               "}\n");
         ASSERT_EQUALS("[test.cpp:5:24]: (error) Null pointer dereference: p [nullPointer]\n", errout_str());
+
+        // the range of a product is solved exactly: -2 * x > 3 is x <= -2
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (-2 * x > 3) {\n"
+              "        if (x <= -2) p = &x;\n"
+              "        *p = 1;\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        // x * 2 < 3 is x <= 1, so x == 1 is possible
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (x * 2 < 3) {\n"
+              "        if (x == 1) p = &x;\n"
+              "        *p = 1;\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5:10]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
+
+        // the range follows the value through arithmetic
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (x > 3) {\n"
+              "        if ((x << 1) >= 8) p = &x;\n"
+              "        *p = 1;\n"
+              "    }\n"
+              "    if (x > 6) {\n"
+              "        if (x / 2 > 2) p = &x;\n"
+              "        *p = 1;\n"
+              "    }\n"
+              "    if (x > 3) {\n"
+              "        if (10 - x < 7) p = &x;\n"
+              "        *p = 1;\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        // a range that excludes zero is true; one that includes zero is not known
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (x > 3) {\n"
+              "        if (x) p = &x;\n"
+              "        *p = 1;\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (x > -5) {\n"
+              "        if (x) p = &x;\n"
+              "        *p = 1;\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5:10]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
+
+        // x >= 0 and x != 0 is x > 0
+        check("void f(int x) {\n"
+              "    int* p = 0;\n"
+              "    if (x < 0) return;\n"
+              "    if (x == 0) return;\n"
+              "    if (x > 0) p = &x;\n"
+              "    *p = 1;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
     }
 
     void nullpointer_addressOf() { // address of

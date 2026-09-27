@@ -6261,6 +6261,43 @@ static const Token* parseBinaryIntOp(const Token* expr,
     return varTok;
 }
 
+static MathLib::bigint floorDiv(MathLib::bigint x, MathLib::bigint y)
+{
+    MathLib::bigint q = x / y;
+    if (x % y != 0 && (x < 0) != (y < 0))
+        --q;
+    return q;
+}
+
+static MathLib::bigint ceilDiv(MathLib::bigint x, MathLib::bigint y)
+{
+    MathLib::bigint q = x / y;
+    if (x % y != 0 && (x < 0) == (y < 0))
+        ++q;
+    return q;
+}
+
+// Solve "x * divisor" for x when the value is a bound: divide the end of the range, rounding towards
+// the inside of the range so that it stays exact, and turn the range around for a negative divisor.
+static void divideBound(ValueFlow::Value& value, MathLib::bigint divisor)
+{
+    // Is the value the lower end of the range? A possible lower bound is, and so is an impossible
+    // upper bound, as the values up to it are impossible.
+    const bool lower = (value.bound == ValueFlow::Value::Bound::Lower) != value.isImpossible();
+    // The end of the range: the first value that is possible
+    MathLib::bigint edge = value.intvalue;
+    if (value.isImpossible())
+        edge += lower ? 1 : -1;
+    const bool lowerAfter = (divisor > 0) == lower;
+    edge = lowerAfter ? ceilDiv(edge, divisor) : floorDiv(edge, divisor);
+    if (divisor < 0)
+        value.invertBound();
+    if (value.isImpossible())
+        value.intvalue = lowerAfter ? edge - 1 : edge + 1;
+    else
+        value.intvalue = edge;
+}
+
 const Token* ValueFlow::solveExprValue(const Token* expr,
                                        const std::function<std::vector<MathLib::bigint>(const Token*)>& eval,
                                        ValueFlow::Value& value)
@@ -6293,14 +6330,22 @@ const Token* ValueFlow::solveExprValue(const Token* expr,
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }
         case '*': {
-            if (intval == 0)
+            if (intval == 0 || isSaturated(value.intvalue))
                 break;
-            value.intvalue /= intval;
-            if (intval < 0)
-                value.invertBound();
+            if (value.bound == ValueFlow::Value::Bound::Point) {
+                // x * k is v only for a v that k divides
+                if (value.intvalue % intval != 0)
+                    break;
+                value.intvalue /= intval;
+            } else {
+                divideBound(value, intval);
+            }
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }
         case '^': {
+            // xor does not keep a range together
+            if (value.bound != ValueFlow::Value::Bound::Point)
+                break;
             value.intvalue ^= intval;
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }

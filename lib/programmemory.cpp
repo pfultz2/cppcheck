@@ -35,8 +35,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <list>
 #include <memory>
 #include <stack>
@@ -859,30 +861,82 @@ static bool isBounded(const ValueFlow::Value& value)
     return value.bound != ValueFlow::Value::Bound::Point;
 }
 
+static bool isSaturated(MathLib::bigint value)
+{
+    return value == std::numeric_limits<MathLib::bigint>::max() || value == std::numeric_limits<MathLib::bigint>::min();
+}
+
+static bool multiplyOverflows(MathLib::bigint x, MathLib::bigint y)
+{
+    if (x == 0 || y == 0)
+        return false;
+    if (isSaturated(x) || isSaturated(y))
+        return true;
+    return std::abs(x) > std::numeric_limits<MathLib::bigint>::max() / std::abs(y);
+}
+
+// The range of "x * k", "x / k" or "x << k" when the values of x up to (or from) the bound are
+// impossible: the end of the range is transformed, and a negative factor turns the range around.
+static ValueFlow::Value scaleRange(const ValueFlow::Value& range, const std::string& op, MathLib::bigint k)
+{
+    const bool lower = isLowerBound(range);
+    const MathLib::bigint edge = lower ? lowerBound(range) : upperBound(range);
+    if (k == 0 || isSaturated(edge))
+        return ValueFlow::Value::unknown();
+    MathLib::bigint scaled = 0;
+    bool lowerAfter = lower;
+    if (op == "*") {
+        if (multiplyOverflows(edge, k))
+            return ValueFlow::Value::unknown();
+        scaled = edge * k;
+        lowerAfter = (k > 0) == lower;
+    } else if (op == "/") {
+        // Truncation towards zero keeps the order of the values
+        scaled = edge / k;
+        lowerAfter = (k > 0) == lower;
+    } else if (op == "<<") {
+        if (k < 0 || k >= 63 || edge < 0 || edge > (std::numeric_limits<MathLib::bigint>::max() >> k))
+            return ValueFlow::Value::unknown();
+        scaled = edge << k;
+    } else {
+        return ValueFlow::Value::unknown();
+    }
+    ValueFlow::Value result = range;
+    result.intvalue = lowerAfter ? scaled - 1 : scaled + 1;
+    result.bound = lowerAfter ? ValueFlow::Value::Bound::Upper : ValueFlow::Value::Bound::Lower;
+    return result;
+}
+
 static ValueFlow::Value evaluate(const Token* op, const ValueFlow::Value& lhs, const ValueFlow::Value& rhs, bool removeAssign = false)
 {
     const std::string opStr = removeAssign ? op->str().substr(0, op->str().size() - 1) : op->str();
     ValueFlow::Value result;
     if (lhs.isImpossible() && rhs.isImpossible())
         return ValueFlow::Value::unknown();
-    // Shifting an impossible range by an int moves its bound along
+    // An impossible range combined with an int: shifting moves the bound along, scaling transforms it
     const ValueFlow::Value& range = isBounded(lhs) ? lhs : rhs;
     const ValueFlow::Value& delta = isBounded(lhs) ? rhs : lhs;
     if (range.isImpossible() && isBounded(range) && !isBounded(delta) && !delta.isImpossible() && range.isIntValue() &&
-        delta.isIntValue() && contains({"+", "-"}, opStr)) {
-        bool error = false;
-        result = range;
-        result.intvalue = calculate(opStr, lhs.intvalue, rhs.intvalue, &error);
-        if (error)
-            return ValueFlow::Value::unknown();
-        // c - x reverses the direction of the range
-        if (isBounded(rhs) && opStr == "-")
-            result.invertBound();
-        return result;
+        delta.isIntValue()) {
+        if (contains({"+", "-"}, opStr)) {
+            bool error = false;
+            result = range;
+            result.intvalue = calculate(opStr, lhs.intvalue, rhs.intvalue, &error);
+            if (error)
+                return ValueFlow::Value::unknown();
+            // c - x reverses the direction of the range
+            if (isBounded(rhs) && opStr == "-")
+                result.invertBound();
+            return result;
+        }
+        if (opStr == "*" || (isBounded(lhs) && contains({"/", "<<"}, opStr)))
+            return scaleRange(range, opStr, delta.intvalue);
     }
     if (lhs.isImpossible() || rhs.isImpossible()) {
         // noninvertible
-        if (contains({"%", "/", "&", "|"}, opStr))
+        if (contains({"%", "/", "&", "|", ">>"}, opStr))
+            return ValueFlow::Value::unknown();
+        if (opStr == "*" && (lhs.equalTo(0) || rhs.equalTo(0)))
             return ValueFlow::Value::unknown();
         result.setImpossible();
     }
@@ -1835,6 +1889,8 @@ namespace {
                             ValueFlow::Value::visitValue(r, std::bind(assign{}, std::ref(v.floatValue), std::placeholders::_1));
                         else
                             return unknown();
+                        // The operation may have turned the range around or dissolved it
+                        v.bound = r.bound;
                     }
                     return representative(lhs);
                 }
@@ -1853,12 +1909,19 @@ namespace {
                 const ProgramMemory::Values& values = utils::as_const(*pm).at(expr->astOperand1()->exprId());
                 if (!std::all_of(values.cbegin(), values.cend(), std::mem_fn(&ValueFlow::Value::isIntValue)))
                     return unknown();
-                // overflow
-                if (expr->str() == "--" && astIsUnsigned(expr->astOperand1()) &&
-                    std::any_of(values.cbegin(), values.cend(), [](const ValueFlow::Value& v) {
-                    return !v.isImpossible() && v.intvalue == 0;
-                }))
-                    return unknown();
+                // An unsigned value wraps around when zero is decremented
+                if (expr->str() == "--" && astIsUnsigned(expr->astOperand1())) {
+                    const bool zero = std::any_of(values.cbegin(), values.cend(), [](const ValueFlow::Value& v) {
+                        return !v.isImpossible() && v.intvalue == 0;
+                    });
+                    const bool excludesZero = std::any_of(values.cbegin(), values.cend(), [](const ValueFlow::Value& v) {
+                        return (isLowerBound(v) && lowerBound(v) >= 1) || (isImpossiblePoint(v) && v.intvalue == 0);
+                    });
+                    if (zero || (values.front().isImpossible() && !excludesZero)) {
+                        pm->setUnknown(expr->astOperand1());
+                        return unknown();
+                    }
+                }
 
                 // Shift every value of the variable; bounds and impossible values move along
                 ProgramMemory::Values& lhs = pm->at(expr->astOperand1()->exprId());

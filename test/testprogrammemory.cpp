@@ -48,6 +48,9 @@ private:
         TEST_CASE(setValueReplacesConstraints);
         TEST_CASE(containerEmpty);
         TEST_CASE(executeRange);
+        TEST_CASE(executeScaledRange);
+        TEST_CASE(executeSolvedRange);
+        TEST_CASE(executeCompoundAssignment);
         TEST_CASE(executeContainerSizeRange);
     }
 
@@ -281,10 +284,13 @@ private:
         ASSERT(!pm.getContainerEmptyValue(id, empty));
     }
 
-    // Remove the values ValueFlow attached to the tokens, so that only the program memory decides
+    // Remove the values ValueFlow attached to the tokens, so that only the program memory decides.
+    // Numbers keep their value, as they always have it.
     static void clearValues(SimpleTokenizer& tokenizer) {
-        for (Token* tok = tokenizer.list.front(); tok; tok = tok->next())
-            tok->clearValueFlow();
+        for (Token* tok = tokenizer.list.front(); tok; tok = tok->next()) {
+            if (!tok->isNumber())
+                tok->clearValueFlow();
+        }
     }
 
     // The right hand sides of the assignments to the variable, in order
@@ -342,6 +348,125 @@ private:
         ASSERT_EQUALS("1", evaluate(exprs[6]));
         // a range is not a value
         ASSERT_EQUALS("", evaluate(exprs[7]));
+    }
+
+    void executeScaledRange() {
+        const char code[] = "void f(int x, int y) {\n"
+                            "    if (x > 3) {\n"
+                            "        y = x * 2 > 6;\n"
+                            "        y = x * 2 == 7;\n"
+                            "        y = -2 * x < -6;\n"
+                            "        y = x * 0 == 0;\n"
+                            "        y = (x << 1) >= 8;\n"
+                            "        y = x % 2 == 0;\n"
+                            "        y = (x >> 1) == 1;\n"
+                            "    }\n"
+                            "    if (x > 6) {\n"
+                            "        y = x / 2 > 2;\n"
+                            "        y = x / -2 < -2;\n"
+                            "    }\n"
+                            "}\n";
+        SimpleTokenizer tokenizer(settings, *this);
+        ASSERT(tokenizer.tokenize(code));
+        clearValues(tokenizer);
+        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
+        ASSERT_EQUALS(9U, exprs.size());
+        // x > 3: x * 2 >= 8
+        ASSERT_EQUALS("1", evaluate(exprs[0]));
+        ASSERT_EQUALS("0", evaluate(exprs[1]));
+        ASSERT_EQUALS("1", evaluate(exprs[2]));
+        // x * 0 is not "not zero"
+        ASSERT_EQUALS("", evaluate(exprs[3]));
+        ASSERT_EQUALS("1", evaluate(exprs[4]));
+        // remainder and right shift do not keep the range
+        ASSERT_EQUALS("", evaluate(exprs[5]));
+        ASSERT_EQUALS("", evaluate(exprs[6]));
+        // x > 6: x / 2 >= 3
+        ASSERT_EQUALS("1", evaluate(exprs[7]));
+        ASSERT_EQUALS("1", evaluate(exprs[8]));
+    }
+
+    void executeSolvedRange() {
+        const char code[] = "void f(int x, int y) {\n"
+                            "    if (x * 2 < 3) {\n"
+                            "        y = x <= 1;\n"
+                            "        y = x == 1;\n"
+                            "        y = x == 2;\n"
+                            "    }\n"
+                            "    if (x * 3 >= 7) {\n"
+                            "        y = x >= 3;\n"
+                            "        y = x == 2;\n"
+                            "    }\n"
+                            "    if (-2 * x > 3) {\n"
+                            "        y = x <= -2;\n"
+                            "        y = x == -1;\n"
+                            "    }\n"
+                            "    if ((x ^ 4) > 3) {\n"
+                            "        y = x == 0;\n"
+                            "    }\n"
+                            "}\n";
+        SimpleTokenizer tokenizer(settings, *this);
+        ASSERT(tokenizer.tokenize(code));
+        clearValues(tokenizer);
+        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
+        ASSERT_EQUALS(8U, exprs.size());
+        // x * 2 < 3: x <= 1
+        ASSERT_EQUALS("1", evaluate(exprs[0]));
+        ASSERT_EQUALS("", evaluate(exprs[1]));
+        ASSERT_EQUALS("0", evaluate(exprs[2]));
+        // x * 3 >= 7: x >= 3
+        ASSERT_EQUALS("1", evaluate(exprs[3]));
+        ASSERT_EQUALS("0", evaluate(exprs[4]));
+        // -2 * x > 3: x <= -2
+        ASSERT_EQUALS("1", evaluate(exprs[5]));
+        ASSERT_EQUALS("0", evaluate(exprs[6]));
+        // (x ^ 4) > 3 does not give a range for x
+        ASSERT_EQUALS("", evaluate(exprs[7]));
+    }
+
+    void executeCompoundAssignment() {
+        const char code[] = "void f(int x, unsigned u, int y) {\n"
+                            "    x *= -1;\n"
+                            "    y = x < -3;\n"
+                            "    u--;\n"
+                            "    y = u > 100;\n"
+                            "}\n";
+        SimpleTokenizer tokenizer(settings, *this);
+        ASSERT(tokenizer.tokenize(code));
+        clearValues(tokenizer);
+        const Token* xtok = Token::findsimplematch(tokenizer.tokens(), "x *=");
+        const Token* utok = Token::findsimplematch(tokenizer.tokens(), "u --");
+        ASSERT(xtok && utok);
+        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
+        ASSERT_EQUALS(2U, exprs.size());
+
+        ProgramMemory pm;
+        // x > 3, then x *= -1: x < -3
+        pm.setValue(xtok, greaterThan(3));
+        execute(xtok->next(), pm, nullptr, nullptr, settings);
+        MathLib::bigint result = 0;
+        bool error = false;
+        execute(exprs[0], pm, &result, &error, settings);
+        ASSERT(!error);
+        ASSERT_EQUALS(1, result);
+
+        // u < 1, then u--: the value wraps around, nothing is known
+        pm.setValue(utok, lessThan(1));
+        execute(utok->next(), pm, nullptr, nullptr, settings);
+        error = false;
+        execute(exprs[1], pm, &result, &error, settings);
+        ASSERT(error);
+
+        // u > 3, then u--: u > 2
+        pm.setValue(utok, greaterThan(3));
+        execute(utok->next(), pm, nullptr, nullptr, settings);
+        error = false;
+        execute(exprs[1], pm, &result, &error, settings);
+        ASSERT(error);
+        const ProgramMemory::Values* values = pm.getValues(utok->exprId());
+        ASSERT(values);
+        ASSERT_EQUALS(1U, values->size());
+        ASSERT(findValue(*values, 2, ValueFlow::Value::Bound::Upper));
     }
 
     void executeContainerSizeRange() {
