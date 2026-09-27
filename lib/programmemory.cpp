@@ -449,6 +449,25 @@ static bool isTrueOrFalse(const ValueFlow::Value& v, bool b)
     return isFalse(v);
 }
 
+// Is the expression with these values known to be nonzero? It is when its value is, or when one of
+// its constraints excludes zero.
+static bool isTrue(const ProgramMemory::Values& values)
+{
+    return std::any_of(values.cbegin(), values.cend(), [](const ValueFlow::Value& v) {
+        return isTrue(v);
+    });
+}
+
+static bool isFalse(const ProgramMemory::Values& values)
+{
+    return values.size() == 1 && isFalse(values.front());
+}
+
+static bool isTrueOrFalse(const ProgramMemory::Values& values, bool b)
+{
+    return b ? isTrue(values) : isFalse(values);
+}
+
 // If the scope is a non-range for loop
 static bool isBasicForLoop(const Token* tok)
 {
@@ -1557,6 +1576,8 @@ static void pruneConditions(std::vector<const Token*>& conds,
 
 namespace {
     struct Executor {
+        using Values = ProgramMemory::Values;
+
         ProgramMemory* pm;
         const Settings& settings;
         // Values tracked by the forward/reverse analysis. A tracked value is the authoritative
@@ -1571,7 +1592,7 @@ namespace {
         }
 
         // The tracked values for this expression, if there are any
-        const ProgramMemory::Values* getTrackedValues(const Token* expr) const
+        const Values* getTrackedValues(const Token* expr) const
         {
             if (!vars || expr->exprId() == 0)
                 return nullptr;
@@ -1590,27 +1611,52 @@ namespace {
             }) != nullptr;
         }
 
+        static ValueFlow::Value unknown() {
+            return ValueFlow::Value::unknown();
+        }
+
         // The one value to read for an expression: its value, or the first of its constraints (every
         // one of them holds for the expression)
-        static ValueFlow::Value representative(const ProgramMemory::Values& values)
+        static ValueFlow::Value representative(const Values& values)
         {
             return values.empty() ? unknown() : values.front();
         }
 
+        // The values of an expression that has the one value; none when it is unknown
+        static Values single(ValueFlow::Value value)
+        {
+            Values values;
+            if (!value.isUninitValue())
+                values.push_back(std::move(value));
+            return values;
+        }
+
+        // The value of the expression when it has exactly one, and not constraints
+        static const ValueFlow::Value* getSingleValue(const Values& values)
+        {
+            if (values.size() != 1 || values.front().isImpossible())
+                return nullptr;
+            return &values.front();
+        }
+
+        // The value of a condition: constraints that exclude zero are true, a value stands for itself
+        static ValueFlow::Value conditionValue(const Values& values)
+        {
+            if (!values.empty() && values.front().isImpossible() && isTrue(values))
+                return ValueFlow::Value{1};
+            return representative(values);
+        }
+
         // The values recorded for the expression, when it is read from the program memory: it has no
         // known value and does not depend on a tracked value
-        const ProgramMemory::Values* getStoredValues(const Token* expr) const
+        const Values* getStoredValues(const Token* expr) const
         {
             if (expr->exprId() == 0)
                 return nullptr;
-            const ProgramMemory::Values* stored = pm->getValues(expr->exprId());
+            const Values* stored = pm->getValues(expr->exprId());
             if (!stored || expr->hasKnownIntValue() || dependsOnTrackedValue(expr))
                 return nullptr;
             return stored;
-        }
-
-        static ValueFlow::Value unknown() {
-            return ValueFlow::Value::unknown();
         }
 
         std::unordered_map<nonneg int, ValueFlow::Value> executeAll(const std::vector<const Token*>& toks,
@@ -1619,11 +1665,11 @@ namespace {
             std::unordered_map<nonneg int, ValueFlow::Value> result;
             auto state = *this;
             for (const Token* tok : toks) {
-                ValueFlow::Value r = state.execute(tok);
-                if (r.isUninitValue())
+                const Values r = state.execute(tok);
+                if (r.empty())
                     continue;
                 const bool brk = b && isTrueOrFalse(r, *b);
-                result.emplace(tok->exprId(), std::move(r));
+                result.emplace(tok->exprId(), conditionValue(r));
                 // Short-circuit evaluation
                 if (brk)
                     break;
@@ -1656,14 +1702,14 @@ namespace {
             // Evaluate recursively if there are no exprids
             if ((expr->astOperand1() && expr->astOperand1()->exprId() == 0) ||
                 (expr->astOperand2() && expr->astOperand2()->exprId() == 0)) {
-                ValueFlow::Value lhs = execute(expr->astOperand1());
+                const Values lhs = execute(expr->astOperand1());
                 if (isTrueOrFalse(lhs, b))
-                    return lhs;
-                ValueFlow::Value rhs = execute(expr->astOperand2());
+                    return conditionValue(lhs);
+                const Values rhs = execute(expr->astOperand2());
                 if (isTrueOrFalse(rhs, b))
-                    return rhs;
+                    return conditionValue(rhs);
                 if (isTrueOrFalse(lhs, !b) && isTrueOrFalse(rhs, !b))
-                    return lhs;
+                    return conditionValue(lhs);
                 return unknown();
             }
 
@@ -1734,9 +1780,9 @@ namespace {
 
         // Get the size values of the container. If the container itself is not tracked in the
         // program memory then check if it is symbolically equal to a container whose size is tracked.
-        ProgramMemory::Values executeContainerSizes(const Token* containerTok)
+        Values executeContainerSizes(const Token* containerTok)
         {
-            ProgramMemory::Values sizes = executeValues(containerTok);
+            Values sizes = execute(containerTok);
             sizes.remove_if([](const ValueFlow::Value& v) {
                 return !v.isContainerSizeValue();
             });
@@ -1763,111 +1809,92 @@ namespace {
         }
 
         // The size values of the container, as ints
-        ProgramMemory::Values executeSizeYield(const Token* containerTok)
+        Values executeSizeYield(const Token* containerTok)
         {
-            ProgramMemory::Values sizes = executeContainerSizes(containerTok);
+            Values sizes = executeContainerSizes(containerTok);
             for (ValueFlow::Value& v : sizes)
                 v.valueType = ValueFlow::Value::ValueType::INT;
             return sizes;
         }
 
-        // All values of the expression: the constraints of a range read from the program memory,
-        // or the single result of execute()
-        ProgramMemory::Values executeValues(const Token* expr)
-        {
-            if (expr->exprId() > 0) {
-                // Several constraints are read as they are. Whether they apply is checked only then,
-                // as that walks the expression.
-                const ProgramMemory::Values* stored = pm->getValues(expr->exprId());
-                if (stored && stored->size() > 1 && !expr->hasKnownIntValue() && !dependsOnTrackedValue(expr))
-                    return *stored;
-            }
-            if (const Token* containerTok = settings.library.getContainerFromYield(expr, Library::Container::Yield::SIZE))
-                return executeSizeYield(containerTok);
-            ProgramMemory::Values values;
-            ValueFlow::Value v = execute(expr);
-            if (!v.isUninitValue())
-                values.push_back(std::move(v));
-            return values;
-        }
-
-        ValueFlow::Value executeImpl(const Token* expr)
+        // The values of the expression: its one value, or the constraints it is known to satisfy
+        Values executeImpl(const Token* expr)
         {
             const ValueFlow::Value* value = nullptr;
-            if (!expr)
-                return unknown();
             if (expr->hasKnownIntValue() && !expr->isAssignmentOp() && expr->str() != ",")
-                return *expr->getKnownValue(ValueFlow::Value::ValueType::INT);
+                return single(*expr->getKnownValue(ValueFlow::Value::ValueType::INT));
             if ((value = expr->getKnownValue(ValueFlow::Value::ValueType::FLOAT)) ||
                 (value = expr->getKnownValue(ValueFlow::Value::ValueType::TOK)) ||
                 (value = expr->getKnownValue(ValueFlow::Value::ValueType::ITERATOR_START)) ||
                 (value = expr->getKnownValue(ValueFlow::Value::ValueType::ITERATOR_END)) ||
                 (value = expr->getKnownValue(ValueFlow::Value::ValueType::CONTAINER_SIZE))) {
-                return *value;
+                return single(*value);
             }
             if (expr->isNumber()) {
                 if (MathLib::isFloat(expr->str()))
-                    return unknown();
+                    return {};
                 MathLib::bigint i = MathLib::toBigNumber(expr);
                 if (i < 0 && astIsUnsigned(expr))
-                    return unknown();
-                return ValueFlow::Value{i};
+                    return {};
+                return single(ValueFlow::Value{i});
             }
             if (expr->isBoolean())
-                return ValueFlow::Value{expr->str() == "true"};
+                return single(ValueFlow::Value{expr->str() == "true"});
             if (const Token* containerTok = settings.library.getContainerFromYield(expr, Library::Container::Yield::SIZE)) {
-                return representative(executeSizeYield(containerTok));
+                return executeSizeYield(containerTok);
             }
             if (const Token* containerTok = settings.library.getContainerFromYield(expr, Library::Container::Yield::EMPTY)) {
-                ValueFlow::Value v = containerEmptyValue(executeContainerSizes(containerTok));
+                const ValueFlow::Value v = containerEmptyValue(executeContainerSizes(containerTok));
                 if (!v.isUninitValue())
-                    return v;
+                    return single(v);
             } else if (expr->isAssignmentOp() && expr->astOperand1() && expr->astOperand2() &&
                        expr->astOperand1()->exprId() > 0) {
-                ValueFlow::Value rhs = execute(expr->astOperand2());
-                if (rhs.isUninitValue())
-                    return unknown();
+                Values rhs = execute(expr->astOperand2());
+                if (rhs.empty())
+                    return {};
                 if (expr->str() != "=") {
                     if (!pm->hasValue(expr->astOperand1()->exprId()))
-                        return unknown();
-                    ProgramMemory::Values& lhs = pm->at(expr->astOperand1()->exprId());
+                        return {};
+                    // Constraints of the right hand side cannot be combined with the values
+                    const ValueFlow::Value& delta = rhs.front();
+                    Values& lhs = pm->at(expr->astOperand1()->exprId());
                     for (ValueFlow::Value& v : lhs) {
-                        const ValueFlow::Value r = evaluate(expr, v, rhs, /*removeAssign*/ true);
+                        const ValueFlow::Value r = evaluate(expr, v, delta, /*removeAssign*/ true);
                         if (r.isUninitValue()) {
                             lhs.assign(1, unknown());
-                            return unknown();
+                            return {};
                         }
                         if (v.isIntValue())
                             ValueFlow::Value::visitValue(r, std::bind(assign{}, std::ref(v.intvalue), std::placeholders::_1));
                         else if (v.isFloatValue())
                             ValueFlow::Value::visitValue(r, std::bind(assign{}, std::ref(v.floatValue), std::placeholders::_1));
                         else
-                            return unknown();
+                            return {};
                         // The operation may have turned the range around or dissolved it
                         v.bound = r.bound;
                     }
-                    return representative(lhs);
+                    return lhs;
                 }
-                pm->setValue(expr->astOperand1(), rhs);
+                pm->setValues(expr->astOperand1(), rhs);
                 return rhs;
             } else if (expr->str() == "&&" && expr->astOperand1() && expr->astOperand2()) {
-                return executeMultiCondition(false, expr);
+                return single(executeMultiCondition(false, expr));
             } else if (expr->str() == "||" && expr->astOperand1() && expr->astOperand2()) {
-                return executeMultiCondition(true, expr);
+                return single(executeMultiCondition(true, expr));
             } else if (expr->str() == "," && expr->astOperand1() && expr->astOperand2()) {
                 execute(expr->astOperand1());
                 return execute(expr->astOperand2());
             } else if (expr->tokType() == Token::eIncDecOp && expr->astOperand1() && expr->astOperand1()->exprId() != 0) {
                 if (!pm->hasValue(expr->astOperand1()->exprId()))
-                    return ValueFlow::Value::unknown();
-                ProgramMemory::Values& lhs = pm->at(expr->astOperand1()->exprId());
+                    return {};
+                Values& lhs = pm->at(expr->astOperand1()->exprId());
                 // The values of an expression all have the same type
                 if (!lhs.front().isIntValue())
-                    return unknown();
+                    return {};
                 // An unsigned value wraps around when it is decremented and may be zero
-                if (expr->str() == "--" && astIsUnsigned(expr->astOperand1()) && std::none_of(lhs.cbegin(), lhs.cend(), &isTrue)) {
+                if (expr->str() == "--" && astIsUnsigned(expr->astOperand1()) && !isTrue(lhs)) {
                     lhs.assign(1, unknown());
-                    return unknown();
+                    return {};
                 }
 
                 // Shift every value of the variable; bounds and impossible values move along
@@ -1877,7 +1904,7 @@ namespace {
                     else
                         v.intvalue--;
                 }
-                return representative(lhs);
+                return lhs;
             } else if (expr->str() == "[" && expr->astOperand1() && expr->astOperand2()) {
                 const Token* tokvalue = nullptr;
                 if (!pm->getTokValue(expr->astOperand1()->exprId(), tokvalue)) {
@@ -1885,38 +1912,52 @@ namespace {
                                                     expr->astOperand1()->values().cend(),
                                                     std::mem_fn(&ValueFlow::Value::isTokValue));
                     if (tokvalue_it == expr->astOperand1()->values().cend() || !tokvalue_it->isKnown()) {
-                        return unknown();
+                        return {};
                     }
                     tokvalue = tokvalue_it->tokvalue;
                 }
                 if (!tokvalue || !tokvalue->isLiteral()) {
-                    return unknown();
+                    return {};
                 }
                 const std::string strValue = tokvalue->strValue();
-                ValueFlow::Value rhs = execute(expr->astOperand2());
-                if (!rhs.isIntValue() || rhs.isImpossible())
-                    return unknown();
-                const MathLib::bigint index = rhs.intvalue;
-                if (index >= 0 && index < strValue.size())
-                    return ValueFlow::Value{strValue[index]};
-                if (index == strValue.size())
-                    return ValueFlow::Value{};
+                const Values rhs = execute(expr->astOperand2());
+                const ValueFlow::Value* index = getSingleValue(rhs);
+                if (!index || !index->isIntValue())
+                    return {};
+                if (index->intvalue >= 0 && index->intvalue < strValue.size())
+                    return single(ValueFlow::Value{strValue[index->intvalue]});
+                if (index->intvalue == strValue.size())
+                    return single(ValueFlow::Value{});
             } else if (Token::Match(expr, "%cop%") && expr->astOperand1() && expr->astOperand2()) {
-                ProgramMemory::Values lhsValues = executeValues(expr->astOperand1());
+                Values lhsValues = execute(expr->astOperand1());
                 if (lhsValues.empty())
-                    return unknown();
-                ProgramMemory::Values rhsValues = executeValues(expr->astOperand2());
+                    return {};
+                Values rhsValues = execute(expr->astOperand2());
                 if (rhsValues.empty())
-                    return unknown();
-                ValueFlow::Value lhs = representative(lhsValues);
-                ValueFlow::Value rhs = representative(rhsValues);
-                // Compare ranges: an operand with constraints (the values of an operand are either one
-                // value or all constraints) is compared as the interval they describe
-                if (expr->isComparisonOp() && (lhs.isImpossible() || rhs.isImpossible())) {
+                    return {};
+                // The values of an operand are either one value or all constraints
+                const bool lhsConstraints = lhsValues.front().isImpossible();
+                const bool rhsConstraints = rhsValues.front().isImpossible();
+                if (!expr->isComparisonOp() && lhsConstraints != rhsConstraints) {
+                    // Apply the operation to each constraint; a constraint it cannot transform is dropped
+                    const Values& constraints = lhsConstraints ? lhsValues : rhsValues;
+                    const ValueFlow::Value& other = lhsConstraints ? rhsValues.front() : lhsValues.front();
+                    Values result;
+                    for (const ValueFlow::Value& constraint : constraints) {
+                        ValueFlow::Value r = lhsConstraints ? evaluate(expr, constraint, other) : evaluate(expr, other, constraint);
+                        if (!r.isUninitValue())
+                            result.push_back(std::move(r));
+                    }
+                    return result;
+                }
+                ValueFlow::Value lhs = lhsValues.front();
+                ValueFlow::Value rhs = rhsValues.front();
+                // Compare ranges: an operand with constraints is compared as the interval they describe
+                if (expr->isComparisonOp() && (lhsConstraints || rhsConstraints)) {
                     std::vector<ValueFlow::Value> result =
                         infer(makeIntegralInferModel(), expr->str(), std::move(lhsValues), std::move(rhsValues));
                     if (!result.empty())
-                        return std::move(result.front());
+                        return single(std::move(result.front()));
                 }
                 ValueFlow::Value r = evaluate(expr, lhs, rhs);
                 if (expr->isComparisonOp() && (r.isUninitValue() || r.isImpossible())) {
@@ -1926,7 +1967,7 @@ namespace {
                                                                      expr->astOperand1()->values(),
                                                                      {std::move(rhs)});
                         if (!result.empty() && result.front().isKnown())
-                            return std::move(result.front());
+                            return single(std::move(result.front()));
                     }
                     if (lhs.isIntValue() && !expr->astOperand2()->values().empty()) {
                         std::vector<ValueFlow::Value> result = infer(makeIntegralInferModel(),
@@ -1934,123 +1975,131 @@ namespace {
                                                                      {std::move(lhs)},
                                                                      expr->astOperand2()->values());
                         if (!result.empty() && result.front().isKnown())
-                            return std::move(result.front());
+                            return single(std::move(result.front()));
                     }
-                    return unknown();
+                    return {};
                 }
-                return r;
+                return single(std::move(r));
             }
             // Unary ops
             else if (Token::Match(expr, "!|+|-") && expr->astOperand1() && !expr->astOperand2()) {
-                ValueFlow::Value lhs = execute(expr->astOperand1());
-                if (!lhs.isIntValue())
-                    return unknown();
+                Values lhs = execute(expr->astOperand1());
+                if (lhs.empty() || !lhs.front().isIntValue())
+                    return {};
                 if (expr->str() == "!") {
+                    ValueFlow::Value result = lhs.front();
                     if (isTrue(lhs)) {
-                        lhs.intvalue = 0;
+                        result.intvalue = 0;
                     } else if (isFalse(lhs)) {
-                        lhs.intvalue = 1;
+                        result.intvalue = 1;
                     } else {
-                        return unknown();
+                        return {};
                     }
-                    lhs.setPossible();
-                    lhs.bound = ValueFlow::Value::Bound::Point;
+                    result.setPossible();
+                    result.bound = ValueFlow::Value::Bound::Point;
+                    return single(std::move(result));
                 }
                 if (expr->str() == "-") {
-                    lhs.intvalue = -lhs.intvalue;
-                    lhs.invertBound();
+                    for (ValueFlow::Value& v : lhs) {
+                        v.intvalue = -v.intvalue;
+                        v.invertBound();
+                    }
                 }
                 return lhs;
             } else if (expr->str() == "?" && expr->astOperand1() && expr->astOperand2()) {
-                ValueFlow::Value cond = execute(expr->astOperand1());
-                if (!cond.isIntValue())
-                    return unknown();
+                const Values cond = execute(expr->astOperand1());
+                if (cond.empty() || !cond.front().isIntValue())
+                    return {};
                 const Token* child = expr->astOperand2();
                 if (isFalse(cond))
                     return execute(child->astOperand2());
                 if (isTrue(cond))
                     return execute(child->astOperand1());
 
-                return unknown();
+                return {};
             } else if (expr->str() == "(" && expr->isCast()) {
                 if (expr->astOperand2()) {
                     if (expr->astOperand1()->str() != "dynamic_cast")
                         return execute(expr->astOperand2());
-                    return unknown();
+                    return {};
                 }
                 return execute(expr->astOperand1());
             }
-            // Return the tracked value and write it back when it differs, so later reads see the
-            // same value (as fillProgramMemoryFromAssignments used to do).
-            if (const ProgramMemory::Values* tracked = getTrackedValues(expr)) {
-                const ProgramMemory::Values* stored = pm->getValues(expr->exprId());
+            // Return the tracked values and write them back when they differ, so later reads see the
+            // same values (as fillProgramMemoryFromAssignments used to do).
+            if (const Values* tracked = getTrackedValues(expr)) {
+                const Values* stored = pm->getValues(expr->exprId());
                 if (!stored || *stored != *tracked)
                     pm->setValues(expr, *tracked);
-                return representative(*tracked);
+                return *tracked;
             }
-            if (const ProgramMemory::Values* stored = getStoredValues(expr)) {
+            if (const Values* stored = getStoredValues(expr)) {
                 // An impossible value that excludes zero makes the expression true as a bool
                 if (std::any_of(stored->cbegin(), stored->cend(), [](const ValueFlow::Value& v) {
                     return v.isImpossible() && v.isIntValue() && isTrue(v);
                 }) && isUsedAsBool(expr, settings)) {
                     ValueFlow::Value result{1};
                     result.setKnown();
-                    return result;
+                    return single(std::move(result));
                 }
-                return representative(*stored);
+                return *stored;
             }
 
             if (Token::Match(expr->previous(), ">|%name% {|(")) {
                 const Token* ftok = expr->previous();
                 const Function* f = ftok->function();
-                ValueFlow::Value result = unknown();
+                Values result;
                 if (expr->str() == "(") {
-                    std::vector<const Token*> tokArgs = getArguments(expr);
-                    std::vector<ValueFlow::Value> args(tokArgs.size());
-                    std::transform(
-                        tokArgs.cbegin(), tokArgs.cend(), args.begin(), [&](const Token* tok) {
-                        return execute(tok);
-                    });
+                    const std::vector<const Token*> tokArgs = getArguments(expr);
+                    std::vector<Values> args;
+                    for (const Token* tok : tokArgs)
+                        args.push_back(execute(tok));
                     if (f) {
                         if (fdepth >= 0 && !f->isImplicitlyVirtual()) {
                             ProgramMemory functionState;
                             for (std::size_t i = 0; i < args.size(); ++i) {
                                 const Variable* const arg = f->getArgumentVar(i);
                                 if (!arg)
-                                    return unknown();
-                                functionState.setValue(arg->nameToken(), args[i]);
+                                    return {};
+                                functionState.setValues(arg->nameToken(), args[i]);
                             }
                             Executor ex = *this;
                             ex.pm = &functionState;
                             ex.fdepth--;
-                            auto r = ex.execute(f->functionScope);
-                            if (!r.empty())
-                                result = std::move(r.front());
+                            for (const ValueFlow::Value& v : ex.execute(f->functionScope)) {
+                                if (!v.isUninitValue())
+                                    result.push_back(v);
+                            }
                             // TODO: Track values changed by reference
                         }
                     } else {
-                        BuiltinLibraryFunction lf = getBuiltinLibraryFunction(ftok->str());
-                        // The builtin functions compute with values, not with constraints
-                        if (lf && std::none_of(args.cbegin(), args.cend(), std::mem_fn(&ValueFlow::Value::isImpossible)))
-                            return lf(args);
-                        if (lf)
-                            return unknown();
+                        if (BuiltinLibraryFunction lf = getBuiltinLibraryFunction(ftok->str())) {
+                            // The builtin functions compute with values, not with constraints
+                            std::vector<ValueFlow::Value> argValues;
+                            for (const Values& a : args) {
+                                const ValueFlow::Value* v = getSingleValue(a);
+                                if (!v)
+                                    return {};
+                                argValues.push_back(*v);
+                            }
+                            return single(lf(argValues));
+                        }
                         const std::string& returnValue = settings.library.returnValue(ftok);
                         if (!returnValue.empty()) {
                             std::unordered_map<nonneg int, ValueFlow::Value> arg_map;
                             int argn = 0;
-                            for (const ValueFlow::Value& v : args) {
-                                if (!v.isUninitValue())
-                                    arg_map[argn] = v;
+                            for (const Values& a : args) {
+                                if (!a.empty())
+                                    arg_map[argn] = a.front();
                                 argn++;
                             }
-                            return evaluateLibraryFunction(arg_map, returnValue, settings, ftok->isCpp());
+                            return single(evaluateLibraryFunction(arg_map, returnValue, settings, ftok->isCpp()));
                         }
                     }
                 }
                 // Check if function modifies argument
                 visitAstNodes(expr->astOperand2(), [&](const Token* child) {
-                    const ProgramMemory::Values* values = child->exprId() > 0 ? pm->getValues(child->exprId()) : nullptr;
+                    const Values* values = child->exprId() > 0 ? pm->getValues(child->exprId()) : nullptr;
                     if (values) {
                         // The values of an expression all have the same type
                         const ValueFlow::Value& v = values->front();
@@ -2067,7 +2116,7 @@ namespace {
                 return result;
             }
 
-            return unknown();
+            return {};
         }
         static const ValueFlow::Value* getImpossibleValue(const Token* tok)
         {
@@ -2090,31 +2139,25 @@ namespace {
             return *it;
         }
 
-        static bool updateValue(ValueFlow::Value& v, ValueFlow::Value x)
-        {
-            const bool returnValue = !x.isUninitValue() && !x.isImpossible();
-            if (v.isUninitValue() || returnValue)
-                v = std::move(x);
-            return returnValue;
-        }
-
-        ValueFlow::Value execute(const Token* expr)
+        // The values of the expression. When it does not evaluate to a value, the program memory and
+        // the values of the token may still constrain it.
+        Values execute(const Token* expr)
         {
             depth--;
             OnExit onExit{[&] {
                     depth++;
                 }};
-            if (depth < 0)
-                return unknown();
-            ValueFlow::Value v = unknown();
-            if (updateValue(v, executeImpl(expr)))
-                return v;
-            if (!expr)
-                return v;
+            if (depth < 0 || !expr)
+                return {};
+            Values values = executeImpl(expr);
+            if (!values.empty() && !values.front().isImpossible())
+                return values;
             if (expr->exprId() > 0) {
-                if (const ProgramMemory::Values* stored = pm->getValues(expr->exprId())) {
-                    if (updateValue(v, representative(*stored)))
-                        return v;
+                if (const Values* stored = pm->getValues(expr->exprId())) {
+                    if (!stored->front().isImpossible())
+                        return *stored;
+                    if (values.empty())
+                        values = *stored;
                 }
             }
             // Find symbolic values
@@ -2123,18 +2166,18 @@ namespace {
                     continue;
                 if (!value.isKnown())
                     continue;
-                const ProgramMemory::Values* stored = pm->getValues(value.tokvalue->exprId());
+                const Values* stored = pm->getValues(value.tokvalue->exprId());
                 if (!stored || (!stored->front().isIntValue() && value.intvalue != 0))
                     continue;
                 ValueFlow::Value v2 = stored->front();
                 v2.intvalue += value.intvalue;
-                return v2;
+                return single(std::move(v2));
             }
-            if (v.isImpossible() && v.isIntValue())
-                return v;
-            if (const ValueFlow::Value* value = getImpossibleValue(expr))
-                return *value;
-            return v;
+            if (!values.empty() && values.front().isIntValue())
+                return values;
+            if (const ValueFlow::Value* impossible = getImpossibleValue(expr))
+                return single(*impossible);
+            return values;
         }
 
         std::vector<ValueFlow::Value> execute(const Scope* scope)
@@ -2146,11 +2189,15 @@ namespace {
             for (const Token* tok = scope->bodyStart->next(); precedes(tok, scope->bodyEnd); tok = tok->next()) {
                 const Token* top = tok->astTop();
 
-                if (Token::simpleMatch(top, "return") && top->astOperand1())
-                    return {execute(top->astOperand1())};
+                if (Token::simpleMatch(top, "return") && top->astOperand1()) {
+                    const Values values = execute(top->astOperand1());
+                    if (values.empty())
+                        return {unknown()};
+                    return std::vector<ValueFlow::Value>(values.cbegin(), values.cend());
+                }
 
                 if (Token::Match(top, "%op%")) {
-                    if (execute(top).isUninitValue())
+                    if (execute(top).empty())
                         return {unknown()};
                     const Token* next = nextAfterAstRightmostLeaf(top);
                     if (!next)
@@ -2158,8 +2205,8 @@ namespace {
                     tok = next;
                 } else if (Token::simpleMatch(top->previous(), "if (")) {
                     const Token* condTok = top->astOperand2();
-                    ValueFlow::Value v = execute(condTok);
-                    if (!v.isIntValue())
+                    const Values cond = execute(condTok);
+                    if (cond.empty() || !cond.front().isIntValue())
                         return {unknown()};
                     const Token* thenStart = top->link()->next();
                     const Token* next = thenStart->link();
@@ -2169,9 +2216,9 @@ namespace {
                         next = elseStart->link();
                     }
                     std::vector<ValueFlow::Value> result;
-                    if (isTrue(v)) {
+                    if (isTrue(cond)) {
                         result = execute(thenStart->scope());
-                    } else if (isFalse(v)) {
+                    } else if (isFalse(cond)) {
                         if (elseStart)
                             result = execute(elseStart->scope());
                     } else {
@@ -2196,7 +2243,7 @@ static ValueFlow::Value execute(const Token* expr,
 {
     Executor ex{&pm, settings};
     ex.vars = &vars;
-    return ex.execute(expr);
+    return Executor::representative(ex.execute(expr));
 }
 
 static ProgramMemory::Values executeValues(const Token* expr,
@@ -2206,7 +2253,7 @@ static ProgramMemory::Values executeValues(const Token* expr,
 {
     Executor ex{&pm, settings};
     ex.vars = &vars;
-    return ex.executeValues(expr);
+    return ex.execute(expr);
 }
 
 std::vector<ValueFlow::Value> execute(const Scope* scope, ProgramMemory& pm, const Settings& settings)

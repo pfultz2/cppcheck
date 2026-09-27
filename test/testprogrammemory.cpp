@@ -340,11 +340,16 @@ private:
                             "            y = 10 - x < 7;\n"
                             "            y = -x < 0;\n"
                             "            y = x;\n"
+                            "            y = x + 1 < 20;\n"
+                            "            y = -x > -20;\n"
+                            "            y = (long)x < 20;\n"
+                            "            y = (x > 0 ? x : 0) < 20;\n"
+                            "            y = 2 * x - 1 == 3;\n"
                             "        }\n"
                             "    }\n"
                             "}\n";
         const std::vector<std::string> results = evaluateAssignments(code);
-        ASSERT_EQUALS(8U, results.size());
+        ASSERT_EQUALS(13U, results.size());
         // 3 < x < 10
         ASSERT_EQUALS("0", results[0]);
         ASSERT_EQUALS("", results[1]);
@@ -356,6 +361,12 @@ private:
         ASSERT_EQUALS("1", results[6]);
         // a range is not a value
         ASSERT_EQUALS("", results[7]);
+        // both bounds follow the value through arithmetic, casts and conditionals
+        ASSERT_EQUALS("1", results[8]);
+        ASSERT_EQUALS("1", results[9]);
+        ASSERT_EQUALS("1", results[10]);
+        ASSERT_EQUALS("1", results[11]);
+        ASSERT_EQUALS("0", results[12]);
     }
 
     void executeScaledRange() {
