@@ -273,10 +273,10 @@ bool ProgramMemory::getContainerEmptyValue(nonneg int exprid, MathLib::bigint& r
     const Values* values = getValues(exprid);
     if (!values)
         return false;
-    const ValueFlow::Value empty = containerEmptyValue(*values);
-    if (empty.isUninitValue())
+    const ValueFlow::Value isEmpty = containerEmptyValue(*values);
+    if (isEmpty.isUninitValue())
         return false;
-    result = empty.intvalue;
+    result = isEmpty.intvalue;
     return true;
 }
 
@@ -2058,8 +2058,9 @@ namespace {
                     const std::vector<const Token*> tokArgs = getArguments(expr);
                     std::vector<Values> args;
                     args.reserve(tokArgs.size());
-                    for (const Token* tok : tokArgs)
-                        args.push_back(execute(tok));
+                    std::transform(tokArgs.cbegin(), tokArgs.cend(), std::back_inserter(args), [&](const Token* tok) {
+                        return execute(tok);
+                    });
                     if (f) {
                         if (fdepth >= 0 && !f->isImplicitlyVirtual()) {
                             ProgramMemory functionState;
@@ -2072,10 +2073,10 @@ namespace {
                             Executor ex = *this;
                             ex.pm = &functionState;
                             ex.fdepth--;
-                            for (const ValueFlow::Value& v : ex.execute(f->functionScope)) {
-                                if (!v.isUninitValue())
-                                    result.push_back(v);
-                            }
+                            const std::vector<ValueFlow::Value> returned = ex.execute(f->functionScope);
+                            std::copy_if(returned.cbegin(), returned.cend(), std::back_inserter(result), [](const ValueFlow::Value& v) {
+                                return !v.isUninitValue();
+                            });
                             // TODO: Track values changed by reference
                         }
                     } else {

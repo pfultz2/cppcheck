@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -322,9 +323,11 @@ private:
         SimpleTokenizer tokenizer(settings, *this);
         ASSERT(tokenizer.tokenize(code));
         clearValues(tokenizer);
+        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
         std::vector<std::string> results;
-        for (const Token* expr : assignedExpressions(tokenizer.tokens(), "y"))
-            results.push_back(evaluate(expr));
+        std::transform(exprs.cbegin(), exprs.cend(), std::back_inserter(results), [&](const Token* expr) {
+            return evaluate(expr);
+        });
         return results;
     }
 
