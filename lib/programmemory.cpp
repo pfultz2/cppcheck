@@ -369,13 +369,18 @@ void ProgramMemory::replace(ProgramMemory pm, bool skipUnknown)
 
     copyOnWrite();
 
+    // The values can be moved out of the given memory only when no other memory shares them
+    const bool owned = pm.mValues.use_count() == 1;
     for (auto&& p : (*pm.mValues)) {
         if (skipUnknown) {
             auto it = mValues->find(p.first);
             if (it != mValues->end() && isUnknown(it->second))
                 continue;
         }
-        (*mValues)[p.first] = std::move(p.second);
+        if (owned)
+            (*mValues)[p.first] = std::move(p.second);
+        else
+            (*mValues)[p.first] = p.second;
     }
 }
 
@@ -2052,6 +2057,7 @@ namespace {
                 if (expr->str() == "(") {
                     const std::vector<const Token*> tokArgs = getArguments(expr);
                     std::vector<Values> args;
+                    args.reserve(tokArgs.size());
                     for (const Token* tok : tokArgs)
                         args.push_back(execute(tok));
                     if (f) {
@@ -2076,6 +2082,7 @@ namespace {
                         if (BuiltinLibraryFunction lf = getBuiltinLibraryFunction(ftok->str())) {
                             // The builtin functions compute with values, not with constraints
                             std::vector<ValueFlow::Value> argValues;
+                            argValues.reserve(args.size());
                             for (const Values& a : args) {
                                 const ValueFlow::Value* v = getSingleValue(a);
                                 if (!v)

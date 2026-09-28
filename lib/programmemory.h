@@ -190,7 +190,7 @@ private:
     std::shared_ptr<Map> mValues;
 };
 
-struct ProgramMemoryState {
+struct CPPCHECKLIB ProgramMemoryState {
     struct ChangedKeyHash {
         std::size_t operator()(const std::tuple<const Token*, const Token*, const Token*>& t) const
         {
@@ -230,12 +230,12 @@ struct ProgramMemoryState {
 
 std::vector<ValueFlow::Value> execute(const Scope* scope, ProgramMemory& pm, const Settings& settings);
 
-void execute(const Token* expr,
-             ProgramMemory& programMemory,
-             MathLib::bigint* result,
-             bool* error,
-             const Settings& settings,
-             const ProgramMemory::Map& vars = {});
+CPPCHECKLIB void execute(const Token* expr,
+                         ProgramMemory& programMemory,
+                         MathLib::bigint* result,
+                         bool* error,
+                         const Settings& settings,
+                         const ProgramMemory::Map& vars = {});
 
 /**
  * Is condition always false when variable has given value?
