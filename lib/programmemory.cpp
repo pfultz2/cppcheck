@@ -183,6 +183,8 @@ void ProgramMemory::record(const Token* expr, const ValueFlow::Value& value)
         !values.front().isImpossible()) {
         values.assign(1, value);
     } else {
+        if (values.size() >= 10U)
+            return;
         values.push_back(value);
         Token::removeContradictions(values);
     }
