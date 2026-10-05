@@ -1723,10 +1723,10 @@ namespace {
             return stored;
         }
 
-        // The values of the expression that this expression is symbolically equal to, moved by the
-        // offset of the symbolic value, for the symbolic values the predicate accepts
+        // The values of the expression as given by its symbolic values that the predicate accepts: the
+        // values of the expression a symbolic value refers to, moved by its offset
         template<class Predicate>
-        Values aliasedValues(const Token* expr, Predicate accept) const
+        Values resolveSymbolicValues(const Token* expr, Predicate accept) const
         {
             Values result;
             for (const ValueFlow::Value& value : expr->values()) {
@@ -1926,7 +1926,7 @@ namespace {
             Values sizes = containerSizeValues(execute(containerTok));
             if (!sizes.empty())
                 return sizes;
-            return containerSizeValues(aliasedValues(containerTok, [](const ValueFlow::Value& v) {
+            return containerSizeValues(resolveSymbolicValues(containerTok, [](const ValueFlow::Value& v) {
                 return !v.isImpossible() && v.intvalue == 0;
             }));
         }
@@ -2261,11 +2261,11 @@ namespace {
                 }
             }
             // Find symbolic values
-            Values aliased = aliasedValues(expr, [](const ValueFlow::Value& v) {
+            Values symbolic = resolveSymbolicValues(expr, [](const ValueFlow::Value& v) {
                 return v.isKnown();
             });
-            if (!aliased.empty())
-                return aliased;
+            if (!symbolic.empty())
+                return symbolic;
             if (!values.empty() && values.front().isIntValue())
                 return values;
             if (const ValueFlow::Value* impossible = getImpossibleValue(expr))
