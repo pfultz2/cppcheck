@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -202,18 +203,29 @@ namespace ValueFlow
             return (bound == Bound::Lower) != isImpossible();
         }
 
-        /** The first value inside the range of a value with a bound */
+        /**
+         * The first value inside the range of a value with a bound. A bound at the limit of the type
+         * stays there, as there is no value beyond it.
+         */
         MathLib::bigint rangeEdge() const {
             if (!isImpossible())
                 return intvalue;
-            return isLowerEdge() ? intvalue + 1 : intvalue - 1;
+            if (isLowerEdge())
+                return intvalue == std::numeric_limits<MathLib::bigint>::max() ? intvalue : intvalue + 1;
+            return intvalue == std::numeric_limits<MathLib::bigint>::min() ? intvalue : intvalue - 1;
         }
 
-        /** Let the range start (lower edge) or end at the given value, keeping the kind of the value */
+        /**
+         * Let the range start (lower edge) or end at the given value, keeping the kind of the value.
+         * An edge at the limit of the type stays there.
+         */
         void setRangeEdge(MathLib::bigint edge, bool lowerEdge) {
             if (isImpossible()) {
                 bound = lowerEdge ? Bound::Upper : Bound::Lower;
-                intvalue = lowerEdge ? edge - 1 : edge + 1;
+                if (lowerEdge)
+                    intvalue = edge == std::numeric_limits<MathLib::bigint>::min() ? edge : edge - 1;
+                else
+                    intvalue = edge == std::numeric_limits<MathLib::bigint>::max() ? edge : edge + 1;
             } else {
                 bound = lowerEdge ? Bound::Lower : Bound::Upper;
                 intvalue = edge;

@@ -6313,7 +6313,8 @@ const Token* ValueFlow::solveExprValue(const Token* expr,
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }
         case '*': {
-            if (intval == 0 || ValueFlow::isSaturated(value.intvalue))
+            // A bound at the limit of the type cannot be solved, nor can its edge be divided safely
+            if (intval == 0 || ValueFlow::isSaturated(value.intvalue) || ValueFlow::isSaturated(value.rangeEdge()))
                 break;
             if (value.bound == ValueFlow::Value::Bound::Point) {
                 // x * k is v only for a v that k divides

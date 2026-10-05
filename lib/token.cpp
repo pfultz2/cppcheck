@@ -39,6 +39,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -2021,7 +2022,9 @@ static bool isAdjacent(const ValueFlow::Value& x, const ValueFlow::Value& y)
         return true;
     if (x.valueType == ValueFlow::Value::ValueType::FLOAT)
         return false;
-    return std::abs(x.intvalue - y.intvalue) == 1;
+    // Compared without a difference, which could overflow
+    const MathLib::bigint max = std::numeric_limits<MathLib::bigint>::max();
+    return (y.intvalue != max && x.intvalue == y.intvalue + 1) || (x.intvalue != max && y.intvalue == x.intvalue + 1);
 }
 
 static bool removePointValue(std::list<ValueFlow::Value>& values, std::list<ValueFlow::Value>::iterator& x)

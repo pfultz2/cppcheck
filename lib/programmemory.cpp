@@ -853,6 +853,20 @@ static bool isBounded(const ValueFlow::Value& value)
     return value.bound != ValueFlow::Value::Bound::Point;
 }
 
+static bool addOverflows(MathLib::bigint x, MathLib::bigint y)
+{
+    if (y > 0)
+        return x > std::numeric_limits<MathLib::bigint>::max() - y;
+    return x < std::numeric_limits<MathLib::bigint>::min() - y;
+}
+
+static bool subtractOverflows(MathLib::bigint x, MathLib::bigint y)
+{
+    if (y < 0)
+        return x > std::numeric_limits<MathLib::bigint>::max() + y;
+    return x < std::numeric_limits<MathLib::bigint>::min() + y;
+}
+
 static bool multiplyOverflows(MathLib::bigint x, MathLib::bigint y)
 {
     if (x == 0 || y == 0)
@@ -860,6 +874,69 @@ static bool multiplyOverflows(MathLib::bigint x, MathLib::bigint y)
     if (ValueFlow::isSaturated(x) || ValueFlow::isSaturated(y))
         return true;
     return std::abs(x) > std::numeric_limits<MathLib::bigint>::max() / std::abs(y);
+}
+
+// Does the left shift of a non-negative value overflow? The shift must be valid.
+static bool shiftOverflows(MathLib::bigint x, MathLib::bigint shift)
+{
+    const MathLib::biguint limit = static_cast<MathLib::biguint>(std::numeric_limits<MathLib::bigint>::max()) >>
+                                   static_cast<unsigned>(shift);
+    return static_cast<MathLib::biguint>(x) > limit;
+}
+
+// The largest value of the unsigned type of the expression, or -1 when the type is not known
+static MathLib::bigint unsignedMax(const Token* expr, const Settings& settings)
+{
+    const ValueType* vt = expr->valueType();
+    if (!vt)
+        return -1;
+    const std::size_t size = vt->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
+    if (size == 0)
+        return -1;
+    if (size >= sizeof(MathLib::bigint))
+        return std::numeric_limits<MathLib::bigint>::max();
+    return static_cast<MathLib::bigint>((MathLib::biguint(1) << (8 * size)) - 1);
+}
+
+// Does "x <op> k" (or "k <op> x", when the range is the right operand) wrap around in the unsigned
+// type of the expression for some value x that the values allow? The values are either one value or
+// constraints. A signed expression does not wrap: its overflow is undefined.
+static bool mayWrap(const ProgramMemory::Values& values,
+                    const Token* expr,
+                    const std::string& op,
+                    MathLib::bigint k,
+                    bool rangeIsLhs,
+                    const Settings& settings)
+{
+    if (!astIsUnsigned(expr))
+        return false;
+    const MathLib::bigint max = unsignedMax(expr, settings);
+    if (max < 0 || ValueFlow::isSaturated(k))
+        return true;
+    // The smallest and the largest value that the values allow
+    MathLib::bigint low = 0;
+    MathLib::bigint high = max;
+    for (const ValueFlow::Value& v : values) {
+        if (!v.isImpossible())
+            low = high = v.intvalue;
+        else if (isLowerBound(v))
+            low = std::max(low, v.rangeEdge());
+        else if (isUpperBound(v))
+            high = std::min(high, v.rangeEdge());
+    }
+    if (op == "+")
+        return k >= 0 ? high > max - k : low < -k;
+    if (op == "-") {
+        if (!rangeIsLhs)
+            return k < 0 || high > k;
+        return k >= 0 ? low<k : high> max + k;
+    }
+    if (op == "*")
+        return k < 0 || multiplyOverflows(high, k) || high * k > max;
+    if (op == "<<")
+        return k < 0 || k >= 63 || shiftOverflows(high, k) ||
+               static_cast<MathLib::bigint>(static_cast<MathLib::biguint>(high) << static_cast<unsigned>(k)) > max;
+    return false;
 }
 
 // The operations that keep the order of the values of a range
@@ -873,15 +950,20 @@ static bool isMonotone(const std::string& op)
 // values turns the range around.
 static ValueFlow::Value applyToRange(const std::string& op, const ValueFlow::Value& range, MathLib::bigint k, bool rangeIsLhs)
 {
-    const MathLib::bigint edge = range.rangeEdge();
-    if (ValueFlow::isSaturated(edge) || ValueFlow::isSaturated(k))
+    // A bound at the limit of the type has no edge beyond it
+    if (ValueFlow::isSaturated(range.intvalue) || ValueFlow::isSaturated(k))
         return ValueFlow::Value::unknown();
+    const MathLib::bigint edge = range.rangeEdge();
     bool increasing = true;
     MathLib::bigint result = 0;
     if (op == "+") {
+        if (addOverflows(edge, k))
+            return ValueFlow::Value::unknown();
         result = edge + k;
     } else if (op == "-") {
         increasing = rangeIsLhs;
+        if (rangeIsLhs ? subtractOverflows(edge, k) : subtractOverflows(k, edge))
+            return ValueFlow::Value::unknown();
         result = rangeIsLhs ? edge - k : k - edge;
     } else if (op == "*") {
         if (k == 0 || multiplyOverflows(edge, k))
@@ -895,12 +977,18 @@ static ValueFlow::Value applyToRange(const std::string& op, const ValueFlow::Val
         increasing = k > 0;
         result = edge / k;
     } else {
-        // Shifts: calculate() rejects a negative or too large shift and a negative value
+        // Shifts: calculate() rejects a negative or too large shift and a negative value, but it does
+        // not check that a left shift fits
+        if (!rangeIsLhs || (op == "<<" && (edge < 0 || k < 0 || k >= 63 || shiftOverflows(edge, k))))
+            return ValueFlow::Value::unknown();
         bool error = false;
         result = calculate(op, edge, k, &error);
-        if (!rangeIsLhs || error || (op == "<<" && (result >> k) != edge))
+        if (error)
             return ValueFlow::Value::unknown();
     }
+    // The bound is one off the edge of the result
+    if (ValueFlow::isSaturated(result))
+        return ValueFlow::Value::unknown();
     ValueFlow::Value scaled = range;
     scaled.setRangeEdge(result, range.isLowerEdge() == increasing);
     return scaled;
@@ -1658,7 +1746,7 @@ namespace {
         // known value and does not depend on a tracked value
         const Values* getStoredValues(const Token* expr) const
         {
-            if (expr->exprId() == 0)
+            if (!expr || expr->exprId() == 0)
                 return nullptr;
             const Values* stored = pm->getValues(expr->exprId());
             if (!stored || expr->hasKnownIntValue() || dependsOnTrackedValue(expr))
@@ -1701,6 +1789,8 @@ namespace {
 
         ValueFlow::Value executeMultiCondition(bool b, const Token* expr)
         {
+            if (!expr)
+                return unknown();
             if (const ValueFlow::Value* v = pm->getValue(expr->exprId(), /*impossible*/ true)) {
                 if (v->isIntValue())
                     return *v;
@@ -1806,11 +1896,14 @@ namespace {
                     continue;
                 if (value.tokvalue->exprId() == 0)
                     continue;
-                const ValueFlow::Value* sizeValue = pm->getValue(value.tokvalue->exprId());
-                if (sizeValue && sizeValue->isContainerSizeValue()) {
-                    sizes.push_back(*sizeValue);
+                const Values* aliasValues = pm->getValues(value.tokvalue->exprId());
+                if (!aliasValues)
+                    continue;
+                std::copy_if(aliasValues->cbegin(), aliasValues->cend(), std::back_inserter(sizes), [](const ValueFlow::Value& v) {
+                    return v.isContainerSizeValue();
+                });
+                if (!sizes.empty())
                     break;
-                }
             }
             return sizes;
         }
@@ -1865,6 +1958,12 @@ namespace {
                     // Constraints of the right hand side cannot be combined with the values
                     const ValueFlow::Value& delta = rhs.front();
                     Values& lhs = pm->at(expr->astOperand1()->exprId());
+                    // An unsigned value that may wrap around is lost
+                    const std::string op = expr->str().substr(0, expr->str().size() - 1);
+                    if (delta.isIntValue() && mayWrap(lhs, expr->astOperand1(), op, delta.intvalue, true, settings)) {
+                        lhs.assign(1, unknown());
+                        return {};
+                    }
                     for (ValueFlow::Value& v : lhs) {
                         const ValueFlow::Value r = evaluate(expr, v, delta, /*removeAssign*/ true);
                         if (r.isUninitValue()) {
@@ -1898,12 +1997,14 @@ namespace {
                 // The values of an expression all have the same type
                 if (!lhs.front().isIntValue())
                     return {};
-                // An unsigned value wraps around when it is decremented and may be zero
-                if (expr->str() == "--" && astIsUnsigned(expr->astOperand1()) && !isTrue(lhs)) {
+                // An unsigned value that may wrap around is lost, as is a value at the limit of the type
+                if (mayWrap(lhs, expr->astOperand1(), expr->str() == "++" ? "+" : "-", 1, true, settings) ||
+                    std::any_of(lhs.cbegin(), lhs.cend(), [](const ValueFlow::Value& v) {
+                    return ValueFlow::isSaturated(v.intvalue);
+                })) {
                     lhs.assign(1, unknown());
                     return {};
                 }
-
                 // Shift every value of the variable; bounds and impossible values move along
                 for (ValueFlow::Value& v : lhs) {
                     if (expr->str() == "++")
@@ -1949,6 +2050,9 @@ namespace {
                     // Apply the operation to each constraint; a constraint it cannot transform is dropped
                     const Values& constraints = lhsConstraints ? lhsValues : rhsValues;
                     const ValueFlow::Value& other = lhsConstraints ? rhsValues.front() : lhsValues.front();
+                    // The range of an unsigned expression that may wrap around is lost
+                    if (other.isIntValue() && mayWrap(constraints, expr, expr->str(), other.intvalue, lhsConstraints, settings))
+                        return {};
                     Values result;
                     for (const ValueFlow::Value& constraint : constraints) {
                         ValueFlow::Value r = lhsConstraints ? evaluate(expr, constraint, other) : evaluate(expr, other, constraint);
@@ -2179,9 +2283,16 @@ namespace {
                 const Values* stored = pm->getValues(value.tokvalue->exprId());
                 if (!stored || (!stored->front().isIntValue() && value.intvalue != 0))
                     continue;
-                ValueFlow::Value v2 = stored->front();
-                v2.intvalue += value.intvalue;
-                return single(std::move(v2));
+                // The values of the expression this one is symbolically equal to, moved by the offset
+                Values shifted;
+                for (const ValueFlow::Value& v : *stored) {
+                    if (addOverflows(v.intvalue, value.intvalue))
+                        continue;
+                    shifted.push_back(v);
+                    shifted.back().intvalue += value.intvalue;
+                }
+                if (!shifted.empty())
+                    return shifted;
             }
             if (!values.empty() && values.front().isIntValue())
                 return values;

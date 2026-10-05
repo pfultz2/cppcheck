@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -52,6 +53,9 @@ private:
         TEST_CASE(executeScaledRange);
         TEST_CASE(executeSolvedRange);
         TEST_CASE(executeCompoundAssignment);
+        TEST_CASE(executeRangeAtLimit);
+        TEST_CASE(executeUnsignedRange);
+        TEST_CASE(executeContainerAlias);
         TEST_CASE(executeContainerSizeRange);
     }
 
@@ -475,6 +479,136 @@ private:
         ASSERT(values);
         ASSERT_EQUALS(1U, values->size());
         ASSERT(hasValue(*values, 2, ValueFlow::Value::Bound::Upper));
+    }
+
+    // Arithmetic on a range at the limit of the type does not overflow in the analyzer
+    void executeRangeAtLimit() {
+        const char code[] = "void f(long long x, long long y) {\n"
+                            "    y = x + 100 < 0;\n"
+                            "    y = x - 100 > 0;\n"
+                            "    y = 100 - x > 0;\n"
+                            "    y = x * 2 > 0;\n"
+                            "    y = (x << 1) > 0;\n"
+                            "    x++;\n"
+                            "    y = x > 0;\n"
+                            "}\n";
+        SimpleTokenizer tokenizer(settings, *this);
+        ASSERT(tokenizer.tokenize(code));
+        clearValues(tokenizer);
+        const Token* xtok = Token::findsimplematch(tokenizer.tokens(), "x +");
+        const Token* inc = Token::findsimplematch(tokenizer.tokens(), "x ++");
+        ASSERT(xtok && inc);
+        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
+        ASSERT_EQUALS(6U, exprs.size());
+        const MathLib::bigint max = std::numeric_limits<MathLib::bigint>::max();
+        const MathLib::bigint min = std::numeric_limits<MathLib::bigint>::min();
+
+        // x > max - 10
+        ProgramMemory pm;
+        pm.setValue(xtok, greaterThan(max - 10));
+        ASSERT_EQUALS("", evaluate(exprs[0], pm));
+        ASSERT_EQUALS("1", evaluate(exprs[1], pm));
+        ASSERT_EQUALS("0", evaluate(exprs[2], pm));
+        ASSERT_EQUALS("", evaluate(exprs[3], pm));
+        ASSERT_EQUALS("", evaluate(exprs[4], pm));
+
+        // x < min + 10
+        pm = ProgramMemory();
+        pm.setValue(xtok, lessThan(min + 10));
+        ASSERT_EQUALS("1", evaluate(exprs[0], pm));
+        ASSERT_EQUALS("", evaluate(exprs[1], pm));
+        ASSERT_EQUALS("", evaluate(exprs[2], pm));
+        ASSERT_EQUALS("", evaluate(exprs[3], pm));
+        ASSERT_EQUALS("", evaluate(exprs[4], pm));
+
+        // x is the largest value: incrementing it is unknown
+        pm = ProgramMemory();
+        pm.setValue(xtok, ValueFlow::Value{max});
+        execute(inc->next(), pm, nullptr, nullptr, settings);
+        ASSERT_EQUALS("", evaluate(exprs[5], pm));
+
+        // x > max - 2: incrementing moves the bound to the limit, which is still not known to overflow
+        pm.setValue(xtok, greaterThan(max - 2));
+        execute(inc->next(), pm, nullptr, nullptr, settings);
+        ASSERT_EQUALS("1", evaluate(exprs[5], pm));
+    }
+
+    // The range of an unsigned expression is kept only when it cannot wrap around
+    void executeUnsignedRange() {
+        const char code[] = "void f(unsigned u, unsigned y) {\n"
+                            "    if (u > 3) {\n"
+                            "        y = u + 1 > 4;\n"
+                            "        y = u - 1 > 2;\n"
+                            "        y = u * 2 > 6;\n"
+                            "    }\n"
+                            "    if (u < 10) {\n"
+                            "        y = u - 1 < 9;\n"
+                            "        y = 10 - u > 0;\n"
+                            "        y = u + 1 < 11;\n"
+                            "    }\n"
+                            "    if (u > 3 && u < 10) {\n"
+                            "        y = u + 1 > 4;\n"
+                            "        y = u * 2 < 20;\n"
+                            "    }\n"
+                            "}\n";
+        const std::vector<std::string> results = evaluateAssignments(code);
+        ASSERT_EQUALS(8U, results.size());
+        // u > 3: adding and multiplying may wrap around, subtracting may not
+        ASSERT_EQUALS("", results[0]);
+        ASSERT_EQUALS("1", results[1]);
+        ASSERT_EQUALS("", results[2]);
+        // u < 10: subtracting may wrap around, the others may not
+        ASSERT_EQUALS("", results[3]);
+        ASSERT_EQUALS("1", results[4]);
+        ASSERT_EQUALS("1", results[5]);
+        // 3 < u < 10
+        ASSERT_EQUALS("1", results[6]);
+        ASSERT_EQUALS("1", results[7]);
+
+        const char code2[] = "void f(unsigned u, unsigned y) {\n"
+                             "    u++;\n"
+                             "    y = u > 4;\n"
+                             "}\n";
+        SimpleTokenizer tokenizer(settings, *this);
+        ASSERT(tokenizer.tokenize(code2));
+        clearValues(tokenizer);
+        const Token* utok = Token::findsimplematch(tokenizer.tokens(), "u ++");
+        ASSERT(utok);
+        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
+        ASSERT_EQUALS(1U, exprs.size());
+        // u > 3, then u++: u may have wrapped around
+        ProgramMemory pm;
+        pm.setValue(utok, greaterThan(3));
+        execute(utok->next(), pm, nullptr, nullptr, settings);
+        ASSERT_EQUALS("", evaluate(exprs[0], pm));
+        // 3 < u < 10, then u++: u > 4
+        pm = ProgramMemory();
+        pm.setValue(utok, greaterThan(3));
+        pm.setValue(utok, lessThan(10));
+        execute(utok->next(), pm, nullptr, nullptr, settings);
+        ASSERT_EQUALS("1", evaluate(exprs[0], pm));
+    }
+
+    // The size constraints of a container reach a container that is symbolically equal to it
+    void executeContainerAlias() {
+        const char code[] = "void f(std::string s, bool y) {\n"
+                            "    std::string t = s;\n"
+                            "    y = t.size() == 15;\n"
+                            "    y = t.size() < 20;\n"
+                            "}\n";
+        SimpleTokenizer tokenizer(settings, *this);
+        ASSERT(tokenizer.tokenize(code));
+        const Token* stok = Token::findsimplematch(tokenizer.tokens(), "= s ;");
+        ASSERT(stok);
+        stok = stok->next();
+        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
+        ASSERT_EQUALS(2U, exprs.size());
+        // 3 < s.size() < 10
+        ProgramMemory pm;
+        pm.setValue(stok, containerSize(greaterThan(3)));
+        pm.setValue(stok, containerSize(lessThan(10)));
+        ASSERT_EQUALS("0", evaluate(exprs[0], pm));
+        ASSERT_EQUALS("1", evaluate(exprs[1], pm));
     }
 
     void executeContainerSizeRange() {
