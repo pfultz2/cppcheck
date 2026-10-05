@@ -6274,11 +6274,11 @@ static MathLib::bigint ceilDiv(MathLib::bigint x, MathLib::bigint y)
 
 // Solve "x * divisor" for x when the value is a bound: divide the end of the range, rounding towards
 // the inside of the range so that it stays exact; a negative divisor turns the range around.
-static void divideBound(ValueFlow::Value& value, MathLib::bigint divisor)
+static bool divideBound(ValueFlow::Value& value, MathLib::bigint divisor)
 {
     const bool lowerAfter = (divisor > 0) == value.isLowerEdge();
     const MathLib::bigint edge = value.rangeEdge();
-    value.setRangeEdge(lowerAfter ? ceilDiv(edge, divisor) : floorDiv(edge, divisor), lowerAfter);
+    return value.setRangeEdge(lowerAfter ? ceilDiv(edge, divisor) : floorDiv(edge, divisor), lowerAfter);
 }
 
 const Token* ValueFlow::solveExprValue(const Token* expr,
@@ -6321,8 +6321,8 @@ const Token* ValueFlow::solveExprValue(const Token* expr,
                 if (value.intvalue % intval != 0)
                     break;
                 value.intvalue /= intval;
-            } else {
-                divideBound(value, intval);
+            } else if (!divideBound(value, intval)) {
+                break;
             }
             return ValueFlow::solveExprValue(binaryTok, eval, value);
         }

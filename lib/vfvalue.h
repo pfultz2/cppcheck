@@ -27,6 +27,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -41,6 +42,9 @@ class Token;
 
 namespace ValueFlow
 {
+    /** The most values kept for one expression, for the sake of performance */
+    constexpr std::size_t maxValues = 10;
+
     class CPPCHECKLIB Value {
     public:
         enum class Bound : std::uint8_t { Upper, Lower, Point };
@@ -217,19 +221,20 @@ namespace ValueFlow
 
         /**
          * Let the range start (lower edge) or end at the given value, keeping the kind of the value.
-         * An edge at the limit of the type stays there.
+         * Returns false, leaving the value as it is, when the edge is at the limit of the type: the
+         * bound would lie beyond it.
          */
-        void setRangeEdge(MathLib::bigint edge, bool lowerEdge) {
+        bool setRangeEdge(MathLib::bigint edge, bool lowerEdge) {
             if (isImpossible()) {
+                if (lowerEdge ? edge == std::numeric_limits<MathLib::bigint>::min() : edge == std::numeric_limits<MathLib::bigint>::max())
+                    return false;
                 bound = lowerEdge ? Bound::Upper : Bound::Lower;
-                if (lowerEdge)
-                    intvalue = edge == std::numeric_limits<MathLib::bigint>::min() ? edge : edge - 1;
-                else
-                    intvalue = edge == std::numeric_limits<MathLib::bigint>::max() ? edge : edge + 1;
+                intvalue = lowerEdge ? edge - 1 : edge + 1;
             } else {
                 bound = lowerEdge ? Bound::Lower : Bound::Upper;
                 intvalue = edge;
             }
+            return true;
         }
 
         void assumeCondition(const Token* tok);

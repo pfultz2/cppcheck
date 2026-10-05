@@ -2023,8 +2023,9 @@ static bool isAdjacent(const ValueFlow::Value& x, const ValueFlow::Value& y)
     if (x.valueType == ValueFlow::Value::ValueType::FLOAT)
         return false;
     // Compared without a difference, which could overflow
-    const MathLib::bigint max = std::numeric_limits<MathLib::bigint>::max();
-    return (y.intvalue != max && x.intvalue == y.intvalue + 1) || (x.intvalue != max && y.intvalue == x.intvalue + 1);
+    const MathLib::bigint low = std::min(x.intvalue, y.intvalue);
+    const MathLib::bigint high = std::max(x.intvalue, y.intvalue);
+    return low != std::numeric_limits<MathLib::bigint>::max() && high == low + 1;
 }
 
 static bool removePointValue(std::list<ValueFlow::Value>& values, std::list<ValueFlow::Value>::iterator& x)
@@ -2243,9 +2244,9 @@ bool Token::addValue(const ValueFlow::Value &value)
     // }));
 
     if (mImpl->mValues) {
-        // Don't handle more than 10 values for performance reasons
+        // Don't handle more values for performance reasons
         // TODO: add setting?
-        if (mImpl->mValues->size() >= 10U)
+        if (mImpl->mValues->size() >= ValueFlow::maxValues)
             return false;
 
         // if value already exists, don't add it again

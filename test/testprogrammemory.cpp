@@ -323,11 +323,23 @@ private:
     }
 
     // The results of the expressions assigned to y in the code, each evaluated at its position
+    // Tokenize the code and return the expressions assigned to y, in order. The ValueFlow values are
+    // removed so that only the program memory decides, unless they are kept.
+    std::vector<const Token*> parseAssignments(SimpleTokenizer& tokenizer, const char code[], bool clear = true) const {
+        ASSERT(tokenizer.tokenize(code));
+        if (clear)
+            clearValues(tokenizer);
+        return assignedExpressions(tokenizer.tokens(), "y");
+    }
+
+    // Run the statement of the operator on the program memory
+    void step(const Token* op, ProgramMemory& pm) const {
+        execute(op, pm, nullptr, nullptr, settings);
+    }
+
     std::vector<std::string> evaluateAssignments(const char code[]) {
         SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code));
-        clearValues(tokenizer);
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
+        const std::vector<const Token*> exprs = parseAssignments(tokenizer, code);
         std::vector<std::string> results;
         std::transform(exprs.cbegin(), exprs.cend(), std::back_inserter(results), [&](const Token* expr) {
             return evaluate(expr);
@@ -452,28 +464,26 @@ private:
                             "    y = u > 100;\n"
                             "}\n";
         SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code));
-        clearValues(tokenizer);
+        const std::vector<const Token*> exprs = parseAssignments(tokenizer, code);
+        ASSERT_EQUALS(2U, exprs.size());
         const Token* xtok = Token::findsimplematch(tokenizer.tokens(), "x *=");
         const Token* utok = Token::findsimplematch(tokenizer.tokens(), "u --");
         ASSERT(xtok && utok);
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
-        ASSERT_EQUALS(2U, exprs.size());
 
         ProgramMemory pm;
         // x > 3, then x *= -1: x < -3
         pm.setValue(xtok, greaterThan(3));
-        execute(xtok->next(), pm, nullptr, nullptr, settings);
+        step(xtok->next(), pm);
         ASSERT_EQUALS("1", evaluate(exprs[0], pm));
 
         // u < 1, then u--: the value wraps around, nothing is known
         pm.setValue(utok, lessThan(1));
-        execute(utok->next(), pm, nullptr, nullptr, settings);
+        step(utok->next(), pm);
         ASSERT_EQUALS("", evaluate(exprs[1], pm));
 
         // u > 3, then u--: u > 2
         pm.setValue(utok, greaterThan(3));
-        execute(utok->next(), pm, nullptr, nullptr, settings);
+        step(utok->next(), pm);
         ASSERT_EQUALS("", evaluate(exprs[1], pm));
         const ProgramMemory::Values* values = pm.getValues(utok->exprId());
         ASSERT(values);
@@ -493,13 +503,11 @@ private:
                             "    y = x > 0;\n"
                             "}\n";
         SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code));
-        clearValues(tokenizer);
+        const std::vector<const Token*> exprs = parseAssignments(tokenizer, code);
+        ASSERT_EQUALS(6U, exprs.size());
         const Token* xtok = Token::findsimplematch(tokenizer.tokens(), "x +");
         const Token* inc = Token::findsimplematch(tokenizer.tokens(), "x ++");
         ASSERT(xtok && inc);
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
-        ASSERT_EQUALS(6U, exprs.size());
         const MathLib::bigint max = std::numeric_limits<MathLib::bigint>::max();
         const MathLib::bigint min = std::numeric_limits<MathLib::bigint>::min();
 
@@ -513,7 +521,7 @@ private:
         ASSERT_EQUALS("", evaluate(exprs[4], pm));
 
         // x < min + 10
-        pm = ProgramMemory();
+        pm.clear();
         pm.setValue(xtok, lessThan(min + 10));
         ASSERT_EQUALS("1", evaluate(exprs[0], pm));
         ASSERT_EQUALS("", evaluate(exprs[1], pm));
@@ -522,14 +530,14 @@ private:
         ASSERT_EQUALS("", evaluate(exprs[4], pm));
 
         // x is the largest value: incrementing it is unknown
-        pm = ProgramMemory();
+        pm.clear();
         pm.setValue(xtok, ValueFlow::Value{max});
-        execute(inc->next(), pm, nullptr, nullptr, settings);
+        step(inc->next(), pm);
         ASSERT_EQUALS("", evaluate(exprs[5], pm));
 
         // x > max - 2: incrementing moves the bound to the limit, which is still not known to overflow
         pm.setValue(xtok, greaterThan(max - 2));
-        execute(inc->next(), pm, nullptr, nullptr, settings);
+        step(inc->next(), pm);
         ASSERT_EQUALS("1", evaluate(exprs[5], pm));
     }
 
@@ -570,22 +578,20 @@ private:
                              "    y = u > 4;\n"
                              "}\n";
         SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code2));
-        clearValues(tokenizer);
+        const std::vector<const Token*> exprs = parseAssignments(tokenizer, code2);
+        ASSERT_EQUALS(1U, exprs.size());
         const Token* utok = Token::findsimplematch(tokenizer.tokens(), "u ++");
         ASSERT(utok);
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
-        ASSERT_EQUALS(1U, exprs.size());
         // u > 3, then u++: u may have wrapped around
         ProgramMemory pm;
         pm.setValue(utok, greaterThan(3));
-        execute(utok->next(), pm, nullptr, nullptr, settings);
+        step(utok->next(), pm);
         ASSERT_EQUALS("", evaluate(exprs[0], pm));
         // 3 < u < 10, then u++: u > 4
-        pm = ProgramMemory();
+        pm.clear();
         pm.setValue(utok, greaterThan(3));
         pm.setValue(utok, lessThan(10));
-        execute(utok->next(), pm, nullptr, nullptr, settings);
+        step(utok->next(), pm);
         ASSERT_EQUALS("1", evaluate(exprs[0], pm));
     }
 
@@ -596,13 +602,12 @@ private:
                             "    y = t.size() == 15;\n"
                             "    y = t.size() < 20;\n"
                             "}\n";
+        // the symbolic value of t is kept
         SimpleTokenizer tokenizer(settings, *this);
-        ASSERT(tokenizer.tokenize(code));
-        const Token* stok = Token::findsimplematch(tokenizer.tokens(), "= s ;");
-        ASSERT(stok);
-        stok = stok->next();
-        const std::vector<const Token*> exprs = assignedExpressions(tokenizer.tokens(), "y");
+        const std::vector<const Token*> exprs = parseAssignments(tokenizer, code, /*clear*/ false);
         ASSERT_EQUALS(2U, exprs.size());
+        const Token* stok = Token::findsimplematch(tokenizer.tokens(), "s ;");
+        ASSERT(stok);
         // 3 < s.size() < 10
         ProgramMemory pm;
         pm.setValue(stok, containerSize(greaterThan(3)));
