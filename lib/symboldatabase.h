@@ -1426,6 +1426,12 @@ public:
      */
     void validate() const;
 
+    /**
+     * Set value type for generic selection (_Generic).
+     * @param par The opening parenthesis of the _Generic expression.
+     */
+    void setGenericValueType(Token *par);
+
     /** Set valuetype in provided tokenlist. When endToken (exclusive) is given, only
      * that token range is set and the caller is responsible for updating the function
      * and variable pointers (updateFunctionAndVariablePointers()). */

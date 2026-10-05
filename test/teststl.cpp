@@ -1140,6 +1140,20 @@ private:
                       "[test.cpp:3:11]: note: Assuming that condition 'i>5' is not redundant\n"
                       "[test.cpp:5:13]: note: Access out of bounds\n",
                       errout_str());
+
+        check("void f(std::vector<int>& v) {\n"
+              "    std::vector<int>::iterator it;\n"
+              "    for (it = v.begin(); it != v.end(); ++it) {\n"
+              "        if (*it == 0)\n"
+              "            break;\n"
+              "    }\n"
+              "    v.erase(it);\n"
+              "}\n", s);
+        ASSERT_EQUALS("[test.cpp:4:13]: style: Consider using std::find_if algorithm instead of a raw loop. [useStlAlgorithm]\n"
+                      "[test.cpp:7:7]: warning: Either the condition is redundant or function 'erase()' is called on the iterator 'it' which is out of bounds. [eraseIteratorOutOfBoundsCond]\n"
+                      "[test.cpp:3:29]: note: Assuming that condition 'it!=v.end()' is not redundant\n"
+                      "[test.cpp:7:7]: note: Either the condition is redundant or function 'erase()' is called on the iterator 'it' which is out of bounds.\n",
+                      errout_str());
     }
 
     void iterator1() {
@@ -2441,7 +2455,7 @@ private:
               "    if (it == v.end()) {}\n"
               "    v.erase(it);\n"
               "}\n");
-        ASSERT_EQUALS("[test.cpp:3:7]: (warning) Either the condition 'it==v.end()' is redundant or function 'erase()' is called on the iterator 'it' which is out of bounds. [eraseIteratorOutOfBoundsCond]\n",
+        ASSERT_EQUALS("[test.cpp:2:12] -> [test.cpp:3:7]: (warning) Either the condition 'it==v.end()' is redundant or function 'erase()' is called on the iterator 'it' which is out of bounds. [eraseIteratorOutOfBoundsCond]\n",
                       errout_str());
 
         check("void f() {\n"
@@ -5160,6 +5174,12 @@ private:
               "    return b;\n"
               "}\n");
         ASSERT_EQUALS("[test.cpp:2:17]: (performance) Constructing a std::string from the result of c_str() is slow and redundant. [stlcstrConstructor]\n",
+                      errout_str());
+
+        check("void f(std::string& a, const std::string& b) {\n"
+              "    a += b.c_str();\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:2:7]: (performance) Concatenating the result of c_str() and a std::string is slow and redundant. [stlcstrConcat]\n",
                       errout_str());
     }
 
