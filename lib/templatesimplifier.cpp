@@ -796,41 +796,39 @@ static bool isTemplateInstantion(const Token* tok)
     return Token::Match(tok->tokAt(-2), "(|{|}|;|=|<<|:|.|*|&|return|<|,|!|[ :: %name% ::|<|(");
 }
 
-namespace {
 // A function template parameter with a form that is supported by type deduction:
 // "T", "T &", "const T &", "T *", "const T *" or a concrete single token type
-    struct ParameterShape {
-        const Token* typeTok = nullptr;
-        int templateParameterIndex = -1; // -1 => a concrete type, nothing is deduced
-        bool isConst = false;
-        bool isPointer = false;
-        bool isReference = false;
-    };
+struct ParameterShape {
+    const Token* typeTok = nullptr;
+    int templateParameterIndex = -1; // -1 => a concrete type, nothing is deduced
+    bool isConst = false;
+    bool isPointer = false;
+    bool isReference = false;
+};
 
 // The type deduced for a template parameter from a function call argument
-    struct DeducedType {
-        std::string typeStr;                // base type, e.g. "int" or "MyClass"
-        std::vector<std::string> qualification; // enclosing scopes for record types, outermost first
-        unsigned int constness = 0;         // bit 0 = data const, bit 1 = first '*' const, ..
-        unsigned int pointer = 0;           // number of '*'
-        bool isUnsigned = false;
-        bool isLong = false;
+struct DeducedType {
+    std::string typeStr;                // base type, e.g. "int" or "MyClass"
+    std::vector<std::string> qualification; // enclosing scopes for record types, outermost first
+    unsigned int constness = 0;         // bit 0 = data const, bit 1 = first '*' const, ..
+    unsigned int pointer = 0;           // number of '*'
+    bool isUnsigned = false;
+    bool isLong = false;
 
-        bool operator==(const DeducedType& other) const
-        {
-            return typeStr == other.typeStr && qualification == other.qualification && constness == other.constness &&
-                   pointer == other.pointer && isUnsigned == other.isUnsigned && isLong == other.isLong;
-        }
-    };
+    bool operator==(const DeducedType& other) const
+    {
+        return typeStr == other.typeStr && qualification == other.qualification && constness == other.constness &&
+               pointer == other.pointer && isUnsigned == other.isUnsigned && isLong == other.isLong;
+    }
+};
 
 // A parsed function template declaration that type deduction supports. Invalid
 // (typeParameters is empty) when the declaration is not supported.
-    struct DeductionCandidate {
-        std::vector<const Token*> typeParameters;
-        std::vector<ParameterShape> parameterShapes;
-        std::string signature;
-    };
-} // namespace
+struct DeductionCandidate {
+    std::vector<const Token*> typeParameters;
+    std::vector<ParameterShape> parameterShapes;
+    std::string signature;
+};
 
 // Parse a function parameter of a template declaration. The returned shape has no
 // typeTok when the parameter does not have a supported form.

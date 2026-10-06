@@ -27,7 +27,9 @@
 #include "tokenize.h"
 #include "tokenlist.h"
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <set>
 #include <sstream>
 #include <string>
@@ -421,11 +423,10 @@ private:
         const Scope* scope = tokenizer.getSymbolDatabase()->findScopeByName(scopeName);
         if (!scope)
             return nullptr;
-        for (const Function& function : scope->functionList) {
-            if (function.name() == functionName)
-                return &function;
-        }
-        return nullptr;
+        const auto it = std::find_if(scope->functionList.cbegin(), scope->functionList.cend(), [&](const Function& function) {
+            return function.name() == functionName;
+        });
+        return it == scope->functionList.cend() ? nullptr : &*it;
     }
 
     // is the token in the token list of the tokenizer?
@@ -7155,8 +7156,9 @@ private:
 
             // every variable in the symbol table belongs to a scope of the database
             std::set<const Scope*> scopes;
-            for (const Scope& scope : symbolDatabase->scopeList)
-                scopes.insert(&scope);
+            std::transform(symbolDatabase->scopeList.cbegin(), symbolDatabase->scopeList.cend(), std::inserter(scopes, scopes.end()), [](const Scope& scope) {
+                return &scope;
+            });
             for (const Variable* var : symbolDatabase->variableList()) {
                 if (var && var->scope())
                     ASSERT(scopes.count(var->scope()) != 0);
