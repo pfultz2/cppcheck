@@ -20,7 +20,8 @@ Import project:
 -
 
 Infrastructure & dependencies:
--
+- Added arm64 platform files arm64-windows.xml, arm64-linux.xml and arm64-macos.xml (Apple Silicon).
+  These describe the default setup for that OS. The arm64-wchar_t2.xml and arm64-wchar_t4.xml files are kept.
 
 Other:
 -

@@ -609,6 +609,7 @@ private:
         }
 
         ASSERT_EQUALS(63, valueOfTok("x = 3 * uint32_t{21};\n", "*").intvalue);
+        ASSERT_EQUALS(123, valueOfTok("x = +123;\n", "=").intvalue);
     }
 
     void valueFlowString() {
@@ -1262,6 +1263,15 @@ private:
         ASSERT_EQUALS(1U, values.size());
         ASSERT_EQUALS(~0U, values.back().intvalue);
 
+        // #15015
+        code  = "void f(unsigned u) {\n"
+                "    if (~u) {}\n"
+                "}";
+        values = tokenValues(code, "~");
+        ASSERT_EQUALS(1U, values.size());
+        ASSERT_EQUALS(-1, values.back().intvalue);
+        ASSERT(values.back().isImpossible());
+
         // !
         code  = "void f(int x) {\n"
                 "    a = !x;\n"
@@ -1836,6 +1846,14 @@ private:
         values = tokenValues(code, "( a");
         ASSERT_EQUALS(1U, values.size());
         ASSERT_EQUALS(3 * settings.platform.sizeof_int, values.back().intvalue);
+        ASSERT_EQUALS_ENUM(ValueFlow::Value::ValueKind::Known, values.back().valueKind);
+
+        code = "int f(char c) {\n" // #15033
+               "    return sizeof(+c);\n"
+               "}\n";
+        values = tokenValues(code, "( +");
+        ASSERT_EQUALS(1U, values.size());
+        ASSERT_EQUALS(settings.platform.sizeof_int, values.back().intvalue);
         ASSERT_EQUALS_ENUM(ValueFlow::Value::ValueKind::Known, values.back().valueKind);
     }
 
@@ -3257,6 +3275,27 @@ private:
                "    if (x) {}\n"
                "}\n";
         ASSERT_EQUALS(true, testValueOfXKnown(code, 5U, 0));
+
+        code = "struct S {\n" // #13844
+               "    int x{};\n"
+               "    template <typename T>\n"
+               "    void f(T t) {\n"
+               "        x = 0;\n"
+               "        t();\n"
+               "        if (x == 0) {}\n"
+               "    }\n"
+               "};\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 7U, 0));
+
+        code = "int g() { return 0; }\n"
+               "int f() {\n"
+               "  int (*x)() = g;\n"
+               "  return x();\n"
+               "}\n";
+        auto values = tokenValues(code, "x (");
+        ASSERT_EQUALS(1U, values.size());
+        ASSERT(values.front().isImpossible());
+        ASSERT_EQUALS(0, values.front().intvalue);
     }
 
     void valueFlowAfterSwap()

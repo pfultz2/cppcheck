@@ -999,7 +999,12 @@ struct MultiValueFlowAnalyzer : ValueFlowAnalyzer {
 
     void addErrorPath(const Token* tok, const std::string& s) override {
         for (auto&& p:values) {
-            p.second.errorPath.emplace_back(tok, s);
+            auto& ep = p.second.errorPath;
+            if (std::any_of(ep.begin(), ep.end(), [&](const ErrorPathItem& epi) {
+                return epi.first == tok && epi.second == s;
+            }))
+                continue;
+            ep.emplace_back(tok, s);
         }
     }
 
@@ -1147,7 +1152,12 @@ struct SingleValueFlowAnalyzer : ValueFlowAnalyzer {
     }
 
     void addErrorPath(const Token* tok, const std::string& s) override {
-        value.errorPath.emplace_back(tok, s);
+        auto& ep = value.errorPath;
+        if (std::any_of(ep.begin(), ep.end(), [&](const ErrorPathItem& epi) {
+            return epi.first == tok && epi.second == s;
+        }))
+            return;
+        ep.emplace_back(tok, s);
     }
 
     template<class T>

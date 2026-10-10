@@ -76,6 +76,7 @@ private:
         TEST_CASE(zeroDiv22);
 
         TEST_CASE(zeroDivCond); // division by zero / useless condition
+        TEST_CASE(zeroDivErrorPath);
 
         TEST_CASE(nanInArithmeticExpression);
 
@@ -895,6 +896,39 @@ private:
               "    if (!num) {}\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+    }
+
+    void zeroDivErrorPath() {
+        setMultiline();
+        Settings s = settings0;
+        s.templateLocation = "{file}:{line}:note:{info}\n";
+
+        check("int f1(int i, bool b) {\n"
+              "    int j = b ? i : 0;\n"
+              "    return 1 / j;\n"
+              "}\n"
+              "int f2(int i, bool b) {\n"
+              "    int j = b ? 0 : i;\n"
+              "    return 1 / j;\n"
+              "}\n"
+              "int f3(int i, bool b) {\n"
+              "    int j = 1;\n"
+              "    if (b)\n"
+              "        j = 0;\n"
+              "    return 1 / j;\n"
+              "}\n", dinit(CheckOptions, $.settings = &s));
+        ASSERT_EQUALS("[test.cpp:3:14]: warning: Division by zero. [zerodivcond]\n"
+                      "[test.cpp:2:13]: note: Assuming condition 'b' is false\n"
+                      "[test.cpp:2:15]: note: Assignment 'j=b?i:0', assigned value is 0\n"
+                      "[test.cpp:3:14]: note: Division by zero\n"
+                      "[test.cpp:7:14]: warning: Division by zero. [zerodivcond]\n"
+                      "[test.cpp:6:13]: note: Assuming condition 'b' is true\n"
+                      "[test.cpp:6:15]: note: Assignment 'j=b?0:i', assigned value is 0\n"
+                      "[test.cpp:7:14]: note: Division by zero\n"
+                      "[test.cpp:13:14]: warning: Division by zero. [zerodivcond]\n"
+                      "[test.cpp:12:13]: note: Assignment 'j=0', assigned value is 0\n"
+                      "[test.cpp:11:9]: note: Assuming condition is true\n"
+                      "[test.cpp:13:14]: note: Division by zero\n", errout_str());
     }
 
     void nanInArithmeticExpression() {
@@ -2737,6 +2771,18 @@ private:
               "    void func(F f);\n"
               "};\n"
               "void S::func(S::F f) {}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("bool f(std::vector<std::vector<int>> v) {\n" // #12136
+              "    if (v.size() != 10U)\n"
+              "        return false;\n"
+              "    for (auto it = v.begin(); it != v.end(); ++it) {\n"
+              "        if (it->size() < 9U)\n"
+              "            return false;\n"
+              "        it->erase(it->begin(), it->begin() + 9U);\n"
+              "    }\n"
+              "    return true;\n"
+              "}\n");
         ASSERT_EQUALS("", errout_str());
 
         /*const*/ Settings settingsWin64 = settingsBuilder().platform(Platform::Type::Win64).build();
@@ -11468,6 +11514,47 @@ private:
               "    return i;\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+
+        check("int f(char c) {\n" // #15037
+              "	   int i = (int)c;\n"
+              "	   i = 3;\n"
+              "	   return i;\n"
+              "}\n"
+              "int g(char c) {\n"
+              "     int i = static_cast<int>(c);\n"
+              "     i = 3;\n"
+              "     return i;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3:7]: style: Redundant initialization for 'i'. The initialized value is overwritten before it is read. [redundantInitialization]\n"
+                      "[test.cpp:2:11]: note: i is initialized\n"
+                      "[test.cpp:3:7]: note: i is overwritten\n"
+                      "[test.cpp:8:8]: style: Redundant initialization for 'i'. The initialized value is overwritten before it is read. [redundantInitialization]\n"
+                      "[test.cpp:7:12]: note: i is initialized\n"
+                      "[test.cpp:8:8]: note: i is overwritten\n", errout_str());
+
+        check("int g();\n" // #15023
+              "int f1() {\n"
+              "    int i{ g() };\n"
+              "    i = 0;\n"
+              "    return i;\n"
+              "}\n"
+              "int f2() {\n"
+              "    int i(g());\n"
+              "    i = 0;\n"
+              "    return i;\n"
+              "}\n"
+              "int f3() {\n"
+              "    int i{ 1 };\n"
+              "    i = 0;\n"
+              "    return i;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:7]: style: Redundant initialization for 'i'. The initialized value is overwritten before it is read. [redundantInitialization]\n"
+                      "[test.cpp:3:10]: note: i is initialized\n"
+                      "[test.cpp:4:7]: note: i is overwritten\n"
+                      "[test.cpp:9:7]: style: Redundant initialization for 'i'. The initialized value is overwritten before it is read. [redundantInitialization]\n"
+                      "[test.cpp:8:10]: note: i is initialized\n"
+                      "[test.cpp:9:7]: note: i is overwritten\n",
+                      errout_str());
     }
 
     // cppcheck-suppress unusedPrivateFunction
@@ -12713,6 +12800,16 @@ private:
         ASSERT_EQUALS("[test.c:8:11]: (style) Checking if unsigned expression 'd.n' is less than zero. [unsignedLessThanZero]\n"
                       "[test.c:12:9]: (style) Checking if unsigned expression 'd.n' is less than zero. [unsignedLessThanZero]\n",
                       errout_str());
+
+        check("int ifunc(int x);\n"
+              "unsigned int ufunc(unsigned int x);\n"
+              "void f(void)\n"
+              "{\n"
+              "    unsigned int x = 0;\n"
+              "    if (_Generic(x, int: ifunc, unsigned int: ufunc)(x) < 0) {}\n"
+              "}\n", dinit(CheckOptions, $.cpp = false));
+        ASSERT_EQUALS("[test.c:6:57]: (style) Checking if unsigned expression '_Generic(x,int:ifunc,unsigned int:ufunc)(x)' is less than zero. [unsignedLessThanZero]\n",
+                      errout_str());
     }
 
     void doubleMove1() {
@@ -12926,6 +13023,16 @@ private:
               "}\n");
         ASSERT_EQUALS("[test.cpp:4:9]: (warning) Access of moved variable 'p'. [accessMoved]\n"
                       "[test.cpp:5:9]: (warning) Access of moved variable 'p'. [accessMoved]\n", errout_str());
+
+        check("void h(std::unique_ptr<int>);\n" // #12436
+              "void g(int);\n"
+              "void f() {\n"
+              "    std::unique_ptr<int> p = std::make_unique<int>(5);\n"
+              "    int* w = p.get();\n"
+              "    h(std::move(p));\n"
+              "    g(*w);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5:10]: (style) Variable 'w' can be declared as pointer to const [constVariablePointer]\n", errout_str());
     }
 
     void moveAndAddressOf() {
@@ -14011,6 +14118,12 @@ private:
               "    g(b);\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+
+        check("void g(bool);\n" // #14303
+              "void f() {\n"
+              "    g(g);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3:7]: (style) Pointer expression 'g' converted to bool is always true. [knownPointerToBool]\n", errout_str());
     }
 
     void iterateByValue() {

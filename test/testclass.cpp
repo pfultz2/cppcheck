@@ -199,6 +199,7 @@ private:
         TEST_CASE(const100);
         TEST_CASE(const101);
         TEST_CASE(const102);
+        TEST_CASE(const103);
 
         TEST_CASE(const_handleDefaultParameters);
         TEST_CASE(const_passThisToMemberOfOtherClass);
@@ -7027,6 +7028,18 @@ private:
                    "    }\n"
                    "};\n");
         ASSERT_EQUALS("", errout_str());
+
+        checkConst("struct A {\n" // #9981
+                   "    int a = 0;\n"
+                   "    auto operator[](int x) -> int& {\n"
+                   "        a = 1;\n"
+                   "        return a;\n"
+                   "    }\n"
+                   "    int f() {\n"
+                   "        return (*this)[0];\n"
+                   "    }\n"
+                   "};\n");
+        ASSERT_EQUALS("", errout_str());
     }
 
     void const102() {
@@ -7043,6 +7056,15 @@ private:
                    "};\n");
         ASSERT_EQUALS("[test.cpp:6:10]: (style, inconclusive) Technically the member function 'S::g' can be const. [functionConst]\n",
                       errout_str());
+    }
+
+    void const103() {
+        checkConst("constexpr int BITS{4};\n"
+                   "struct Struct {\n"
+                   "  unsigned int data() const { return m_data; }\n"
+                   "  unsigned int m_data : BITS;\n"
+                   "};\n");
+        ASSERT_EQUALS("", errout_str());
     }
 
     void const_handleDefaultParameters() {
