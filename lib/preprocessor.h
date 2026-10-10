@@ -22,7 +22,6 @@
 //---------------------------------------------------------------------------
 
 #include "config.h"
-#include "refthunk.h"
 #include "standards.h"
 
 #include <cstddef>
@@ -106,6 +105,8 @@ public:
     static char macroChar;
 
     Preprocessor(simplecpp::TokenList& tokens, const Settings& settings, ErrorLogger &errorLogger, Standards::Language lang);
+    Preprocessor(const Preprocessor &) = delete;
+    Preprocessor &operator=(const Preprocessor &) = delete;
 
     void inlineSuppressions(SuppressionList &suppressions) const;
 
@@ -180,10 +181,10 @@ private:
     void invalidSuppression(const simplecpp::Location& loc, const std::string &msg) const;
     void error(const simplecpp::Location& loc, const std::string &msg, const std::string& id) const;
 
-    RefThunk<simplecpp::TokenList> mTokens;
+    simplecpp::TokenList& mTokens;
 
-    RefThunk<const Settings> mSettings;
-    RefThunk<ErrorLogger> mErrorLogger;
+    const Settings& mSettings;
+    ErrorLogger& mErrorLogger;
 
     simplecpp::FileDataCache mFileCache;
 

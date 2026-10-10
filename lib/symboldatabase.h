@@ -1350,6 +1350,8 @@ class CPPCHECKLIB SymbolDatabase {
 public:
     explicit SymbolDatabase(Tokenizer& tokenizer);
     ~SymbolDatabase();
+    SymbolDatabase(const SymbolDatabase &) = delete;
+    SymbolDatabase &operator=(const SymbolDatabase &) = delete;
 
     /** @brief Information about all namespaces/classes/structures */
     std::list<Scope> scopeList;
@@ -1518,9 +1520,9 @@ private:
     bool isFunctionWithoutSideEffects(const Function& func, const Token* functionUsageToken,
                                       std::list<const Function*> checkedFuncs) const;
 
-    RefThunk<Tokenizer> mTokenizer;
-    RefThunk<const Settings> mSettings;
-    RefThunk<ErrorLogger> mErrorLogger;
+    Tokenizer& mTokenizer;
+    const Settings& mSettings;
+    ErrorLogger& mErrorLogger;
 
     /** variable symbol table */
     std::vector<const Variable *> mVariableList;

@@ -23,7 +23,6 @@
 //---------------------------------------------------------------------------
 
 #include "config.h"
-#include "refthunk.h"
 
 #include <cstdint>
 #include <ctime>
@@ -48,6 +47,8 @@ struct newInstantiation;
 class CPPCHECKLIB TemplateSimplifier {
 public:
     explicit TemplateSimplifier(Tokenizer &tokenizer);
+    TemplateSimplifier(const TemplateSimplifier &) = delete;
+    TemplateSimplifier &operator=(const TemplateSimplifier &) = delete;
 
     const std::string& dump() const {
         return mDump;
@@ -505,10 +506,10 @@ private:
         const std::string &indent = "    ") const;
     void printOut(const std::string &text = "") const;
 
-    RefThunk<Tokenizer> mTokenizer;
-    RefThunk<TokenList> mTokenList;
-    RefThunk<const Settings> mSettings;
-    RefThunk<ErrorLogger> mErrorLogger;
+    Tokenizer& mTokenizer;
+    TokenList& mTokenList;
+    const Settings& mSettings;
+    ErrorLogger& mErrorLogger;
     bool mChanged{};
 
     std::list<TokenAndName> mTemplateDeclarations;
