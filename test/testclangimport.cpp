@@ -140,6 +140,7 @@ private:
 
         TEST_CASE(crash);
         TEST_CASE(crash2);
+        TEST_CASE(nullNodeInvalidLevel);
     }
 
     std::string parse(const char clang[]) {
@@ -1379,6 +1380,13 @@ private:
         // check, so a node whose line carries no ext tokens (typeIndex <= 0) read
         // out of bounds.
         (void)parse("`-RecordDecl "); // don't crash
+    }
+
+    void nullNodeInvalidLevel() {
+        // a "<<<NULL>>>" line whose indentation maps to level 0 must not index tree[-1]
+        const char* clang = "`-FunctionDecl 0x1 <a.cpp:1:1, col:34> col:6 foo 'void ()'\n"
+                            "`-<<<NULL>>>\n";
+        ASSERT_EQUALS("void foo ( ) ;", parse(clang));
     }
 };
 
