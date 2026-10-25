@@ -599,6 +599,7 @@ private:
         TEST_CASE(valueTypeChar);
         TEST_CASE(valueTypeRValueReference);
         TEST_CASE(valueTypeGeneric);
+        TEST_CASE(valueTypeFunctionPointer); // pointer or reference to function, pointer to member
 
         TEST_CASE(variadic1); // #7453
         TEST_CASE(variadic2); // #7649
@@ -10629,6 +10630,47 @@ private:
                           "    const int *controlvar;\n"
                           "    auto testvar = _Generic(controlvar, int*: floatfunc, default: intfunc)();\n"
                           "}\n", "testvar"));
+    }
+
+    // the type of the argument of the first call after start that matches callPattern
+    // ("g ( cbs [ 0 ] )")
+    static std::string argumentType(const Token* start, const char callPattern[]) {
+        const Token* const call = Token::findsimplematch(start, callPattern, strlen(callPattern));
+        const Token* const arg = call ? call->next()->astOperand2() : nullptr;
+        const ValueType* const vt = arg ? arg->valueType() : nullptr;
+        if (!vt)
+            return "";
+        return vt->str();
+    }
+
+    void valueTypeFunctionPointer() {
+        GET_SYMBOL_DB("struct S { int a; static int s; };\n"
+                      "void g(int);\n"
+                      "void f(int (*cb)(int), int S::*pm, S s, int* p, int (&rf)(int)) {\n"
+                      "    int (**pcb)(int); int (*cbs[2])(int); int (*pa)[3]; int (S::*pmf)(int); int* (*pf)(int);\n"
+                      "    auto acb = cb; auto apm = &S::a;\n"
+                      "    g(cb); g(rf); g(*pcb); g(cbs[0]); g(pa); g(pmf); g(pm); g(&S::a); g(&S::s); g(&s.a); g(p); g(acb); g(apm);\n"
+                      "    g(cb(1)); g(rf(2)); g(pf(3));\n"
+                      "}\n");
+        ASSERT(db != nullptr);
+        const Token* const tokens = tokenizer.tokens();
+        ASSERT_EQUALS("function *", argumentType(tokens, "g ( cb )"));
+        ASSERT_EQUALS("function &", argumentType(tokens, "g ( rf )"));
+        ASSERT_EQUALS("function *", argumentType(tokens, "g ( * pcb )"));
+        ASSERT_EQUALS("function *", argumentType(tokens, "g ( cbs [ 0 ] )"));
+        ASSERT_EQUALS("signed int * *", argumentType(tokens, "g ( pa )")); // the dimension of a pointer to an array is a pointer level
+        ASSERT_EQUALS("function *", argumentType(tokens, "g ( pmf )"));
+        ASSERT_EQUALS("member-pointer *", argumentType(tokens, "g ( pm )"));
+        ASSERT_EQUALS("member-pointer *", argumentType(tokens, "g ( & S :: a )"));
+        ASSERT_EQUALS("signed int *", argumentType(tokens, "g ( & S :: s )"));
+        ASSERT_EQUALS("signed int *", argumentType(tokens, "g ( & s . a )"));
+        ASSERT_EQUALS("signed int *", argumentType(tokens, "g ( p )"));
+        ASSERT_EQUALS("function *", argumentType(tokens, "g ( acb )"));
+        ASSERT_EQUALS("member-pointer *", argumentType(tokens, "g ( apm )"));
+        // a call through a pointer or reference to a function has the return type
+        ASSERT_EQUALS("signed int", argumentType(tokens, "g ( cb ( 1 ) )"));
+        ASSERT_EQUALS("signed int", argumentType(tokens, "g ( rf ( 2 ) )"));
+        ASSERT_EQUALS("signed int *", argumentType(tokens, "g ( pf ( 3 ) )"));
     }
 
     void variadic1() { // #7453

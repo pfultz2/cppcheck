@@ -1237,6 +1237,8 @@ public:
         SMART_POINTER,
         CONTAINER,
         ITERATOR,
+        FUNCTION,       ///< a function; a pointer to it ("int (*)(int)") is counted in pointer
+        MEMBER_POINTER, ///< a pointer to a data member ("int S::*"), counted in pointer
         VOID,
         BOOL,
         CHAR,

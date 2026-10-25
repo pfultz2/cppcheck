@@ -1069,6 +1069,8 @@ static DeducedType argumentToDeducedType(const Token* arg, const ParameterShape&
     case ValueType::SMART_POINTER:
     case ValueType::CONTAINER:
     case ValueType::ITERATOR:
+    case ValueType::FUNCTION:
+    case ValueType::MEMBER_POINTER:
     case ValueType::VOID:
     case ValueType::UNKNOWN_INT:
         // not deducible

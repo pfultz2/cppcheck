@@ -7239,6 +7239,7 @@ static const Token* parsedecl(const Token* type,
                               ValueType* valuetype,
                               ValueType::Sign defaultSignedness,
                               const Settings& settings,
+                              const Token* stop = nullptr,
                               SourceLocation loc = SourceLocation::current());
 
 void SymbolDatabase::setValueType(Token* tok, const Variable& var, const SourceLocation &loc)
@@ -7331,6 +7332,38 @@ static bool isContainerYieldElement(Library::Container::Yield yield)
 static bool isContainerYieldPointer(Library::Container::Yield yield)
 {
     return yield == Library::Container::Yield::BUFFER || yield == Library::Container::Yield::BUFFER_NT;
+}
+
+// Is tok the qualified name of a non static data member ("S :: m")? Its address is a
+// pointer to member, not a pointer to the member's type.
+static bool isQualifiedNonStaticMember(const Token* tok)
+{
+    if (!Token::simpleMatch(tok, "::") || !tok->astOperand2())
+        return false;
+    const Variable* const var = tok->astOperand2()->variable();
+    return var && !var->isStatic() && var->scope() && var->scope()->isClassOrStructOrUnion();
+}
+
+// The type of a pointer to a data member of the given type ("int S :: *" for "int")
+static ValueType memberPointerType(const ValueType& member)
+{
+    ValueType vt;
+    vt.type = ValueType::Type::MEMBER_POINTER;
+    vt.pointer = member.pointer + 1;
+    vt.constness = member.constness;
+    vt.volatileness = member.volatileness;
+    vt.debugPath = member.debugPath;
+    return vt;
+}
+
+// The "(" that opens the parenthesized declarator of a pointer or reference to a
+// function ("int ( * f ) ( int )"), nullptr when var is not declared that way
+static const Token* functionDeclarator(const Variable& var)
+{
+    const Token* tok = var.nameToken() ? var.nameToken()->previous() : nullptr;
+    while (Token::Match(tok, "*|&|&&|const|volatile"))
+        tok = tok->previous();
+    return Token::simpleMatch(tok, "(") ? tok : nullptr;
 }
 
 void SymbolDatabase::setValueType(Token* tok, const ValueType& valuetype, const SourceLocation &loc)
@@ -7468,6 +7501,17 @@ void SymbolDatabase::setValueType(Token* tok, const ValueType& valuetype, const 
         setValueType(parent, vt);
         return;
     }
+    // a call through a pointer or reference to a function has the return type of the
+    // function: the declared type before the parenthesized declarator "int ( * f ) ( int )"
+    if (Token::Match(parent->tokAt(-1), "%name% (") && parent->astOperand1() == tok && valuetype.type == ValueType::Type::FUNCTION &&
+        valuetype.pointer <= 1 && tok->variable()) {
+        const Variable* const var = tok->variable();
+        const Token* const declarator = functionDeclarator(*var);
+        ValueType returnType;
+        if (declarator && parsedecl(var->typeStartToken(), &returnType, mDefaultSignedness, mSettings, declarator))
+            setValueType(parent, returnType);
+        return;
+    }
     if (Token::Match(parent->tokAt(-1), "%name% (") && !parent->tokAt(-1)->isKeyword() && parent->astOperand1() == tok && valuetype.pointer > 0) {
         ValueType vt(valuetype);
         vt.pointer -= 1U;
@@ -7525,6 +7569,10 @@ void SymbolDatabase::setValueType(Token* tok, const ValueType& valuetype, const 
         }
     }
     if (parent->str() == "&" && !parent->astOperand2()) {
+        if (isQualifiedNonStaticMember(parent->astOperand1())) {
+            setValueType(parent, memberPointerType(valuetype));
+            return;
+        }
         ValueType vt(valuetype);
         vt.reference = Reference::None; //Given int& x; the type of &x is int* not int&*
         bool isArrayToPointerDecay = false;
@@ -7909,6 +7957,7 @@ static const Token* parsedecl(const Token* type,
                               ValueType* const valuetype,
                               ValueType::Sign defaultSignedness,
                               const Settings& settings,
+                              const Token* stop,
                               SourceLocation loc)
 {
     if (settings.debugnormal || settings.debugwarnings)
@@ -7942,10 +7991,23 @@ static const Token* parsedecl(const Token* type,
         valuetype->type = ValueType::Type::RECORD;
     const bool cpp = type->isCpp();
     bool par = false;
-    while (Token::Match(type, "%name%|*|&|&&|::|(") && !Token::Match(type, "typename|template") && type->varId() == 0 &&
+    while (type != stop && Token::Match(type, "%name%|*|&|&&|::|(") && !Token::Match(type, "typename|template") && type->varId() == 0 &&
            !type->variable() && !type->function()) {
         bool isIterator = false;
         if (type->str() == "(") {
+            // the name of a pointer or reference to a function is in parentheses: "int ( * f ) ( int )".
+            // The type parsed so far is the return type, the declared type is the function
+            if (Token::Match(type, "( *|&|&&") && Token::simpleMatch(type->link(), ") (")) {
+                ValueType function;
+                function.type = ValueType::Type::FUNCTION;
+                function.pointer = pointer0;
+                if (type->strAt(1) == "&")
+                    function.reference = Reference::LValue;
+                else if (type->strAt(1) == "&&")
+                    function.reference = Reference::RValue;
+                function.debugPath = valuetype->debugPath;
+                *valuetype = function;
+            }
             if (!Token::simpleMatch(type, "( *"))
                 break;
             if (Token::Match(type->link(), ") const| {"))
@@ -8047,9 +8109,12 @@ static const Token* parsedecl(const Token* type,
                 type = type->next();
             }
             break;
-        } else if (type->str() == "*")
-            valuetype->pointer++;
-        else if (type->str() == "&")
+        } else if (type->str() == "*") {
+            if (Token::simpleMatch(type->previous(), "::")) // pointer to member: "int S :: * pm"
+                *valuetype = memberPointerType(*valuetype);
+            else
+                valuetype->pointer++;
+        } else if (type->str() == "&")
             valuetype->reference = Reference::LValue;
         else if (type->str() == "&&")
             valuetype->reference = Reference::RValue;
@@ -8907,6 +8972,12 @@ std::string ValueType::dump() const
     case ITERATOR:
         ret += "valueType-type=\"iterator\"";
         break;
+    case FUNCTION:
+        ret += "valueType-type=\"function\"";
+        break;
+    case MEMBER_POINTER:
+        ret += "valueType-type=\"member-pointer\"";
+        break;
     case VOID:
         ret += "valueType-type=\"void\"";
         break;
@@ -9249,6 +9320,10 @@ std::string ValueType::str() const
         ret += " double";
     else if (type == LONGDOUBLE)
         ret += " long double";
+    else if (type == ValueType::Type::FUNCTION)
+        ret += " function";
+    else if (type == ValueType::Type::MEMBER_POINTER)
+        ret += " member-pointer";
     else if ((type == ValueType::Type::NONSTD || type == ValueType::Type::RECORD) && typeScope) {
         std::string className(typeScope->className);
         const Scope *scope = typeScope->definedType ? typeScope->definedType->enclosingScope : typeScope->nestedIn;

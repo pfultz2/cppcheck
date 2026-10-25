@@ -324,6 +324,7 @@ private:
         TEST_CASE(templateTypeDeductionEnum);        // enum arguments deduce the enum, not its underlying type
         TEST_CASE(templateTypeDeductionArray);       // array arguments: only the decayed dimension is a pointer
         TEST_CASE(templateTypeDeductionConstPointer); // "const T *": the parameter provides the pointee const
+        TEST_CASE(templateTypeDeductionFunctionPointer); // pointers to functions and to members are not deduced
 
         TEST_CASE(simplifyTemplateArgs1);
         TEST_CASE(simplifyTemplateArgs2);
@@ -7844,6 +7845,27 @@ private:
             ASSERT_EQUALS(exp, tok(code));
             ASSERT_EQUALS("", errout_str());
         }
+    }
+
+    void templateTypeDeductionFunctionPointer()
+    { // the ValueType of a pointer to a function or to a member is the pointee type with an
+      // extra pointer level ("int *" for both "int (*)(int)" and "int S::*") - no deduction
+        const char code[] = "template<class T> int f(T x) { return 0; }\n"
+                            "struct S { int a; int (*cb)(int); };\n"
+                            "int test(int (*cb)(int), int S::*pm, S s, int* p, int (&rf)(int)) {\n"
+                            "    int (**pcb)(int); int (*cbs[2])(int); auto apm = &S::a;\n"
+                            "    f(cb); f(rf); f(*pcb); f(cbs[0]); f(pm); f(&S::a); f(s.cb); f(apm); return f(p);\n"
+                            "}";
+        const char exp[] = "int f<int*> ( int * x ) ; "
+                           "template < class T > int f ( T x ) { return 0 ; } "
+                           "struct S { int a ; int ( * cb ) ( int ) ; } ; "
+                           "int test ( int ( * cb ) ( int ) , int S :: * pm , S s , int * p , int ( & rf ) ( int ) ) { "
+                           "int ( * * pcb ) ( int ) ; int ( * cbs [ 2 ] ) ( int ) ; auto apm ; apm = & S :: a ; "
+                           "f ( cb ) ; f ( rf ) ; f ( * pcb ) ; f ( cbs [ 0 ] ) ; f ( pm ) ; f ( & S :: a ) ; f ( s . cb ) ; f ( apm ) ; return f<int*> ( p ) ; "
+                           "} "
+                           "int f<int*> ( int * x ) { return 0 ; }";
+        ASSERT_EQUALS(exp, tok(code));
+        ASSERT_EQUALS("", errout_str());
     }
 
     void simplifyTemplateArgs1() {
