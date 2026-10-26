@@ -600,6 +600,7 @@ private:
         TEST_CASE(valueTypeRValueReference);
         TEST_CASE(valueTypeGeneric);
         TEST_CASE(valueTypeFunctionPointer); // pointer or reference to function, pointer to member
+        TEST_CASE(valueTypeFunctionPointerBits);
 
         TEST_CASE(variadic1); // #7453
         TEST_CASE(variadic2); // #7649
@@ -10671,6 +10672,28 @@ private:
         ASSERT_EQUALS("signed int", argumentType(tokens, "g ( cb ( 1 ) )"));
         ASSERT_EQUALS("signed int", argumentType(tokens, "g ( rf ( 2 ) )"));
         ASSERT_EQUALS("signed int *", argumentType(tokens, "g ( pf ( 3 ) )"));
+    }
+
+    // the bit count of the ValueType of the first token after start that matches pattern:
+    // the width of a bit field, -1 for any other variable, -2 when there is no ValueType
+    static int declaredBits(const Token* start, const char pattern[]) {
+        const Token* const tok = Token::findsimplematch(start, pattern, strlen(pattern));
+        const ValueType* const vt = tok ? tok->valueType() : nullptr;
+        return vt ? vt->bits : -2;
+    }
+
+    void valueTypeFunctionPointerBits() {
+        // a pointer to function or to member is not a bit field: the dump must not report
+        // "valueType-bits" for it (the misra addon checks rule 6.1 on struct members with bits)
+        GET_SYMBOL_DB("struct S { int a; };\n"
+                      "struct T { int S::*pm; int (*cb)(int); int (&rf)(int); int x : 3; int y; };\n");
+        ASSERT(db != nullptr);
+        const Token* const tokens = tokenizer.tokens();
+        ASSERT_EQUALS(-1, declaredBits(tokens, "pm ;"));
+        ASSERT_EQUALS(-1, declaredBits(tokens, "cb )"));
+        ASSERT_EQUALS(-1, declaredBits(tokens, "rf )"));
+        ASSERT_EQUALS(3, declaredBits(tokens, "x ;"));
+        ASSERT_EQUALS(-1, declaredBits(tokens, "y ;"));
     }
 
     void variadic1() { // #7453

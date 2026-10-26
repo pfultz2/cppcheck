@@ -7349,6 +7349,7 @@ static ValueType memberPointerType(const ValueType& member)
 {
     ValueType vt;
     vt.type = ValueType::Type::MEMBER_POINTER;
+    vt.bits = member.bits;
     vt.pointer = member.pointer + 1;
     vt.constness = member.constness;
     vt.volatileness = member.volatileness;
@@ -8000,6 +8001,7 @@ static const Token* parsedecl(const Token* type,
             if (Token::Match(type, "( *|&|&&") && Token::simpleMatch(type->link(), ") (")) {
                 ValueType function;
                 function.type = ValueType::Type::FUNCTION;
+                function.bits = valuetype->bits;
                 function.pointer = pointer0;
                 if (type->strAt(1) == "&")
                     function.reference = Reference::LValue;
