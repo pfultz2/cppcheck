@@ -190,8 +190,6 @@ def test_progress(tmpdir):
             "progress: ValueFlow::valueFlowCondition(SymbolicConditionHandler{}, tokenlist, symboldatabase, errorLogger, settings, skippedFunctions) 1 100%\n"
             "progress: ValueFlow::valueFlowSymbolicInfer(symboldatabase, settings) 1 0%\n"
             "progress: ValueFlow::valueFlowSymbolicInfer(symboldatabase, settings) 1 100%\n"
-            "progress: ValueFlow::valueFlowArrayBool(tokenlist, settings) 1 0%\n"
-            "progress: ValueFlow::valueFlowArrayBool(tokenlist, settings) 1 100%\n"
             "progress: ValueFlow::valueFlowArrayElement(tokenlist, settings) 1 0%\n"
             "progress: ValueFlow::valueFlowArrayElement(tokenlist, settings) 1 100%\n"
             "progress: ValueFlow::valueFlowRightShift(tokenlist, settings) 1 0%\n"
@@ -482,9 +480,9 @@ def test_addon_threadsafety(tmpdir):
     test_file = os.path.join(tmpdir, 'test.cpp')
     with open(test_file, 'wt') as f:
         f.write("""
-extern const char* f()
+extern void f()
 {
-    return strerror(1);
+    elf_fill(1);
 }
         """)
 
@@ -496,7 +494,7 @@ extern const char* f()
     assert lines == [
         'Checking {} ...'.format(test_file)
     ]
-    assert stderr == '{}:4:12: warning: strerror is MT-unsafe [threadsafety-unsafe-call]\n'.format(test_file)
+    assert stderr == '{}:4:5: warning: elf_fill is MT-unsafe [threadsafety-unsafe-call]\n'.format(test_file)
 
 
 def test_addon_naming(tmpdir):
@@ -1069,7 +1067,7 @@ def test_showtime_top5_summary_compdb(tmp_path):
 
 
 def __test_showtime_file(tmp_path, use_compdb=False, use_addons=False, use_clang_tidy=False):
-    exp_res = 80
+    exp_res = 79
     # project analysis does not call Preprocessor::getConfig()
     if use_compdb:
         exp_res -= 1
@@ -1103,7 +1101,7 @@ def test_showtime_file_clang_tidy_compdb(tmp_path):
 
 
 def __test_showtime_summary(tmp_path, use_compdb=False, use_addons=False, use_clang_tidy=False):
-    exp_res = 80
+    exp_res = 79
     # project analysis does not call Preprocessor::getConfig()
     if use_compdb:
         exp_res -= 1
