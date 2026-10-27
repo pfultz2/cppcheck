@@ -42,7 +42,7 @@ namespace ValueFlow
 {
     bool getMinMaxValues(const ValueType* vt, const Platform& platform, MathLib::bigint& minValue, MathLib::bigint& maxValue);
 
-    MathLib::bigint truncateIntValue(MathLib::bigint value, size_t value_size, ValueType::Sign dst_sign);
+    MathLib::bigint truncateIntValue(MathLib::bigint value, size_t value_size, const ValueType* dst, const Platform& platform);
 
     /** Is the value at a limit of its type, standing for any value beyond? */
     inline bool isSaturated(MathLib::bigint value)

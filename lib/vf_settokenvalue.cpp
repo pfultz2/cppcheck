@@ -256,7 +256,7 @@ namespace ValueFlow
             // Ensure that the comma isn't a function call
             if (!callParent || (!Token::Match(callParent->previous(), "%name%|> (") && !Token::simpleMatch(callParent, "{") &&
                                 (!Token::Match(callParent, "( %name%") || settings.library.isNotLibraryFunction(callParent->next())) &&
-                                !(callParent->str() == "(" && (Token::simpleMatch(callParent->astOperand1(), "*") || Token::Match(callParent->astOperand1(), "%name%|("))))) {
+                                !(callParent->str() == "(" && Token::Match(callParent->astOperand1(), "%name%|(|[|*|.")))) {
                 setTokenValue(parent, std::move(value), settings);
                 return;
             }
@@ -617,7 +617,7 @@ namespace ValueFlow
         // ~
         else if (parent->str() == "~") {
             for (const Value &val : tok->values()) {
-                if (!val.isIntValue())
+                if (!val.isIntValue() || (val.isImpossible() && val.intvalue < 0))
                     continue;
                 Value v(val);
                 v.intvalue = ~v.intvalue;
@@ -665,7 +665,7 @@ namespace ValueFlow
                         const ValueType *dst = tok->valueType();
                         if (dst) {
                             const size_t sz = dst->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
-                            MathLib::bigint newvalue = ValueFlow::truncateIntValue(v.intvalue + 1, sz, dst->sign);
+                            MathLib::bigint newvalue = ValueFlow::truncateIntValue(v.intvalue + 1, sz, dst, settings.platform);
                             if (v.bound != ValueFlow::Value::Bound::Point) {
                                 if (newvalue < v.intvalue) {
                                     v.invertBound();
@@ -695,7 +695,7 @@ namespace ValueFlow
                         const ValueType *dst = tok->valueType();
                         if (dst) {
                             const size_t sz = dst->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
-                            MathLib::bigint newvalue = ValueFlow::truncateIntValue(v.intvalue - 1, sz, dst->sign);
+                            MathLib::bigint newvalue = ValueFlow::truncateIntValue(v.intvalue - 1, sz, dst, settings.platform);
                             if (v.bound != ValueFlow::Value::Bound::Point) {
                                 if (newvalue > v.intvalue) {
                                     v.invertBound();

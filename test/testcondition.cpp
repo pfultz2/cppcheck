@@ -69,6 +69,7 @@ private:
         TEST_CASE(incorrectLogicOperator15);
         TEST_CASE(incorrectLogicOperator16); // #10070
         TEST_CASE(incorrectLogicOperator17);
+        TEST_CASE(incorrectLogicOperator18); // #12282
         TEST_CASE(secondAlwaysTrueFalseWhenFirstTrueError);
         TEST_CASE(incorrectLogicOp_condSwapping);
         TEST_CASE(testBug5895);
@@ -1773,6 +1774,17 @@ private:
         ASSERT_EQUALS("", errout_str());
     }
 
+    void incorrectLogicOperator18() { // #12282
+        // long double literals out of the range of double are different values
+        check("int f(long double x) {\n"
+              "    return x > 1e400L && x < 1e500L;\n"
+              "}\n"
+              "int g() {\n"
+              "    return 1e400L < 1e500L;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+    }
+
     void incorrectLogicOperator17() { // #12471
         check("struct R {\n"
               "    void set() { i = 1; }\n"
@@ -3463,6 +3475,12 @@ private:
               "   if( buf == 1) {}\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+
+        check("std::string a[3];\n" // #15065
+              "void f() {\n"
+              "   if (a) {}\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3:8]: (style) Condition 'a' is always true [knownConditionTrueFalse]\n", errout_str());
 
         // Avoid FP when condition comes from macro
         check("#define NOT !\n"
@@ -5518,6 +5536,21 @@ private:
               "    std::size_t x;\n"
               "};\n");
         ASSERT_EQUALS("", errout_str());
+
+        check("int g();\n" // #13441
+              "void f() {\n"
+              "    int (*p)() = g;\n"
+              "    if (p == nullptr) {}\n"
+              "    if (g == nullptr) {}\n"
+              "    auto q = g;\n"
+              "    if (q == nullptr) {}\n"
+              "};\n");
+        TODO_ASSERT_EQUALS("[test.cpp:4:11]: (style) Condition 'p==nullptr' is always false [knownConditionTrueFalse]\n"
+                           "[test.cpp:5:11]: (style) Condition 'g==nullptr' is always false [knownConditionTrueFalse]\n"
+                           "[test.cpp:7:11]: (style) Condition 'q==nullptr' is always false [knownConditionTrueFalse]\n",
+                           "[test.cpp:4:11]: (style) Condition 'p==nullptr' is always false [knownConditionTrueFalse]\n"
+                           "[test.cpp:5:11]: (style) Condition 'g==nullptr' is always false [knownConditionTrueFalse]\n",
+                           errout_str());
     }
 
     void alwaysTrueContainer() {
@@ -6645,6 +6678,12 @@ private:
         ASSERT_EQUALS("[test.cpp:2:13]: (style) Comparing expression of type 'signed int' against value -2147483648. Condition is always false. [compareValueOutOfTypeRangeError]\n"
                       "[test.cpp:2:28]: (style) Comparing expression of type 'signed int' against value 2147483647. Condition is always false. [compareValueOutOfTypeRangeError]\n"
                       "[test.cpp:7:17]: (style) Comparing expression of type 'signed int' against value 2147483647. Condition is always false. [compareValueOutOfTypeRangeError]\n",
+                      errout_str());
+
+        check("void f(char c) {\n" // #11592
+              "    if (c == 128) {}\n"
+              "}\n", settingsUnix64);
+        ASSERT_EQUALS("[test.cpp:2:14]: (style) Comparing expression of type 'char' against value 128. Condition is always false. [compareValueOutOfTypeRangeError]\n",
                       errout_str());
     }
 

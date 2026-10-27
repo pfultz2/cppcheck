@@ -24,6 +24,7 @@
 #include "fwdanalysis.h"
 #include "library.h"
 #include "mathlib.h"
+#include "refthunk.h"
 #include "platform.h"
 #include "settings.h"
 #include "standards.h"
@@ -594,6 +595,14 @@ void CheckOtherImpl::invalidPointerCastError(const Token* tok, const std::string
 // Detect redundant assignments: x = 0; x = 4;
 //---------------------------------------------------------------------------
 
+static bool isAssignmentOrInit(const Token* tok) {
+    if (tok->astParent() || !tok->astOperand1())
+        return false;
+    if (tok->isAssignmentOp() || tok->tokType() == Token::eIncDecOp)
+        return true;
+    return Token::Match(tok, "[{(]") && tok->astOperand1()->variable() && tok->astOperand1() == tok->astOperand1()->variable()->nameToken();
+}
+
 void CheckOtherImpl::checkRedundantAssignment()
 {
     if (!mSettings.severity.isEnabled(Severity::style) &&
@@ -614,75 +623,80 @@ void CheckOtherImpl::checkRedundantAssignment()
             if (Token::simpleMatch(tok, "try {"))
                 // todo: check try blocks
                 tok = tok->linkAt(1);
-            if ((tok->isAssignmentOp() || tok->tokType() == Token::eIncDecOp) && tok->astOperand1()) {
-                if (tok->astParent())
-                    continue;
+            if (!isAssignmentOrInit(tok))
+                continue;
 
-                // Do not warn about redundant initialization when rhs is trivial
-                // TODO : do not simplify the variable declarations
-                bool isInitialization = false;
-                if (Token::Match(tok->tokAt(-2), "; %var% =") && tok->tokAt(-2)->isSplittedVarDeclEq()) {
-                    isInitialization = true;
-                    bool trivial = true;
-                    visitAstNodes(tok->astOperand2(),
-                                  [&](const Token *rhs) {
-                        if (Token::simpleMatch(rhs, "{ 0 }"))
-                            return ChildrenToVisit::none;
-                        if (Token::Match(rhs, "%num%|%name%") && !rhs->varId())
-                            return ChildrenToVisit::none;
-                        if (Token::Match(rhs, ":: %name%") && rhs->hasKnownIntValue())
-                            return ChildrenToVisit::none;
-                        if (rhs->isCast())
-                            return rhs->astOperand2() ? ChildrenToVisit::op2 : ChildrenToVisit::op1;
-                        trivial = false;
-                        return ChildrenToVisit::done;
+            // Do not warn about redundant initialization when rhs is trivial
+            // TODO : do not simplify the variable declarations
+            bool isInitialization = false;
+            if ((Token::Match(tok->tokAt(-2), "; %var% =") && tok->tokAt(-2)->isSplittedVarDeclEq()) || Token::Match(tok, "[{(]")) {
+                isInitialization = true;
+                bool trivial = true;
+                visitAstNodes(tok->astOperand2(),
+                              [&](const Token *rhs) {
+                    if (Token::simpleMatch(rhs, "{ 0 }"))
+                        return ChildrenToVisit::none;
+                    if (Token::Match(rhs, "%num%|%name%") && !rhs->varId())
+                        return ChildrenToVisit::none;
+                    if (Token::Match(rhs, ":: %name%") && rhs->hasKnownIntValue())
+                        return ChildrenToVisit::none;
+                    if (rhs->isCast())
+                        return rhs->astOperand2() ? ChildrenToVisit::op2 : ChildrenToVisit::op1;
+                    trivial = false;
+                    return ChildrenToVisit::done;
+                });
+                if (trivial)
+                    continue;
+            }
+
+            const Token* rhs = tok->astOperand2();
+            // Do not warn about assignment with 0 / NULL
+            if ((rhs && MathLib::isNullValue(rhs->str())) || isNullOperand(rhs))
+                continue;
+
+            if (tok->astOperand1()->variable() && tok->astOperand1()->variable()->isReference())
+                // todo: check references
+                continue;
+
+            if (tok->astOperand1()->variable() && tok->astOperand1()->variable()->isStatic())
+                // todo: check static variables
+                continue;
+
+            bool inconclusive = false;
+            if (tok->isCpp() && tok->astOperand1()->valueType()) {
+                // If there is a custom assignment operator => this is inconclusive
+                if (tok->astOperand1()->valueType()->typeScope) {
+                    const std::string op = "operator" + tok->str();
+                    const std::list<Function>& fList = tok->astOperand1()->valueType()->typeScope->functionList;
+                    inconclusive = std::any_of(fList.cbegin(), fList.cend(), [&](const Function& f) {
+                        return f.name() == op;
                     });
-                    if (trivial)
-                        continue;
                 }
+                // assigning a smart pointer has side effects
+                if (tok->astOperand1()->valueType()->type == ValueType::SMART_POINTER)
+                    break;
+            }
+            if (inconclusive && !mSettings.certainty.isEnabled(Certainty::inconclusive))
+                continue;
 
-                const Token* rhs = tok->astOperand2();
-                // Do not warn about assignment with 0 / NULL
-                if ((rhs && MathLib::isNullValue(rhs->str())) || isNullOperand(rhs))
-                    continue;
+            FwdAnalysis fwdAnalysis(mSettings);
+            if (fwdAnalysis.hasOperand(tok->astOperand2(), tok->astOperand1()))
+                continue;
 
-                if (tok->astOperand1()->variable() && tok->astOperand1()->variable()->isReference())
-                    // todo: check references
-                    continue;
+            // Is there a redundant assignment?
+            const Token *start;
+            if (tok->isAssignmentOp())
+                start = tok->astOperand2();
+            else
+                start = tok->findExpressionStartEndTokens().second->next();
 
-                if (tok->astOperand1()->variable() && tok->astOperand1()->variable()->isStatic())
-                    // todo: check static variables
-                    continue;
+            std::vector<const Token*> tokensToCheck{ tok->astOperand1() };
+            if (Token::simpleMatch(tok->astOperand1(), "[") && Token::simpleMatch(tok->astOperand1()->astOperand1(), "auto")) { // structured binding
+                tokensToCheck = astFlatten(tok->astOperand1()->astOperand2(), ",");
+                isInitialization = true;
+            }
 
-                bool inconclusive = false;
-                if (tok->isCpp() && tok->astOperand1()->valueType()) {
-                    // If there is a custom assignment operator => this is inconclusive
-                    if (tok->astOperand1()->valueType()->typeScope) {
-                        const std::string op = "operator" + tok->str();
-                        const std::list<Function>& fList = tok->astOperand1()->valueType()->typeScope->functionList;
-                        inconclusive = std::any_of(fList.cbegin(), fList.cend(), [&](const Function& f) {
-                            return f.name() == op;
-                        });
-                    }
-                    // assigning a smart pointer has side effects
-                    if (tok->astOperand1()->valueType()->type == ValueType::SMART_POINTER)
-                        break;
-                }
-                if (inconclusive && !mSettings.certainty.isEnabled(Certainty::inconclusive))
-                    continue;
-
-                FwdAnalysis fwdAnalysis(mSettings);
-                if (fwdAnalysis.hasOperand(tok->astOperand2(), tok->astOperand1()))
-                    continue;
-
-                // Is there a redundant assignment?
-                const Token *start;
-                if (tok->isAssignmentOp())
-                    start = tok->astOperand2();
-                else
-                    start = tok->findExpressionStartEndTokens().second->next();
-
-                const Token * tokenToCheck = tok->astOperand1();
+            for (const Token* tokenToCheck : tokensToCheck) {
 
                 // Check if we are working with union
                 for (const Token* tempToken = tokenToCheck; Token::simpleMatch(tempToken, ".");) {
@@ -698,9 +712,10 @@ void CheckOtherImpl::checkRedundantAssignment()
                 }
 
                 // Get next assignment..
-                const Token *nextAssign = fwdAnalysis.reassign(tokenToCheck, start, scope->bodyEnd);
+                const Token* nextAssign = fwdAnalysis.reassign(tokenToCheck, start, scope->bodyEnd);
                 // extra check for union
-                if (nextAssign && tokenToCheck != tok->astOperand1()) {
+                const bool isUnion = tokenToCheck != tok->astOperand1() && !isStructuredBindingVariable(tokenToCheck->variable());
+                if (nextAssign && isUnion) {
                     nextAssign = fwdAnalysis.reassign(tok->astOperand1(), start, scope->bodyEnd);
                     // reading another member of the same union in the rhs is a use through aliasing
                     if (nextAssign && fwdAnalysis.hasOperand(nextAssign->astOperand2(), tokenToCheck))
@@ -712,7 +727,7 @@ void CheckOtherImpl::checkRedundantAssignment()
 
                 // there is redundant assignment. Is there a case between the assignments?
                 bool hasCase = false;
-                for (const Token *tok2 = tok; tok2 != nextAssign; tok2 = tok2->next()) {
+                for (const Token* tok2 = tok; tok2 != nextAssign; tok2 = tok2->next()) {
                     if (tok2->str() == "break" || tok2->str() == "return")
                         break;
                     if (tok2->str() == "case") {
@@ -722,13 +737,14 @@ void CheckOtherImpl::checkRedundantAssignment()
                 }
 
                 // warn
+                const Token* exprTok = isUnion ? tok->astOperand1() : tokenToCheck;
                 if (hasCase)
-                    redundantAssignmentInSwitchError(tok, nextAssign, tok->astOperand1()->expressionString());
+                    redundantAssignmentInSwitchError(tok, nextAssign, exprTok->expressionString());
                 else if (isInitialization)
-                    redundantInitializationError(tok, nextAssign, tok->astOperand1()->expressionString(), inconclusive);
+                    redundantInitializationError(tok, nextAssign, exprTok->expressionString(), inconclusive);
                 else {
                     diag(nextAssign);
-                    redundantAssignmentError(tok, nextAssign, tok->astOperand1()->expressionString(), inconclusive);
+                    redundantAssignmentError(tok, nextAssign, exprTok->expressionString(), inconclusive);
                 }
             }
         }
@@ -1767,6 +1783,8 @@ void CheckOtherImpl::checkConstVariable()
         if (var->isPointer())
             continue;
         if (var->isConst())
+            continue;
+        if (Tokenizer::isFunctionPointer(var->nameToken())) // reference to function
             continue;
         const Scope* scope = var->scope();
         if (!scope)
@@ -3513,9 +3531,11 @@ void CheckOtherImpl::redundantCopyError(const Token *tok,const std::string& varn
 // Checking for shift by negative values
 //---------------------------------------------------------------------------
 
-static bool isNegative(const Token *tok, const Settings &settings)
+static const ValueFlow::Value* isNegative(const Token *tok, const Settings &settings)
 {
-    return tok->valueType() && tok->valueType()->sign == ValueType::SIGNED && tok->getValueLE(-1LL, settings);
+    if (!tok->valueType() || tok->valueType()->sign != ValueType::SIGNED)
+        return nullptr;
+    return tok->getValueLE(-1LL, settings);
 }
 
 void CheckOtherImpl::checkNegativeBitwiseShift()
@@ -3551,24 +3571,28 @@ void CheckOtherImpl::checkNegativeBitwiseShift()
         if (ternary)
             continue;
 
-        // Get negative rhs value. preferably a value which doesn't have 'condition'.
-        if (portability && isNegative(tok->astOperand1(), mSettings))
-            negativeBitwiseShiftError(tok, 1);
-        else if (isNegative(tok->astOperand2(), mSettings))
-            negativeBitwiseShiftError(tok, 2);
+        const ValueFlow::Value* value = isNegative(tok->astOperand1(), mSettings); // lhs
+        if (portability && value)
+            negativeBitwiseShiftError(tok, true, value);
+        else {
+            value = isNegative(tok->astOperand2(), mSettings); // rhs
+            if (value)
+                negativeBitwiseShiftError(tok, false, value);
+        }
     }
 }
 
 
-void CheckOtherImpl::negativeBitwiseShiftError(const Token *tok, int op)
+void CheckOtherImpl::negativeBitwiseShiftError(const Token *tok, bool isLHS, const ValueFlow::Value* v)
 {
-    if (op == 1)
-        // LHS - this is used by intention in various software, if it
-        // is used often in a project and works as expected then this is
-        // a portability issue
-        reportError(tok, Severity::portability, "shiftNegativeLHS", "Shifting a negative value is technically undefined behaviour", CWE758, Certainty::normal);
-    else // RHS
-        reportError(tok, Severity::error, "shiftNegative", "Shifting by a negative value is undefined behaviour", CWE758, Certainty::normal);
+    // LHS - this is used by intention in various software, if it
+    // is used often in a project and works as expected then this is
+    // a portability issue
+    const char* id = isLHS ? "shiftNegativeLHS" : "shiftNegative";
+    const std::string msg = isLHS ? "Shifting a negative value is technically undefined behaviour" : "Shifting by a negative value is undefined behaviour";
+    const Severity severity = isLHS ? Severity::portability : (v && v->errorSeverity() && !v->conditional ? Severity::error : Severity::warning);
+    const ErrorPath errorPath = getErrorPath(tok, v, msg);
+    reportError(errorPath, severity, id, msg, CWE758, Certainty::normal);
 }
 
 //---------------------------------------------------------------------------
@@ -4206,12 +4230,12 @@ void CheckOtherImpl::funcArgOrderDifferent(const std::string & functionName,
     reportError(tokens, Severity::warning, "funcArgOrderDifferent", msg, CWE683, Certainty::normal);
 }
 
-static const Token *findShadowed(const Scope *scope, const Variable& var, int linenr)
+static const Token *findShadowed(const Scope *scope, const Variable& var)
 {
     if (!scope)
         return nullptr;
     for (const Variable &v : scope->varlist) {
-        if (scope->isExecutable() && v.nameToken()->linenr() > linenr)
+        if ((scope->isExecutable() || scope->type == ScopeType::eGlobal) && succeeds(v.nameToken(), var.nameToken()))
             continue;
         if (v.name() == var.name())
             return v.nameToken();
@@ -4225,9 +4249,9 @@ static const Token *findShadowed(const Scope *scope, const Variable& var, int li
 
     if (scope->type == ScopeType::eLambda)
         return nullptr;
-    const Token* shadowed = findShadowed(scope->nestedIn, var, linenr);
+    const Token* shadowed = findShadowed(scope->nestedIn, var);
     if (!shadowed)
-        shadowed = findShadowed(scope->functionOf, var, linenr);
+        shadowed = findShadowed(scope->functionOf, var);
     return shadowed;
 }
 
@@ -4261,9 +4285,9 @@ void CheckOtherImpl::checkShadowVariables()
                 }
             }
 
-            const Token *shadowed = findShadowed(scope.nestedIn, var, var.nameToken()->linenr());
+            const Token *shadowed = findShadowed(scope.nestedIn, var);
             if (!shadowed)
-                shadowed = findShadowed(scope.functionOf, var, var.nameToken()->linenr());
+                shadowed = findShadowed(scope.functionOf, var);
             if (!shadowed)
                 return;
             if (scope.type == ScopeType::eFunction && scope.className == var.name())
@@ -4297,9 +4321,10 @@ void CheckOtherImpl::checkShadowVariables()
 void CheckOtherImpl::shadowError(const Token *shadows, const std::string &shadowsType,
                                  const Token *shadowed, const std::string &shadowedType)
 {
-    ErrorPath errorPath;
-    errorPath.emplace_back(shadowed, "Shadowed " + shadowedType);
-    errorPath.emplace_back(shadows, "Shadow " + shadowsType);
+    ErrorPath errorPath{
+        {shadowed, "Shadowed " + shadowedType},
+        {shadows, "Shadow " + shadowsType}
+    };
     const std::string &varname = shadows ? shadows->str() : shadowsType;
     const std::string ShadowsType = char(std::toupper(shadowsType[0])) + shadowsType.substr(1);
     const std::string ShadowedType = char(std::toupper(shadowedType[0])) + shadowedType.substr(1);
@@ -4446,7 +4471,7 @@ void CheckOtherImpl::checkKnownPointerToBool()
         for (const Token* tok = functionScope->bodyStart; tok != functionScope->bodyEnd; tok = tok->next()) {
             if (!tok->hasKnownIntValue())
                 continue;
-            if (!astIsPointer(tok))
+            if (!astIsPointer(tok) && !tok->function())
                 continue;
             if (Token::Match(tok->astParent(), "?|!|&&|%oror%|%comp%"))
                 continue;
@@ -4576,7 +4601,7 @@ struct UnionMember {
         : name(name)
         , size(size) {}
 
-    const std::string &name;
+    RefThunk<const std::string> name;
     size_t size;
 };
 
@@ -4586,7 +4611,7 @@ struct Union {
         , name(scope.className) {}
 
     const Scope *scope;
-    const std::string &name;
+    RefThunk<const std::string> name;
     std::vector<UnionMember> members;
 
     const UnionMember *largestMember() const {
@@ -4695,7 +4720,7 @@ void CheckOtherImpl::unionZeroInitError(const Token *tok,
                 "Zero initializing union '$symbol' does not guarantee " +
                 "its complete storage to be zero initialized as its largest member " +
                 "is not declared as the first member. Consider making " +
-                largestMember.name + " the first member or favor memset().");
+                largestMember.name() + " the first member or favor memset().");
 }
 
 //-----------------------------------------------------------------------------
@@ -4928,8 +4953,8 @@ void CheckOther::getErrorMessages(ErrorLogger& errorLogger, const Settings &sett
     c.zerodivError(nullptr, nullptr);
     c.misusedScopeObjectError(nullptr, "varname");
     c.invalidPointerCastError(nullptr,  "float *", "double *", false, false);
-    c.negativeBitwiseShiftError(nullptr, 1);
-    c.negativeBitwiseShiftError(nullptr, 2);
+    c.negativeBitwiseShiftError(nullptr, true);
+    c.negativeBitwiseShiftError(nullptr, false);
     c.raceAfterInterlockedDecrementError(nullptr);
     c.invalidFreeError(nullptr, "malloc", false);
     c.overlappingWriteUnion(nullptr);

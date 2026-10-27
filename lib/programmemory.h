@@ -21,6 +21,7 @@
 
 #include "config.h"
 #include "mathlib.h"
+#include "refthunk.h"
 #include "vfvalue.h" // needed for alias
 
 #include <cstddef>
@@ -208,7 +209,7 @@ struct CPPCHECKLIB ProgramMemoryState {
 
     ProgramMemory state;
     std::map<nonneg int, const Token*> origins;
-    const Settings& settings;
+    RefThunk<const Settings> settings;
     // Memoized findExpressionChanged() pre-filter; structural, so never invalidated.
     std::shared_ptr<ChangedCache> changedCache;
 

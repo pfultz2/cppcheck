@@ -23,6 +23,7 @@
 #include "infer.h"
 #include "library.h"
 #include "mathlib.h"
+#include "refthunk.h"
 #include "settings.h"
 #include "standards.h"
 #include "symboldatabase.h"
@@ -747,7 +748,7 @@ ProgramMemoryState::FindChangedFn ProgramMemoryState::getCachedFindExpressionCha
     // variable follows the same path) and memoizes those evals in evalCache for the closure's lifetime.
     using EvalCache = std::map<const Token*, std::vector<MathLib::bigint>>;
     const std::shared_ptr<ChangedCache> cache = changedCache;
-    const Settings* const sp = &settings;
+    const Settings* const sp = &settings();
     ProgramMemory snapshot = state;
     const std::shared_ptr<EvalCache> evalCache = skipDeadCode ? std::make_shared<EvalCache>() : nullptr;
     return [cache, sp, snapshot, skipDeadCode, evalCache](const Token* expr,
@@ -1638,7 +1639,7 @@ namespace {
         using Values = ProgramMemory::Values;
 
         ProgramMemory* pm;
-        const Settings& settings;
+        RefThunk<const Settings> settings;
         // Values tracked by the forward/reverse analysis. A tracked value is the authoritative
         // current value of its expression and takes precedence over the program memory.
         const ProgramMemory::Map* vars = nullptr;
@@ -1758,7 +1759,7 @@ namespace {
                 return false;
             MathLib::bigint typeMin = 0;
             MathLib::bigint typeMax = 0;
-            if (!ValueFlow::getMinMaxValues(expr->valueType(), settings.platform, typeMin, typeMax))
+            if (!ValueFlow::getMinMaxValues(expr->valueType(), settings().platform, typeMin, typeMax))
                 return true;
             const std::vector<MathLib::bigint> low = getMinValue(makeIntegralInferModel(), values);
             const std::vector<MathLib::bigint> high = getMaxValue(makeIntegralInferModel(), values);
@@ -1965,10 +1966,10 @@ namespace {
             }
             if (expr->isBoolean())
                 return single(ValueFlow::Value{expr->str() == "true"});
-            if (const Token* containerTok = settings.library.getContainerFromYield(expr, Library::Container::Yield::SIZE)) {
+            if (const Token* containerTok = settings().library.getContainerFromYield(expr, Library::Container::Yield::SIZE)) {
                 return executeSizeYield(containerTok);
             }
-            if (const Token* containerTok = settings.library.getContainerFromYield(expr, Library::Container::Yield::EMPTY)) {
+            if (const Token* containerTok = settings().library.getContainerFromYield(expr, Library::Container::Yield::EMPTY)) {
                 const ValueFlow::Value v = containerEmptyValue(executeContainerSizes(containerTok));
                 if (!v.isUninitValue())
                     return single(v);
@@ -2183,7 +2184,7 @@ namespace {
                             }
                             return single(lf(argValues));
                         }
-                        const std::string& returnValue = settings.library.returnValue(ftok);
+                        const std::string& returnValue = settings().library.returnValue(ftok);
                         if (!returnValue.empty()) {
                             std::unordered_map<nonneg int, ValueFlow::Value> arg_map;
                             int argn = 0;
