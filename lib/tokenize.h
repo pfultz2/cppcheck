@@ -361,7 +361,7 @@ private:
 
     void checkForEnumsWithTypedef();
 
-    void findComplicatedSyntaxErrorsInTemplates();
+    void findComplicatedSyntaxErrorsInTemplates() const;
 
 protected:
     /**
