@@ -150,6 +150,7 @@ private:
         TEST_CASE(nullpointer110); // #14937
         TEST_CASE(nullpointer111); // ranges from conditions
         TEST_CASE(nullpointer112); // unknown values in program memory
+        TEST_CASE(nullpointer113); // a variable is clamped before the check
         TEST_CASE(nullpointer_addressOf); // address of
         TEST_CASE(nullpointerSwitch); // #2626
         TEST_CASE(nullpointer_cast); // #4692
@@ -3274,6 +3275,81 @@ private:
               "    ctx->a = 0;\n"
               "}\n");
         ASSERT_EQUALS("[test.cpp:11:5]: (warning) If memory allocation fails, then there is a possible null pointer dereference: ctx [nullPointerOutOfMemory]\n", errout_str());
+    }
+
+    void nullpointer113() { // clamp before the check: 'if (x > N) x = N;'
+        // inside a range condition
+        check("int f(int len, int *buf) {\n"
+              "    int *p = 0;\n"
+              "    if (len >= 0) {\n"
+              "        if (len > 16)\n"
+              "            len = 16;\n"
+              "        if (len <= 16)\n"
+              "            p = buf;\n"
+              "        return *p;\n"
+              "    }\n"
+              "    return 0;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        // false on both paths
+        check("int f(int x) {\n"
+              "    int *p = 0;\n"
+              "    if (x > 5) x = 5;\n"
+              "    if (x > 5) return *p;\n"
+              "    return x;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("int f(int x) {\n"
+              "    int *p = 0;\n"
+              "    if (x > 5) x = 5;\n"
+              "    if (x <= 5) return x;\n"
+              "    return *p;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        // else block assigns too
+        check("int f(int x) {\n"
+              "    int *p = 0;\n"
+              "    if (x > 5) x = 5;\n"
+              "    else x = 0;\n"
+              "    if (x > 5) return *p;\n"
+              "    return x;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        // still possible
+        check("int f(int x) {\n"
+              "    int *p = 0;\n"
+              "    if (x > 5) x = 5;\n"
+              "    if (x < 5) return *p;\n"
+              "    return x;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:24]: (error) Null pointer dereference: p [nullPointer]\n", errout_str());
+
+        // unrelated condition
+        check("int f(int x, int y) {\n"
+              "    int *p = 0;\n"
+              "    if (x > 5) x = 5;\n"
+              "    if (y) return *p;\n"
+              "    return x;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:20]: (error) Null pointer dereference: p [nullPointer]\n", errout_str());
+
+        // TODO: 'len >= 0' is a loop invariant
+        check("int f(int len, int *buf) {\n"
+              "    int *p = 0;\n"
+              "    if (len >= 0) {\n"
+              "        while (len > 0)\n"
+              "            len--;\n"
+              "        if (len == 0)\n"
+              "            p = buf;\n"
+              "        return *p;\n"
+              "    }\n"
+              "    return 0;\n"
+              "}\n");
+        TODO_ASSERT_EQUALS("", "[test.cpp:8:17]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
     }
 
     void nullpointer_addressOf() { // address of

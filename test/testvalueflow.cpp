@@ -9287,6 +9287,18 @@ private:
         ASSERT_EQUALS(false, testValueOfX(code, 5U, 1));
         ASSERT_EQUALS(true, testValueOfX(code, 6U, 1));
         ASSERT_EQUALS(false, testValueOfX(code, 7U, 1));
+
+        // clamped: false on both paths
+        code = "void f(int n) {\n"
+               "    int x = 1;\n"
+               "    if (n > 5) n = 5;\n"
+               "    if (n > 5) { int a = x; }\n"
+               "    if (n <= 5) { int b = x; }\n"
+               "    if (n < 5) { int c = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 4U, 1));
+        ASSERT_EQUALS(true, testValueOfX(code, 5U, 1));
+        ASSERT_EQUALS(true, testValueOfX(code, 6U, 1));
     }
 
     void valueFlowSymbolic() {

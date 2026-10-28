@@ -735,6 +735,9 @@ void ProgramMemoryState::assume(const Token* tok, bool b, bool isEmpty, const To
             origin = top->link()->next();
             if (!b && origin->link()) {
                 origin = origin->link();
+                // The false path runs the else block
+                if (Token::simpleMatch(origin, "} else {"))
+                    origin = origin->tokAt(2);
             }
         }
     }
@@ -783,6 +786,9 @@ void ProgramMemoryState::removeModifiedVars(const Token* tok)
     const auto findChanged = getCachedFindExpressionChanged(/*skipDeadCode*/ true);
     state.erase_if([&](const ExprIdToken& e) {
         const Token* start = origins[e.getExpressionId()];
+        // The then-path skips the else block
+        if (Token::simpleMatch(start, "} else {"))
+            start = start->linkAt(2);
         const Token* expr = e.tok;
         const bool changed = !expr || findChanged(expr, start, tok);
         if (changed)

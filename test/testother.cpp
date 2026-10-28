@@ -898,6 +898,26 @@ private:
               "    if (!num) {}\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+
+        // clamp before the check
+        check("int f(int x) {\n"
+              "    int d = 0;\n"
+              "    if (x > 5) x = 0;\n"
+              "    if (x <= 5) d = 1;\n"
+              "    return 10 / d;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("int f(int x) {\n"
+              "    int d = 0;\n"
+              "    if (x >= 0) {\n"
+              "        if (x > 5) x = 0;\n"
+              "        if (x <= 5) d = 1;\n"
+              "        return 10 / d;\n"
+              "    }\n"
+              "    return d;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
     }
 
     void zeroDivErrorPath() {
