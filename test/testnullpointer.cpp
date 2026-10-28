@@ -5000,6 +5000,14 @@ private:
 
         check("int* f9() { int *x = NULL; return x--; }\n");
         ASSERT_EQUALS("[test.cpp:1:36]: (error) Overflow in pointer arithmetic, NULL pointer is subtracted. [nullPointerArithmetic]\n", errout_str());
+
+        // The condition of an assert() is not redundant (sqlite3MemRealloc)
+        check("void foo(void *pPrior, int nByte) {\n"
+              "  long long *p = (long long*)pPrior;\n"
+              "  assert(pPrior != 0 && nByte > 0);\n"
+              "  p--;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
     }
 
     void addNull() {

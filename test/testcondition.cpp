@@ -5823,6 +5823,17 @@ private:
               "}\n");
         ASSERT_EQUALS("[test.cpp:2:26]: (style) Condition 'i<20' is always false [knownConditionTrueFalse]\n", errout_str());
 
+        check("void f(int n) {\n" // the loop runs but its simulation does not change the state
+              "    if (n > 0) {\n"
+              "        int i, j;\n"
+              "        for (i = j = 0; i < n; i = j) {\n"
+              "            while (j < n)\n"
+              "                j++;\n"
+              "        }\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
         check("int foo(int foo, int bar, bool baz, bool flag) {\n"
               "    if (baz && flag) {\n"
               "        do {\n"

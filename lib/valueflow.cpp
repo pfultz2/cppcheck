@@ -3603,6 +3603,14 @@ static void valueFlowSymbolic(const TokenList& tokenlist, const SymbolDatabase& 
             lhs.errorPath.emplace_back(tok,
                                        tok->astOperand1()->expressionString() + " is assigned '" +
                                        tok->astOperand2()->expressionString() + "' here.");
+            // A pointer cast keeps the value: the left hand side is also equal to the expression that is cast
+            const Token* castExpr = tok->astOperand2();
+            while (castExpr->isCast() && castExpr->astOperand1() && !castExpr->astOperand2() &&
+                   astIsPointer(castExpr) && astIsPointer(castExpr->astOperand1()) &&
+                   castExpr->astOperand1()->exprId() > 0)
+                castExpr = castExpr->astOperand1();
+            if (castExpr != tok->astOperand2())
+                valueFlowForward(start, end, castExpr, lhs, tokenlist, errorLogger, settings);
             valueFlowForward(start, end, tok->astOperand2(), std::move(lhs), tokenlist, errorLogger, settings);
         }
     }
@@ -5244,7 +5252,10 @@ static bool valueFlowForLoop2(const Token *tok,
     memory1.swap(startMemory);
     if (!error) {
         memory2.swap(endMemory);
-        memoryAfter.swap(programMemory);
+        // The state after the loop is only known when the condition became false. When the limit of
+        // iterations was reached the loop runs on, or exits later in a state that is not known.
+        if (result == 0)
+            memoryAfter.swap(programMemory);
     }
 
     return true;
