@@ -151,6 +151,7 @@ private:
         TEST_CASE(nullpointer111); // ranges from conditions
         TEST_CASE(nullpointer112); // unknown values in program memory
         TEST_CASE(nullpointer113); // a variable is clamped before the check
+        TEST_CASE(nullpointer114); // the else block changes the value
         TEST_CASE(nullpointer_addressOf); // address of
         TEST_CASE(nullpointerSwitch); // #2626
         TEST_CASE(nullpointer_cast); // #4692
@@ -3350,6 +3351,15 @@ private:
               "    return 0;\n"
               "}\n");
         TODO_ASSERT_EQUALS("", "[test.cpp:8:17]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
+    }
+
+    void nullpointer114() { // the else block changes the value
+        check("int f(int *p, int c) {\n"
+              "    if (!p) return 1;\n"
+              "    if (c) {} else { p = 0; }\n"
+              "    return *p;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:13]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
     }
 
     void nullpointer_addressOf() { // address of

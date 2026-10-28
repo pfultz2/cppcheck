@@ -918,6 +918,14 @@ private:
               "    return d;\n"
               "}\n");
         ASSERT_EQUALS("", errout_str());
+
+        // the else block changes the value
+        check("int f(int x, int c) {\n"
+              "    if (x == 0) return 1;\n"
+              "    if (c) {} else { x = 0; }\n"
+              "    return 10 / x;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:15]: (warning) Division by zero. [zerodivcond]\n", errout_str());
     }
 
     void zeroDivErrorPath() {
