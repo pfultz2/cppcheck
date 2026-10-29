@@ -1776,7 +1776,8 @@ static FindInsertCond getFindInsertCond(const Token *condTok)
 
 void CheckStlImpl::checkFindInsertError(const Token *tok, const Token *condTok)
 {
-    std::string replaceExpr;
+    std::string suggestion;
+    std::string method = "insertion";
     if (tok && condTok && Token::simpleMatch(tok->astParent(), "=") && tok == tok->astParent()->astOperand2() && Token::simpleMatch(tok->astParent()->astOperand1(), "[")) {
         const std::string containerExpr = tok->astParent()->astOperand1()->astOperand1()->expressionString();
         const std::string keyExpr = tok->astParent()->astOperand1()->astOperand2()->expressionString();
@@ -1786,23 +1787,24 @@ void CheckStlImpl::checkFindInsertError(const Token *tok, const Token *condTok)
                 // We will recommend using emplace/try_emplace instead
                 return;
             const std::string f = (mSettings.standards.cpp < Standards::CPP17) ? "emplace" : "try_emplace";
-            replaceExpr = " Instead of '" + tok->astParent()->expressionString() + "' consider using '" +
-                          containerExpr + "." + f + "(" + keyExpr + ", " + tok->expressionString() + ");'.";
+            suggestion = " Instead of '" + tok->astParent()->expressionString() + "' consider using '" +
+                   containerExpr + "." + f + "(" + keyExpr + ", " + tok->expressionString() + ");'.";
             break;
         }
         case FindInsertCond::FOUND:
-            // The key is present, so the value is assigned rather than inserted; try_emplace() would not do that
-            replaceExpr = " Instead of '" + tok->astParent()->expressionString() +
-                          "' consider assigning the value through the iterator returned by '" +
-                          containerExpr + ".find(" + keyExpr + ")'.";
+            // The key is present, so the element is modified rather than inserted; try_emplace() would not do that
+            method = "modification";
+            suggestion = " Instead of '" + tok->astParent()->expressionString() +
+                  "' consider assigning the value through the iterator returned by '" +
+                  containerExpr + ".find(" + keyExpr + ")'.";
             break;
         case FindInsertCond::UNKNOWN:
             break;
         }
     }
+    std::string msg = "Searching before " + method + " is not necessary." + suggestion;
 
-    reportError(
-        tok, Severity::performance, "stlFindInsert", "Searching before insertion is not necessary." + replaceExpr, CWE398, Certainty::normal);
+    reportError(tok, Severity::performance, "stlFindInsert", msg, CWE398, Certainty::normal);
 }
 
 /**

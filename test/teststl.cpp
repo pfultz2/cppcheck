@@ -7487,25 +7487,25 @@ private:
               "    if (m.count(1) != 0)\n"
               "        m[1] = true;\n"
               "}\n");
-        ASSERT_EQUALS("[test.cpp:4:16]: (performance) Searching before insertion is not necessary. Instead of 'm[1]=true' consider assigning the value through the iterator returned by 'm.find(1)'. [stlFindInsert]\n", errout_str());
+        ASSERT_EQUALS("[test.cpp:4:16]: (performance) Searching before modification is not necessary. Instead of 'm[1]=true' consider assigning the value through the iterator returned by 'm.find(1)'. [stlFindInsert]\n", errout_str());
 
         check("void f(std::map<unsigned, unsigned>& m, unsigned x) {\n"
               "    if (m.find(x) != m.end())\n"
               "        m[x] = 1;\n"
               "}\n");
-        ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before insertion is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
+        ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before modification is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
 
         check("void f(std::map<unsigned, unsigned>& m, unsigned x) {\n"
               "    if (m.count(x) > 0)\n"
               "        m[x] = 1;\n"
               "}\n");
-        ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before insertion is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
+        ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before modification is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
 
         check("void f(std::map<unsigned, unsigned>& m, unsigned x) {\n"
               "    if (m.count(x) == 1)\n"
               "        m[x] = 1;\n"
               "}\n");
-        ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before insertion is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
+        ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before modification is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
 
         // The key is not found => try_emplace()
         check("void f(std::map<unsigned, unsigned>& m, unsigned x) {\n"
@@ -7553,10 +7553,10 @@ private:
                                 "}\n";
             s.standards.cpp = Standards::CPP03;
             check(code, s);
-            ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before insertion is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
+            ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before modification is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
             s.standards.cpp = Standards::CPP11;
             check(code, s);
-            ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before insertion is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
+            ASSERT_EQUALS("[test.cpp:3:16]: (performance) Searching before modification is not necessary. Instead of 'm[x]=1' consider assigning the value through the iterator returned by 'm.find(x)'. [stlFindInsert]\n", errout_str());
         }
     }
 
