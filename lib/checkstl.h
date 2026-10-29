@@ -220,7 +220,7 @@ public:
     void stlBoundariesError(const Token* tok);
     void if_findError(const Token* tok, bool str);
     /** @param condTok the comparison in the if condition, nullptr => no specific suggestion */
-    void checkFindInsertError(const Token *tok, const Token *condTok);
+    void checkFindInsertError(const Token* tok, const Token* condTok);
     void sizeError(const Token* tok);
     void redundantIfRemoveError(const Token* tok);
     void invalidContainerLoopError(const Token* tok, const Token* loopTok, ErrorPath errorPath);

@@ -23,8 +23,8 @@
 #include "errortypes.h"
 #include "library.h"
 #include "mathlib.h"
-#include "refthunk.h"
 #include "pathanalysis.h"
+#include "refthunk.h"
 #include "settings.h"
 #include "standards.h"
 #include "symboldatabase.h"
@@ -1748,9 +1748,9 @@ void CheckStlImpl::checkFindInsert()
 /** When is the condition of the 'if' statement checked by checkFindInsert() true? */
 enum class FindInsertCond : std::uint8_t { UNKNOWN, FOUND, NOT_FOUND };
 
-static FindInsertCond getFindInsertCond(const Token *condTok)
+static FindInsertCond getFindInsertCond(const Token* condTok)
 {
-    const Token *rhs = condTok->astOperand2();
+    const Token* rhs = condTok->astOperand2();
     if (!rhs)
         return FindInsertCond::UNKNOWN;
     if (Token::Match(condTok->astOperand1()->astOperand1(), ". find (")) {
@@ -1774,11 +1774,12 @@ static FindInsertCond getFindInsertCond(const Token *condTok)
     return found ? FindInsertCond::FOUND : FindInsertCond::NOT_FOUND;
 }
 
-void CheckStlImpl::checkFindInsertError(const Token *tok, const Token *condTok)
+void CheckStlImpl::checkFindInsertError(const Token* tok, const Token* condTok)
 {
     std::string suggestion;
     std::string method = "insertion";
-    if (tok && condTok && Token::simpleMatch(tok->astParent(), "=") && tok == tok->astParent()->astOperand2() && Token::simpleMatch(tok->astParent()->astOperand1(), "[")) {
+    if (tok && condTok && Token::simpleMatch(tok->astParent(), "=") && tok == tok->astParent()->astOperand2() &&
+        Token::simpleMatch(tok->astParent()->astOperand1(), "[")) {
         const std::string containerExpr = tok->astParent()->astOperand1()->astOperand1()->expressionString();
         const std::string keyExpr = tok->astParent()->astOperand1()->astOperand2()->expressionString();
         switch (getFindInsertCond(condTok)) {
@@ -1787,16 +1788,16 @@ void CheckStlImpl::checkFindInsertError(const Token *tok, const Token *condTok)
                 // We will recommend using emplace/try_emplace instead
                 return;
             const std::string f = (mSettings.standards.cpp < Standards::CPP17) ? "emplace" : "try_emplace";
-            suggestion = " Instead of '" + tok->astParent()->expressionString() + "' consider using '" +
-                   containerExpr + "." + f + "(" + keyExpr + ", " + tok->expressionString() + ");'.";
+            suggestion = " Instead of '" + tok->astParent()->expressionString() + "' consider using '" + containerExpr +
+                         "." + f + "(" + keyExpr + ", " + tok->expressionString() + ");'.";
             break;
         }
         case FindInsertCond::FOUND:
             // The key is present, so the element is modified rather than inserted; try_emplace() would not do that
             method = "modification";
             suggestion = " Instead of '" + tok->astParent()->expressionString() +
-                  "' consider assigning the value through the iterator returned by '" +
-                  containerExpr + ".find(" + keyExpr + ")'.";
+                         "' consider assigning the value through the iterator returned by '" + containerExpr +
+                         ".find(" + keyExpr + ")'.";
             break;
         case FindInsertCond::UNKNOWN:
             break;
