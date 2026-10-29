@@ -4587,6 +4587,60 @@ private:
                "}\n";
         ASSERT_EQUALS(true, testValueOfXImpossible(code, 4U, 0));
 
+        // 'n <= 5' leaves 'n > 3' undecided: the conditional value is split
+        code = "void f(int n) {\n"
+               "    int x = 0;\n"
+               "    if (n > 5) { x = 1; }\n"
+               "    if (n > 3) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 1));
+
+        code = "void f(int n) {\n"
+               "    int x = 0;\n"
+               "    if (n > 5) { x = 1; }\n"
+               "    if (n == 2) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 0));
+
+        code = "void f(int n) {\n"
+               "    int x = 0;\n"
+               "    if (n > 5) { x = 1; }\n"
+               "    if (!(n < 3)) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 0));
+
+        code = "void f(int n) {\n"
+               "    int x = 0;\n"
+               "    if (n > 5) { x = 1; }\n"
+               "    if (n - 3 > 0) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 0));
+
+        // decided false: the block is not reached
+        code = "void f(int n) {\n"
+               "    int x = 0;\n"
+               "    if (n > 5) { x = 1; }\n"
+               "    if (n == 7) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
+
+        // not covered by the state: no split
+        code = "void f(int n, int c) {\n"
+               "    int x = 0;\n"
+               "    if (n > 5) { x = 1; }\n"
+               "    if (c) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
+
+        code = "int g(int);\n"
+               "void f(int n) {\n"
+               "    int x = 0;\n"
+               "    if (n > 5) { x = 1; }\n"
+               "    if (g(n)) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 5U, 0));
+
         // no fork: the main path still knows the condition is false
         /*const*/ Settings s(settings);
         s.vfOptions.maxForwardConditionForkDepth = 0;

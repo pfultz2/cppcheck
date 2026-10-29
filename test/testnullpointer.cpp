@@ -152,6 +152,7 @@ private:
         TEST_CASE(nullpointer112); // unknown values in program memory
         TEST_CASE(nullpointer113); // a variable is clamped before the check
         TEST_CASE(nullpointer114); // the else block changes the value
+        TEST_CASE(nullpointer115); // a range condition overlapping the assumed one
         TEST_CASE(nullpointer_addressOf); // address of
         TEST_CASE(nullpointerSwitch); // #2626
         TEST_CASE(nullpointer_cast); // #4692
@@ -3360,6 +3361,16 @@ private:
               "    return *p;\n"
               "}\n");
         ASSERT_EQUALS("[test.cpp:4:13]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
+    }
+
+    void nullpointer115() { // a range condition overlapping the assumed one
+        check("int f(int n, int *q) {\n"
+              "    int *p = 0;\n"
+              "    if (n > 5) p = q;\n"
+              "    if (n > 3) return *p;\n"
+              "    return 0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:24]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
     }
 
     void nullpointer_addressOf() { // address of
