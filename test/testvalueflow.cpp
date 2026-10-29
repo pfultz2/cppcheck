@@ -99,6 +99,7 @@ private:
         TEST_CASE(valueFlowForwardTryCatch);
         TEST_CASE(valueFlowForwardInconclusiveImpossible);
         TEST_CASE(valueFlowForwardConst);
+        TEST_CASE(valueFlowForwardConditionFork);
         TEST_CASE(valueFlowForwardAfterCondition);
 
         TEST_CASE(valueFlowFwdAnalysis);
@@ -4490,6 +4491,113 @@ private:
                "    return 0;\n"
                "}\n";
         ASSERT_EQUALS(true, testValueOfXKnown(code, 8U, 3));
+    }
+
+    void valueFlowForwardConditionFork()
+    {
+        const char* code;
+
+        // the then-path runs on a fork, the else-path on the main traversal, which knows
+        // the condition is false: only the fork reaches line 4
+        code = "void f(int n) {\n"
+               "    int x = 1;\n"
+               "    if (n > 3) {}\n"
+               "    if (n > 6) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 1));
+
+        // the main path's assumption does not make the value conditional
+        code = "void f(int n, int y) {\n"
+               "    int x = 1;\n"
+               "    if (n > 5) n = 5;\n"
+               "    if (y) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfXKnown(code, 4U, 1));
+
+        // then-branch dead: the main path is the false path and the value is conditional
+        code = "void f(int n) {\n"
+               "    int x = 1;\n"
+               "    if (n > 5) x = 2;\n"
+               "    if (n > 5) { int a = x; }\n"
+               "    if (n <= 5) { int b = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 4U, 1));
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 2));
+        ASSERT_EQUALS(true, testValueOfX(code, 5U, 1));
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 5U, 1));
+        ASSERT_EQUALS(false, testValueOfX(code, 5U, 2));
+
+        // the fork continues after the if with the block's assignments (else escapes)
+        code = "void f(int n) {\n"
+               "    int x = 1;\n"
+               "    if (n > 5) { n = 5; } else { return; }\n"
+               "    if (n == 5) { int a = x; }\n"
+               "    if (n != 5) { int b = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 1));
+        ASSERT_EQUALS(false, testValueOfX(code, 5U, 1));
+
+        // the main path continues with the else block's assignments (then escapes)
+        code = "void f(int n) {\n"
+               "    int x = 1;\n"
+               "    if (n > 5) { return; } else { n = 5; }\n"
+               "    if (n == 5) { int a = x; }\n"
+               "    if (n != 5) { int b = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 1));
+        ASSERT_EQUALS(false, testValueOfX(code, 5U, 1));
+
+        // both blocks assign: each path keeps its own assignment
+        code = "void f(int n) {\n"
+               "    int x = 1;\n"
+               "    if (n > 5) { n = 5; } else { n = 0; }\n"
+               "    if (n > 5) { int a = x; }\n"
+               "    if (n <= 5) { int b = x; }\n"
+               "    if (n == 5) { int c = x; }\n"
+               "    if (n == 0) { int d = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 4U, 1));
+        ASSERT_EQUALS(true, testValueOfX(code, 5U, 1));
+        ASSERT_EQUALS(true, testValueOfX(code, 6U, 1));
+        ASSERT_EQUALS(true, testValueOfX(code, 7U, 1));
+
+        // a value changed in one branch is possible on both paths
+        code = "void f(int c) {\n"
+               "    int x = 1;\n"
+               "    if (c) {} else { x = 2; }\n"
+               "    int a = x;\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 1));
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 4U, 1));
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 2));
+
+        // an impossible value cannot be lowered: the fork stops
+        code = "void f(int x, int c) {\n"
+               "    if (x == 0) return;\n"
+               "    if (c) {} else { x = 0; }\n"
+               "    int a = x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXImpossible(code, 4U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 0));
+
+        code = "void f(int x, int c) {\n"
+               "    if (x == 0) return;\n"
+               "    if (c) {} else {}\n"
+               "    int a = x;\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfXImpossible(code, 4U, 0));
+
+        // no fork: the main path still knows the condition is false
+        /*const*/ Settings s(settings);
+        s.vfOptions.maxForwardConditionForkDepth = 0;
+        code = "void f(int n) {\n"
+               "    int x = 1;\n"
+               "    if (n > 5) n = 5;\n"
+               "    if (n > 5) { int a = x; }\n"
+               "    if (n <= 5) { int b = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 4U, 1, &s));
+        ASSERT_EQUALS(true, testValueOfX(code, 5U, 1, &s));
     }
 
     void valueFlowForwardAfterCondition()
