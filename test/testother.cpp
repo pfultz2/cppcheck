@@ -13136,6 +13136,16 @@ private:
               "    g(*w);\n"
               "}\n");
         ASSERT_EQUALS("[test.cpp:5:10]: (style) Variable 'w' can be declared as pointer to const [constVariablePointer]\n", errout_str());
+
+        check("struct S { int a; };\n" // moving a pointer to a function or to a member copies it
+              "void h(int (*)(int));\n"
+              "int f(int (*cb)(int), const S& s, int S::*pm) {\n"
+              "    int (*c)(int) = std::move(cb);\n"
+              "    int S::*q = std::move(pm);\n"
+              "    h(std::move(cb));\n"
+              "    return cb(1) + c(2) + s.*pm + s.*q;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
     }
 
     void moveAndAddressOf() {

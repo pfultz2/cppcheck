@@ -7363,13 +7363,19 @@ static ValueType memberPointerType(const ValueType& member)
 }
 
 // The "(" that opens the parenthesized declarator of a pointer or reference to a
-// function ("int ( * f ) ( int )"), nullptr when var is not declared that way
-static const Token* functionDeclarator(const Variable& var)
+// function in the declaration whose return type starts at the given token
+// ("int ( * f ) ( int )"), nullptr when there is no such declarator
+static const Token* functionDeclarator(const Token* returnType)
 {
-    const Token* tok = var.nameToken() ? var.nameToken()->previous() : nullptr;
-    while (Token::Match(tok, "*|&|&&|const|volatile"))
-        tok = tok->previous();
-    return Token::simpleMatch(tok, "(") ? tok : nullptr;
+    for (const Token* tok = returnType; tok; tok = tok->next()) {
+        if (Token::Match(tok, "( *|&|&&") && Token::simpleMatch(tok->link(), ") ("))
+            return tok;
+        if (tok->str() == "<" && tok->link())
+            tok = tok->link();
+        else if (!Token::Match(tok, "%name%|*|&|&&|::"))
+            return nullptr;
+    }
+    return nullptr;
 }
 
 void SymbolDatabase::setValueType(Token* tok, const ValueType& valuetype, const SourceLocation &loc)
@@ -7509,12 +7515,11 @@ void SymbolDatabase::setValueType(Token* tok, const ValueType& valuetype, const 
     }
     // a call through a pointer or reference to a function has the return type of the
     // function: the declared type before the parenthesized declarator "int ( * f ) ( int )"
-    if (Token::Match(parent->tokAt(-1), "%name% (") && parent->astOperand1() == tok && valuetype.type == ValueType::Type::FUNCTION &&
-        valuetype.pointer <= 1 && tok->variable()) {
-        const Variable* const var = tok->variable();
-        const Token* const declarator = functionDeclarator(*var);
+    if (parent->str() == "(" && parent->astOperand1() == tok && !parent->isCast() && valuetype.type == ValueType::Type::FUNCTION &&
+        valuetype.pointer <= 1 && valuetype.returnTypeToken) {
+        const Token* const declarator = functionDeclarator(valuetype.returnTypeToken);
         ValueType returnType;
-        if (declarator && parsedecl(var->typeStartToken(), &returnType, mDefaultSignedness, mSettings, declarator))
+        if (declarator && parsedecl(valuetype.returnTypeToken, &returnType, mDefaultSignedness, mSettings, declarator))
             setValueType(parent, returnType);
         return;
     }
@@ -7972,6 +7977,7 @@ static const Token* parsedecl(const Token* type,
     const int pointer0 = valuetype->pointer;
     while (Token::Match(type->previous(), "%name%") && !endsWith(type->strAt(-1), ':'))
         type = type->previous();
+    const Token* const typeStart = type;
     valuetype->sign = ValueType::Sign::UNKNOWN_SIGN;
     if (!valuetype->typeScope && !valuetype->smartPointerType)
         valuetype->type = ValueType::Type::UNKNOWN_TYPE;
@@ -8008,6 +8014,7 @@ static const Token* parsedecl(const Token* type,
                 function.type = ValueType::Type::FUNCTION;
                 function.bits = valuetype->bits;
                 function.pointer = pointer0;
+                function.returnTypeToken = typeStart;
                 if (type->strAt(1) == "&")
                     function.reference = Reference::LValue;
                 else if (type->strAt(1) == "&&")
@@ -8032,6 +8039,7 @@ static const Token* parsedecl(const Token* type,
             valuetype->constness += vt2->constness;
             valuetype->pointer += vt2->pointer;
             valuetype->reference = vt2->reference;
+            valuetype->returnTypeToken = vt2->returnTypeToken;
             type = type->linkAt(1)->next();
             continue;
         }
@@ -8095,6 +8103,7 @@ static const Token* parsedecl(const Token* type,
             valuetype->constness = vt->constness;
             valuetype->volatileness = vt->volatileness;
             valuetype->originalTypeName = vt->originalTypeName;
+            valuetype->returnTypeToken = vt->returnTypeToken;
             const bool hasConst = Token::simpleMatch(type->previous(), "const");
             const bool hasVolatile = Token::simpleMatch(type->previous(), "volatile");
             while (Token::Match(type, "%name%|*|&|&&|::") && !type->variable()) {

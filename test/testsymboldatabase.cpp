@@ -10739,6 +10739,8 @@ private:
                       "    auto acb = cb; auto apm = &S::a;\n"
                       "    g(cb); g(rf); g(*pcb); g(cbs[0]); g(pa); g(pmf); g(pm); g(&S::a); g(&S::s); g(&s.a); g(p); g(acb); g(apm);\n"
                       "    g(cb(1)); g(rf(2)); g(pf(3));\n"
+                      "    g(acb(4)); g((*cb)(5)); g(cbs[0](6)); g((*pcb)(7));\n"
+                      "    decltype(cb) dcb = cb; g(dcb(8));\n"
                       "}\n");
         ASSERT(db != nullptr);
         const Token* const tokens = tokenizer.tokens();
@@ -10759,6 +10761,12 @@ private:
         ASSERT_EQUALS("signed int", argumentType(tokens, "g ( cb ( 1 ) )"));
         ASSERT_EQUALS("signed int", argumentType(tokens, "g ( rf ( 2 ) )"));
         ASSERT_EQUALS("signed int *", argumentType(tokens, "g ( pf ( 3 ) )"));
+        // also when the pointer is not the declared variable: a copy, a dereference, an element
+        ASSERT_EQUALS("signed int", argumentType(tokens, "g ( acb ( 4 ) )"));
+        ASSERT_EQUALS("signed int", argumentType(tokens, "g ( ( * cb ) ( 5 ) )"));
+        ASSERT_EQUALS("signed int", argumentType(tokens, "g ( cbs [ 0 ] ( 6 ) )"));
+        ASSERT_EQUALS("signed int", argumentType(tokens, "g ( ( * pcb ) ( 7 ) )"));
+        ASSERT_EQUALS("signed int", argumentType(tokens, "g ( dcb ( 8 ) )"));
     }
 
     // the bit count of the ValueType of the first token after start that matches pattern:

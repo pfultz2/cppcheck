@@ -1230,6 +1230,9 @@ private:
 class CPPCHECKLIB ValueType {
 public:
     enum Sign : std::uint8_t { UNKNOWN_SIGN, SIGNED, UNSIGNED } sign = UNKNOWN_SIGN;
+    /** The order matters: the types before VOID are class types that may have user defined
+     * constructors, assignment or operators. VOID and the types after it are built in types
+     * with trivial copy and move, the ones from BOOL on are arithmetic (isIntegral, isFloat). */
     enum Type : std::uint8_t {
         UNKNOWN_TYPE,
         POD,
@@ -1238,9 +1241,9 @@ public:
         SMART_POINTER,
         CONTAINER,
         ITERATOR,
+        VOID,
         FUNCTION,       ///< a function; a pointer to it ("int (*)(int)") is counted in pointer
         MEMBER_POINTER, ///< a pointer to a data member ("int S::*"), counted in pointer
-        VOID,
         BOOL,
         CHAR,
         SHORT,
@@ -1267,6 +1270,8 @@ public:
     ///< container
     const Token* containerTypeToken{}; ///< The container type token. the template argument token that defines the
     ///< container element type.
+    const Token* returnTypeToken{}; ///< FUNCTION: the first token of the return type in the declaration of the
+    ///< function ("int ( * f ) ( int )"), the type of a call is parsed from it
     std::string originalTypeName;    ///< original type name as written in the source code. eg. this might be "uint8_t"
     ///< when type is CHAR.
     ErrorPath debugPath; ///< debug path to the type
@@ -1306,8 +1311,9 @@ public:
     static MatchResult matchParameter(const ValueType *call, const ValueType *func);
     static MatchResult matchParameter(const ValueType *call, const Variable *callVar, const Variable *funcVar);
 
+    /** a built in type that is not void: arithmetic (or a pointer to it), a pointer to a function or to a member */
     bool isPrimitive() const {
-        return (type >= ValueType::Type::BOOL);
+        return (type >= ValueType::Type::BOOL || type == ValueType::Type::FUNCTION || type == ValueType::Type::MEMBER_POINTER);
     }
 
     bool isIntegral() const {
