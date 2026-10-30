@@ -1753,7 +1753,7 @@ static FindInsertCond getFindInsertCond(const Token* condTok)
     const Token* rhs = condTok->astOperand2();
     if (!rhs)
         return FindInsertCond::UNKNOWN;
-    if (Token::Match(condTok->astOperand1()->astOperand1(), ". find (")) {
+    if (Token::simpleMatch(condTok->astOperand1()->astOperand1(), ". find (")) {
         // c.find(k) == c.end() / c.find(k) != c.end()
         if (!Token::simpleMatch(rhs, "(") || !Token::Match(rhs->astOperand1(), ". end|cend ("))
             return FindInsertCond::UNKNOWN;
