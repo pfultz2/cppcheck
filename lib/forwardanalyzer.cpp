@@ -65,6 +65,38 @@ namespace {
         // Total forks of the traversal (shared via the fork() copy); backstop past the depth bound.
         std::shared_ptr<int> forkBudget = std::make_shared<int>(0);
 
+        // The paths that left this traversal without escaping: forks carried past their if and
+        // then-paths that are not followed further.
+        struct OtherPaths {
+            Analyzer::Result result;
+            bool exist = false;
+            void add(const Analyzer::Result& r) {
+                if (r.terminate == Analyzer::Terminate::Escape)
+                    return;
+                result.update(r);
+                exist = true;
+            }
+            void add(const OtherPaths& paths) {
+                if (paths.exist)
+                    add(paths.result);
+            }
+        };
+        OtherPaths otherPaths;
+
+        // The result over every path to end, not only the path this traversal follows
+        Analyzer::Result result(const Token* end) const {
+            Analyzer::Result r{actions, terminate};
+            if (!otherPaths.exist)
+                return r;
+            if (terminate == Analyzer::Terminate::Escape) {
+                if (isReturnScope(end, settings().library))
+                    return r;
+                r.terminate = otherPaths.result.terminate;
+            }
+            r.action |= otherPaths.result.action;
+            return r;
+        }
+
         Progress Break(Analyzer::Terminate t = Analyzer::Terminate::None) {
             if ((!analyzeOnly || analyzeTerminate) && t != Analyzer::Terminate::None)
                 terminate = t;
@@ -334,6 +366,7 @@ namespace {
                 ft.analyzeTerminate = true;
             }
             ft.actions = Analyzer::Action::None;
+            ft.otherPaths = OtherPaths{};
             return ft;
         }
 
@@ -407,6 +440,8 @@ namespace {
             // Save and reset actions
             Analyzer::Action prevActions = actions;
             actions = Analyzer::Action::None;
+            OtherPaths prevPaths = otherPaths;
+            otherPaths = OtherPaths{};
             Progress p = updateRange(branch.endBlock->link(), branch.endBlock, depth);
             branch.action |= actions;
             // Restore actions
@@ -433,6 +468,14 @@ namespace {
                     branch.action |= analyzeScope(branch.endBlock);
                 }
             }
+
+            // The other paths escape as well when the scope always escapes
+            if (!branch.isConclusiveEscape()) {
+                if (otherPaths.exist)
+                    branch.action |= otherPaths.result.action;
+                prevPaths.add(otherPaths);
+            }
+            otherPaths = prevPaths;
 
             return p;
         }
@@ -838,6 +881,9 @@ namespace {
                                 ++ft.forkDepth;
                                 ft.analyzer->assume(condTok, true, Analyzer::Assume::Quiet | Analyzer::Assume::Absolute);
                                 ft.updateRange(tok->next(), end, depth - 1);
+                                otherPaths.add(ft.result(end));
+                            } else if (!thenBranch.isConclusiveEscape()) {
+                                otherPaths.add(ft.result(thenBranch.endBlock));
                             }
                             if (elseBranch.progress == Progress::Break) {
                                 // Only the else branch escaped; the then branch falls through, so
@@ -995,7 +1041,7 @@ Analyzer::Result valueFlowGenericForward(Token* start, const Token* end, const V
     if (start)
         ft.analyzer->updateState(start);
     ft.updateRange(start, end);
-    return Analyzer::Result{ ft.actions, ft.terminate };
+    return ft.result(end);
 }
 
 Analyzer::Result valueFlowGenericForward(Token* start, const ValuePtr<Analyzer>& a, const TokenList& tokenList, ErrorLogger& errorLogger, const Settings& settings)

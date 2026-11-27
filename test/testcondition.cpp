@@ -5005,6 +5005,103 @@ private:
               "}\n");
         ASSERT_EQUALS("", errout_str());
 
+        check("bool g();\n" // only the path that skips 'w = true' returns
+              "void use();\n"
+              "void f(bool a, bool b) {\n"
+              "    if (a) {\n"
+              "        bool w = false;\n"
+              "        if (g())\n"
+              "            w = true;\n"
+              "        if (!w || !b)\n"
+              "            return;\n"
+              "    }\n"
+              "    if (b && a)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("bool g();\n" // the path is split inside a block that is always entered
+              "void use();\n"
+              "void f(bool a, bool b) {\n"
+              "    if (a) {\n"
+              "        bool w = false;\n"
+              "        if (a) {\n"
+              "            if (g())\n"
+              "                w = true;\n"
+              "        }\n"
+              "        if (!w)\n"
+              "            return;\n"
+              "    }\n"
+              "    if (b && a)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:9] -> [test.cpp:6:13]: (warning) Identical inner 'if' condition is always true. [identicalInnerCondition]\n",
+                      errout_str());
+
+        check("bool g();\n" // x is assigned on the path that sets w
+              "void use();\n"
+              "void f(int x) {\n"
+              "    if (x == 0) {\n"
+              "        bool w = false;\n"
+              "        if (g())\n"
+              "            w = true;\n"
+              "        if (w)\n"
+              "            x = 1;\n"
+              "    } else {\n"
+              "        return;\n"
+              "    }\n"
+              "    if (x == 0)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("bool g();\n"
+              "void use();\n"
+              "void f(bool c) {\n"
+              "    int x = 0;\n"
+              "    if (c) {\n"
+              "        bool w = false;\n"
+              "        if (g())\n"
+              "            w = true;\n"
+              "        if (w)\n"
+              "            x = 1;\n"
+              "    }\n"
+              "    if (x == 0)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("bool g();\n" // every path returns
+              "void use();\n"
+              "void f(bool a, bool b) {\n"
+              "    if (a) {\n"
+              "        bool w = false;\n"
+              "        if (g())\n"
+              "            w = true;\n"
+              "        if (!w)\n"
+              "            return;\n"
+              "        return;\n"
+              "    }\n"
+              "    if (b && a)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:9] -> [test.cpp:12:14]: (style) Condition 'a' is always false [knownConditionTrueFalse]\n",
+                      errout_str());
+
+        check("bool g();\n"
+              "void use();\n"
+              "void f(int x) {\n"
+              "    if (x == 0) {\n"
+              "        if (g())\n"
+              "            x = 1;\n"
+              "        return;\n"
+              "    }\n"
+              "    if (x == 0)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:11] -> [test.cpp:9:11]: (style) Condition 'x==0' is always false [knownConditionTrueFalse]\n",
+                      errout_str());
+
         check("void f() {\n"
               "    if (42) {}\n"
               "    if (42U) {}\n"
