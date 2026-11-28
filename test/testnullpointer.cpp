@@ -154,6 +154,7 @@ private:
         TEST_CASE(nullpointer113); // a variable is clamped before the check
         TEST_CASE(nullpointer114); // the else block changes the value
         TEST_CASE(nullpointer115); // a range condition overlapping the assumed one
+        TEST_CASE(nullpointer116); // #15264
         TEST_CASE(nullpointer_addressOf); // address of
         TEST_CASE(nullpointerSwitch); // #2626
         TEST_CASE(nullpointer_cast); // #4692
@@ -3373,6 +3374,41 @@ private:
               "    return 0;\n"
               "}\n");
         ASSERT_EQUALS("[test.cpp:4:24]: (warning) Possible null pointer dereference: p [nullPointer]\n", errout_str());
+    }
+
+    void nullpointer116() { // #15264 - only the path that skips 'w = true' returns
+        check("bool g();\n"
+              "void use(int);\n"
+              "void f(const int *p) {\n"
+              "    if (!p) {\n"
+              "        bool w = false;\n"
+              "        if (g())\n"
+              "            w = true;\n"
+              "        if (!w)\n"
+              "            return;\n"
+              "    }\n"
+              "    use(*p);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:9] -> [test.cpp:11:10]: (warning) Either the condition '!p' is redundant or there is possible null pointer dereference: p. [nullPointerRedundantCheck]\n",
+                      errout_str());
+
+        check("bool g();\n" // the path leaves an else block
+              "void use(int);\n"
+              "void f(const int *p, bool c) {\n"
+              "    if (!p) {\n"
+              "        if (c) {\n"
+              "        } else {\n"
+              "            bool w = false;\n"
+              "            if (g())\n"
+              "                w = true;\n"
+              "            if (!w)\n"
+              "                return;\n"
+              "        }\n"
+              "    }\n"
+              "    use(*p);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:9] -> [test.cpp:14:10]: (warning) Either the condition '!p' is redundant or there is possible null pointer dereference: p. [nullPointerRedundantCheck]\n",
+                      errout_str());
     }
 
     void nullpointer_addressOf() { // address of

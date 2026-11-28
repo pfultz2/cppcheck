@@ -4766,7 +4766,7 @@ private:
                "}\n";
         ASSERT_EQUALS(false, testValueOfX(code, 5U, 0));
 
-        // no fork: the main path still knows the condition is false
+        // no fork: the then block makes the condition false, so it is false on both outcomes
         /*const*/ Settings s(settings);
         s.vfOptions.maxForwardConditionForkDepth = 0;
         code = "void f(int n) {\n"
@@ -4777,6 +4777,16 @@ private:
                "}\n";
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 1, &s));
         ASSERT_EQUALS(true, testValueOfX(code, 5U, 1, &s));
+
+        // no fork: a condition that is false on one outcome only is not recorded
+        code = "bool g();\n"
+               "void f() {\n"
+               "    int x = 1;\n"
+               "    bool w = false;\n"
+               "    if (g()) w = true;\n"
+               "    if (w) { int a = x; }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 6U, 1, &s));
     }
 
     void valueFlowForwardAfterCondition()

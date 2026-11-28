@@ -34,10 +34,14 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdio>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <list>
+#include <memory>
+#include <numeric>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -45,56 +49,35 @@
 #include <vector>
 
 namespace {
-    struct ForwardTraversal {
-        enum class Progress : std::uint8_t { Continue, Break, Skip };
-        ForwardTraversal(const ValuePtr<Analyzer>& analyzer, const TokenList& tokenList, ErrorLogger& errorLogger, const Settings& settings)
-            : analyzer(analyzer), tokenList(tokenList), errorLogger(errorLogger), settings(settings)
-        {}
+    // One way through the code: the tracked value with the state assumed on the way. The traversal
+    // walks one path at a time; the others are kept aside and swapped in.
+    struct Path {
+        explicit Path(const ValuePtr<Analyzer>& analyzer) : analyzer(analyzer) {}
         ValuePtr<Analyzer> analyzer;
-        RefThunk<const TokenList> tokenList;
-        RefThunk<ErrorLogger> errorLogger;
-        RefThunk<const Settings> settings;
         Analyzer::Action actions;
         bool analyzeOnly{};
         bool analyzeTerminate{};
         Analyzer::Terminate terminate = Analyzer::Terminate::None;
-        std::vector<Token*> loopEnds;
         int branchCount = 0;
-        // Nested condition-fork depth on this lineage (copied by fork()); bounds the fan-out.
+        // Nested condition-fork depth of this path; bounds the fan-out.
         int forkDepth = 0;
+    };
+
+    struct ForwardTraversal : Path {
+        // Forked: the path was replaced by the paths of a fork, which are counted in the range
+        enum class Progress : std::uint8_t { Continue, Break, Skip, Forked };
+        ForwardTraversal(const ValuePtr<Analyzer>& analyzer, const TokenList& tokenList, ErrorLogger& errorLogger, const Settings& settings)
+            : Path(analyzer), tokenList(tokenList), errorLogger(errorLogger), settings(settings)
+        {}
+        RefThunk<const TokenList> tokenList;
+        RefThunk<ErrorLogger> errorLogger;
+        RefThunk<const Settings> settings;
+        std::vector<Token*> loopEnds;
         // Total forks of the traversal (shared via the fork() copy); backstop past the depth bound.
         std::shared_ptr<int> forkBudget = std::make_shared<int>(0);
 
-        // The paths that left this traversal without escaping: forks carried past their if and
-        // then-paths that are not followed further.
-        struct OtherPaths {
-            Analyzer::Result result;
-            bool exist = false;
-            void add(const Analyzer::Result& r) {
-                if (r.terminate == Analyzer::Terminate::Escape)
-                    return;
-                result.update(r);
-                exist = true;
-            }
-            void add(const OtherPaths& paths) {
-                if (paths.exist)
-                    add(paths.result);
-            }
-        };
-        OtherPaths otherPaths;
-
-        // The result over every path to end, not only the path this traversal follows
-        Analyzer::Result result(const Token* end) const {
-            Analyzer::Result r{actions, terminate};
-            if (!otherPaths.exist)
-                return r;
-            if (terminate == Analyzer::Terminate::Escape) {
-                if (isReturnScope(end, settings().library))
-                    return r;
-                r.terminate = otherPaths.result.terminate;
-            }
-            r.action |= otherPaths.result.action;
-            return r;
+        Path& path() {
+            return *this;
         }
 
         Progress Break(Analyzer::Terminate t = Analyzer::Terminate::None) {
@@ -103,13 +86,85 @@ namespace {
             return Progress::Break;
         }
 
+        // What became of the paths through a range
+        struct Outcome {
+            Analyzer::Action action = Analyzer::Action::None;
+            int reached = 0;
+            // How each path that did not reach the end stopped
+            std::vector<Analyzer::Terminate> stops;
+
+            void reach(Analyzer::Action a) {
+                action |= a;
+                ++reached;
+            }
+            void stop(Analyzer::Action a, Analyzer::Terminate t) {
+                action |= a;
+                stops.push_back(t);
+            }
+            // The paths that stopped in a block of the range stopped in the range. If another path
+            // covers the code they did not walk, only an escape or a changed value counts.
+            void add(const Outcome& block, bool covered) {
+                action |= block.action;
+                for (Analyzer::Terminate t : block.stops) {
+                    if (covered && t != Analyzer::Terminate::Escape && t != Analyzer::Terminate::Modified)
+                        t = Analyzer::Terminate::None;
+                    stops.push_back(t);
+                }
+            }
+            bool hasEscape() const {
+                return std::find(stops.cbegin(), stops.cend(), Analyzer::Terminate::Escape) != stops.cend();
+            }
+            bool allEscape() const {
+                return reached == 0 && !stops.empty() &&
+                       std::count(stops.cbegin(), stops.cend(), Analyzer::Terminate::Escape) == static_cast<std::ptrdiff_t>(stops.size());
+            }
+            Analyzer::Terminate worst() const {
+                Analyzer::Terminate result = Analyzer::Terminate::None;
+                for (Analyzer::Terminate t : stops) {
+                    if (rank(t) > rank(result))
+                        result = t;
+                }
+                return result;
+            }
+            // A path stopped without walking the rest of the range
+            bool unwalked() const {
+                const Analyzer::Terminate t = worst();
+                return t != Analyzer::Terminate::None && t != Analyzer::Terminate::Modified;
+            }
+            static int rank(Analyzer::Terminate t) {
+                switch (t) {
+                case Analyzer::Terminate::None:
+                case Analyzer::Terminate::Escape:
+                    return 0;
+                case Analyzer::Terminate::Modified:
+                    return 1;
+                case Analyzer::Terminate::Conditional:
+                    return 2;
+                case Analyzer::Terminate::Inconclusive:
+                    return 3;
+                case Analyzer::Terminate::Bail:
+                    return 4;
+                }
+                cppcheck::unreachable();
+            }
+        };
+
+        // One way through a statement that forks, e.g. the then block of an if
         struct Branch {
             explicit Branch(Token* tok = nullptr) : endBlock(tok) {}
+            // nullptr if there is nothing to walk, e.g. an if without else
             Token* endBlock = nullptr;
+            // The condition that holds on the way in. nullptr for the rest of a fork, where no
+            // condition of its alternatives holds.
+            const Token* condTok = nullptr;
             Analyzer::Action action = Analyzer::Action::None;
-            bool check = false;
             bool escape = false;
             bool escapeUnknown = false;
+            bool reachesEnd = true;
+            // The condition is false at the end of the block on every path (e.g. 'if (x > 5) x = 5;')
+            bool falseAtEnd = false;
+            // The paths at the end of the block
+            std::vector<Path> paths;
             bool isEscape() const {
                 return escape || escapeUnknown;
             }
@@ -128,12 +183,31 @@ namespace {
             bool hasGoto() const {
                 return endBlock ? ForwardTraversal::hasGoto(endBlock) : false;
             }
-            Progress progress = Progress::Continue;
-            // The path through this branch continues past the if
-            bool continues() const {
-                return progress != Progress::Break && !isEscape();
-            }
         };
+
+        // A statement where the paths part, e.g. an if whose condition is undecided. Each alternative
+        // is walked with walkAlternative(), what is left of the incoming path with walkRest(), and
+        // joinFork() lets the paths go on.
+        struct ForkPoint {
+            // The paths of the alternatives go on past the statement. Otherwise they stop at the end
+            // of their block and the rest stands for every alternative.
+            bool split = false;
+            bool conditional = false;
+            int branchCount = 0;
+        };
+
+        // The paths of the range being walked, apart from the one in the traversal
+        struct Range {
+            // Whether the paths may part for good at a fork. They may not if the traversal goes on
+            // after the range: then one path has to stand for all of them at its end.
+            bool canSplit = false;
+            // Paths that go on from a token, last one first
+            std::vector<std::pair<Path, Token*>> waiting;
+            // Paths at the end of the range
+            std::vector<Path> reached;
+            Outcome outcome;
+        };
+        Range range;
 
         bool stopUpdates() {
             analyzeOnly = true;
@@ -150,9 +224,13 @@ namespace {
         }
 
         std::pair<bool, bool> evalCond(const Token* tok, const Token* ctx = nullptr) const {
+            return evalCond(*analyzer, tok, ctx);
+        }
+
+        static std::pair<bool, bool> evalCond(const Analyzer& a, const Token* tok, const Token* ctx) {
             if (!tok)
                 return std::make_pair(false, false);
-            std::vector<MathLib::bigint> result = analyzer->evaluate(tok, ctx);
+            std::vector<MathLib::bigint> result = a.evaluate(tok, ctx);
             // TODO: We should convert to bool
             const bool checkThen = std::any_of(result.cbegin(), result.cend(), [](MathLib::bigint x) {
                 return x != 0;
@@ -349,9 +427,13 @@ namespace {
         }
 
         Analyzer::Action analyzeRange(const Token* start, const Token* end) const {
+            return analyzeRange(*analyzer, start, end);
+        }
+
+        static Analyzer::Action analyzeRange(const Analyzer& a, const Token* start, const Token* end) {
             Analyzer::Action result = Analyzer::Action::None;
             for (const Token* tok = start; tok && tok != end; tok = tok->next()) {
-                Analyzer::Action action = analyzer->analyze(tok, Analyzer::Direction::Forward);
+                Analyzer::Action action = a.analyze(tok, Analyzer::Direction::Forward);
                 if (action.isModified() || action.isInconclusive())
                     return action;
                 result |= action;
@@ -360,13 +442,15 @@ namespace {
         }
 
         ForwardTraversal fork(bool analyze = false) const {
-            ForwardTraversal ft = *this;
+            ForwardTraversal ft{analyzer, tokenList, errorLogger, settings};
+            ft.path() = *this;
+            ft.loopEnds = loopEnds;
+            ft.forkBudget = forkBudget;
             if (analyze) {
                 ft.analyzeOnly = true;
                 ft.analyzeTerminate = true;
             }
             ft.actions = Analyzer::Action::None;
-            ft.otherPaths = OtherPaths{};
             return ft;
         }
 
@@ -381,10 +465,10 @@ namespace {
 
         // A value changed in either branch is only possible past the if, on both paths. False if
         // it cannot be lowered.
-        static bool lowerAfterBranches(Analyzer& a, const Branch& thenBranch, const Branch& elseBranch) {
-            if ((thenBranch.isModified() || elseBranch.isModified()) && !a.lowerToPossible())
+        static bool lowerAfterBranches(Analyzer& a, const std::vector<const Branch*>& branches) {
+            if (std::any_of(branches.cbegin(), branches.cend(), std::mem_fn(&Branch::isModified)) && !a.lowerToPossible())
                 return false;
-            if ((thenBranch.isInconclusive() || elseBranch.isInconclusive()) && !a.lowerToInconclusive())
+            if (std::any_of(branches.cbegin(), branches.cend(), std::mem_fn(&Branch::isInconclusive)) && !a.lowerToInconclusive())
                 return false;
             return true;
         }
@@ -400,7 +484,7 @@ namespace {
         std::vector<ForwardTraversal> tryForkUpdateScope(Token* endBlock, bool isModified = false) const {
             std::vector<ForwardTraversal> result = tryForkScope(endBlock, isModified);
             for (ForwardTraversal& ft : result)
-                ft.updateScope(endBlock);
+                ft.updateAllScopePaths(endBlock);
             return result;
         }
 
@@ -435,70 +519,236 @@ namespace {
             return a;
         }
 
-        Progress updateBranch(Branch& branch, int depth)
+        // Walk a block on the path in the traversal. The paths do not part for good inside it: each
+        // one would have to be followed past the block to the end of the range, which costs too much.
+        // A path that stops in the block has stopped in the range; covered: another path goes on for
+        // it past the block.
+        Branch walkBranch(Token* endBlock, int depth, bool covered)
         {
-            // Save and reset actions
-            Analyzer::Action prevActions = actions;
+            const Analyzer::Action outerActions = actions;
             actions = Analyzer::Action::None;
-            OtherPaths prevPaths = otherPaths;
-            otherPaths = OtherPaths{};
-            Progress p = updateRange(branch.endBlock->link(), branch.endBlock, depth);
-            branch.action |= actions;
-            // Restore actions
-            actions |= prevActions;
-
-            if (terminate == Analyzer::Terminate::Escape) {
-                branch.escape = true;
-                // The traversal followed an escaping path, but if the scope does not structurally
-                // always escape then another path (e.g. a modified fork) falls through, so the escape
-                // is only conditional - keep isModified() meaningful by not treating it as conclusive.
-                bool structuralUnknown = false;
-                const bool structuralEscape = isEscapeScope(branch.endBlock, structuralUnknown);
-                branch.escapeUnknown = !structuralEscape || structuralUnknown;
-                // The traversal stopped at the escape, so the rest of the scope was not walked; a
-                // fall-through path could still modify the value there - include the whole scope's
-                // actions so isModified() sees it.
-                if (branch.escapeUnknown)
-                    branch.action |= analyzeScope(branch.endBlock);
-            } else {
-                // Detect an escape the traversal did not flag (e.g. an unknown noreturn call);
-                // escapeUnknown reports a possible (unknown) escape.
-                branch.escape = isEscapeScope(branch.endBlock, branch.escapeUnknown);
-                if (terminate != Analyzer::Terminate::None && terminate != Analyzer::Terminate::Modified) {
-                    branch.action |= analyzeScope(branch.endBlock);
-                }
-            }
-
-            // The other paths escape as well when the scope always escapes
-            if (!branch.isConclusiveEscape()) {
-                if (otherPaths.exist)
-                    branch.action |= otherPaths.result.action;
-                prevPaths.add(otherPaths);
-            }
-            otherPaths = prevPaths;
-
-            return p;
+            Range block = walkPaths(endBlock->link(), endBlock, depth, false);
+            range.outcome.add(block.outcome, covered);
+            // The path walked last is no longer in the traversal if it is at the end of the block
+            Branch branch = resolve(endBlock, block.outcome, analyzer ? *analyzer : *block.reached.back().analyzer);
+            branch.paths = std::move(block.reached);
+            for (Path& p : branch.paths)
+                p.actions |= outerActions;
+            return branch;
         }
 
-        // Update the branch that the evaluated condition takes
-        Progress updateTakenBranch(Branch& branch, const Token* skippedBlock, const Token* condTok, int depth)
+        Branch resolve(Token* endBlock, const Outcome& paths, const Analyzer& a) const
+        {
+            Branch branch{endBlock};
+            branch.action = paths.action;
+            branch.reachesEnd = paths.reached > 0;
+            if (paths.allEscape()) {
+                branch.escape = true;
+                // The paths can miss a way through the block: a call is taken to return what an
+                // earlier call of the same function returned. Unless the block structurally always
+                // escapes, it may fall through and change the value on the way.
+                bool structuralUnknown = false;
+                const bool structuralEscape = isEscapeScope(endBlock, structuralUnknown);
+                branch.escapeUnknown = !structuralEscape || structuralUnknown;
+                if (branch.escapeUnknown)
+                    branch.action |= analyzeRange(a, endBlock->link(), endBlock);
+                return branch;
+            }
+            // Detect an escape the paths did not flag (e.g. an unknown noreturn call);
+            // escapeUnknown reports a possible (unknown) escape.
+            branch.escape = isEscapeScope(endBlock, branch.escapeUnknown);
+            if (paths.unwalked())
+                branch.action |= analyzeRange(a, endBlock->link(), endBlock);
+            return branch;
+        }
+
+        // The path in the traversal stops before the end of the range
+        void stopPath(Analyzer::Terminate t = Analyzer::Terminate::None)
+        {
+            Break(t);
+            range.outcome.stop(actions, terminate);
+        }
+
+        // The paths go on after tok, the first one first
+        Progress resume(std::vector<Path> paths, Token* tok)
+        {
+            for (auto it = paths.rbegin(); it != paths.rend(); ++it)
+                range.waiting.emplace_back(std::move(*it), tok->next());
+            return Progress::Forked;
+        }
+
+        // Walk the block that the evaluated condition takes
+        Progress updateTakenBranch(Token* endBlock, const Token* skippedBlock, const Token* condTok, Token* ifEnd, int depth)
         {
             // The condition is only "known" because of an earlier assumption, so the
             // skipped block could still modify the value -> lower to possible
             if (!condTok->hasKnownIntValue() && skippedBlock && analyzeScope(skippedBlock).isModified() &&
                 !analyzer->lowerToPossible())
                 return Break(Analyzer::Terminate::Bail);
-            if (!branch.endBlock)
+            if (!endBlock) {
+                // Record the state past the skipped block, so that the conditions evaluated later do
+                // not each look for changes in it
+                if (ifEnd->next())
+                    analyzer->updateState(ifEnd->next());
                 return Progress::Continue;
-            updateScopeState(branch.endBlock);
-            if (updateBranch(branch, depth - 1) == Progress::Break)
-                return Progress::Break;
-            // The branch was entered because of the tracked value; if it might not
-            // return (it ends in a call to an unknown, possibly noreturn function)
-            // then the value might not flow past the branch.
-            if (!condTok->hasKnownIntValue() && !branch.escape && branch.escapeUnknown && !analyzer->lowerToInconclusive())
-                return Break(Analyzer::Terminate::Bail);
-            return Progress::Continue;
+            }
+            updateScopeState(endBlock);
+            Branch branch = walkBranch(endBlock, depth - 1, false);
+            std::vector<Path> paths;
+            for (Path& p : branch.paths) {
+                path() = std::move(p);
+                // The branch was entered because of the tracked value; if it might not
+                // return (it ends in a call to an unknown, possibly noreturn function)
+                // then the value might not flow past the branch.
+                if (!condTok->hasKnownIntValue() && !branch.escape && branch.escapeUnknown && !analyzer->lowerToInconclusive())
+                    stopPath(Analyzer::Terminate::Bail);
+                else
+                    paths.push_back(std::move(path()));
+            }
+            return resume(std::move(paths), ifEnd);
+        }
+
+        // The paths part at the path in the traversal
+        ForkPoint startFork(const Token* condTok) const
+        {
+            ForkPoint point;
+            point.split = range.canSplit && canFork();
+            point.conditional = stopOnCondition(condTok);
+            point.branchCount = branchCount;
+            return point;
+        }
+
+        // Walk a block on a copy of the incoming path, where condTok holds
+        Branch walkAlternative(const ForkPoint& point, const Path& incoming, const Token* condTok, Token* endBlock, int depth)
+        {
+            path() = incoming;
+            // The value only flows into the block when the condition can split it; for an opaque or
+            // correlated condition (e.g. 'if (f(x))') it does not, so the path is analyze-only: the
+            // block's effect is still tracked but nothing is reported in it.
+            if (!analyzer->updateScope(endBlock, false)) {
+                analyzeOnly = true;
+                analyzeTerminate = true;
+            }
+            if (point.split) {
+                ++(*forkBudget);
+                ++forkDepth;
+            }
+            analyzer->assume(condTok, true, Analyzer::Assume::Pending);
+            Branch branch = walkBranch(endBlock, depth, !point.split);
+            branch.condTok = condTok;
+            branch.falseAtEnd = !point.split && std::all_of(branch.paths.cbegin(), branch.paths.cend(), [&](const Path& p) {
+                const std::pair<bool, bool> check = evalCond(*p.analyzer, condTok, endBlock->previous());
+                return !check.first && check.second;
+            });
+            return branch;
+        }
+
+        // Walk the incoming path where no condition of the alternatives holds. endBlock is the block
+        // for that, if any. The path goes on after forkEnd.
+        Branch walkRest(const ForkPoint& point,
+                        Path incoming,
+                        const std::vector<Branch>& alternatives,
+                        Token* endBlock,
+                        const Token* forkEnd,
+                        int depth)
+        {
+            path() = std::move(incoming);
+            const unsigned int pending = endBlock ? Analyzer::Assume::Pending : Analyzer::Assume::None;
+            bool assumed = false;
+            for (const Branch& alt : alternatives) {
+                actions |= alt.action;
+                // The condition is an assumption on this path if the alternative drops the value. If
+                // its paths go on past the fork the value is the same with and without it. Otherwise
+                // this path stands for the alternative as well and records that the condition is
+                // false only if that holds on both. With a block the state is recorded after it.
+                if (alt.isDead())
+                    analyzer->assume(alt.condTok, false, Analyzer::Assume::None | pending);
+                else if (alt.reachesEnd && (point.split || alt.falseAtEnd))
+                    analyzer->assume(alt.condTok, false, Analyzer::Assume::Quiet | Analyzer::Assume::Absolute | pending);
+                else
+                    continue;
+                assumed = true;
+            }
+            // An assumption records the state where the path goes on. Without one the state stays
+            // at an earlier token, and every condition evaluated later looks for changes from there.
+            if (!endBlock) {
+                if (!assumed && forkEnd->next())
+                    analyzer->updateState(forkEnd->next());
+                Branch rest;
+                rest.paths.push_back(std::move(path()));
+                return rest;
+            }
+            if (!assumed)
+                updateScopeState(endBlock);
+            Branch rest = walkBranch(endBlock, depth, false);
+            for (Path& p : rest.paths)
+                p.analyzer->updateState(endBlock->previous());
+            return rest;
+        }
+
+        // Let the paths at the end of the branches go on after tok
+        Progress joinFork(const ForkPoint& point, std::vector<Branch> alternatives, Branch rest, Token* tok)
+        {
+            std::vector<const Branch*> branches{&rest};
+            std::transform(alternatives.cbegin(), alternatives.cend(), std::back_inserter(branches), [](const Branch& alt) {
+                return &alt;
+            });
+            const Analyzer::Action action =
+                std::accumulate(branches.cbegin(), branches.cend(), Analyzer::Action{Analyzer::Action::None}, [](Analyzer::Action a, const Branch* branch) {
+                return a | branch->action;
+            });
+            const bool dead = std::any_of(branches.cbegin(), branches.cend(), std::mem_fn(&Branch::isDead));
+            const bool jumps = std::any_of(branches.cbegin(), branches.cend(), std::mem_fn(&Branch::hasGoto));
+            std::vector<Path> paths;
+            for (Branch& alt : alternatives) {
+                for (Path& p : alt.paths) {
+                    path() = std::move(p);
+                    actions |= action;
+                    if (jumps) {
+                        stopPath(Analyzer::Terminate::Bail);
+                    } else if (alt.isEscape()) {
+                        stopPath(Analyzer::Terminate::Escape);
+                    } else if (!point.split) {
+                        // The rest goes on for this path. If the rest stopped, nothing does.
+                        if (!rest.reachesEnd)
+                            stopPath();
+                    } else if (!lowerAfterBranches(*analyzer, branches)) {
+                        stopPath();
+                    } else {
+                        // The branch limit counts the branches on the way past the fork, as it does
+                        // for the rest
+                        branchCount = point.branchCount;
+                        // Anchor the state (and the block's assignments) at the block end
+                        analyzer->assume(alt.condTok, true, Analyzer::Assume::Quiet | Analyzer::Assume::Absolute);
+                        paths.push_back(std::move(path()));
+                    }
+                }
+            }
+            for (Path& p : rest.paths) {
+                path() = std::move(p);
+                actions |= action;
+                if (dead && point.conditional && stopUpdates())
+                    stopPath(Analyzer::Terminate::Conditional);
+                else if (!lowerAfterBranches(*analyzer, branches))
+                    stopPath(Analyzer::Terminate::Bail);
+                else if (jumps)
+                    stopPath(Analyzer::Terminate::Bail);
+                else
+                    paths.push_back(std::move(path()));
+            }
+            return resume(std::move(paths), tok);
+        }
+
+        // Neither outcome of the condition is known: walk each on its own paths
+        Progress forkIf(const Token* condTok, Token* thenEnd, Token* elseEnd, int depth)
+        {
+            const ForkPoint point = startFork(condTok);
+            Token* ifEnd = elseEnd ? elseEnd : thenEnd;
+            Path incoming = std::move(path());
+            std::vector<Branch> alternatives;
+            alternatives.push_back(walkAlternative(point, incoming, condTok, thenEnd, depth - 1));
+            Branch rest = walkRest(point, std::move(incoming), alternatives, elseEnd, ifEnd, depth - 1);
+            return joinFork(point, std::move(alternatives), std::move(rest), ifEnd);
         }
 
         bool reentersLoop(Token* endBlock, const Token* condTok, const Token* stepTok) const {
@@ -630,7 +880,7 @@ namespace {
                 if (forkContinue) {
                     for (ForwardTraversal& ft : ftv) {
                         if (!ft.actions.isIncremental())
-                            ft.updateRange(endBlock, endToken);
+                            ft.updateAllPaths(endBlock, endToken);
                     }
                 }
                 if (allAnalysis.isIncremental())
@@ -670,10 +920,73 @@ namespace {
             return updateRange(endBlock->link(), endBlock, depth);
         }
 
+        Progress updateAllScopePaths(Token* endBlock, int depth = 20)
+        {
+            if (!endBlock)
+                return Break();
+            updateScopeState(endBlock);
+            return updateAllPaths(endBlock->link(), endBlock, depth);
+        }
+
+        // This traversal goes on after the range, so the paths do not part for good in it: at a fork
+        // one path stands for every alternative.
+        Progress updateRange(Token* start, const Token* end, int depth = 20) {
+            Range walked = walkPaths(start, end, depth, false);
+            setResult(walked.outcome, end);
+            if (walked.reached.empty())
+                return Progress::Break;
+            path() = std::move(walked.reached.front());
+            return Progress::Continue;
+        }
+
+        // Follow every path to the end of the range. This traversal gets their joint result and must
+        // not go on after the range.
+        Progress updateAllPaths(Token* start, const Token* end, int depth = 20) {
+            const Range walked = walkPaths(start, end, depth, true);
+            setResult(walked.outcome, end);
+            return walked.reached.empty() ? Progress::Break : Progress::Continue;
+        }
+
+        void setResult(const Outcome& outcome, const Token* end) {
+            // A path that stopped without an escape was not followed to one, but the code can show
+            // that there is no way to the end of the range
+            const bool escapes = outcome.allEscape() ||
+                                 (outcome.reached == 0 && outcome.hasEscape() && isReturnScope(end, settings().library));
+            actions = outcome.action;
+            terminate = escapes ? Analyzer::Terminate::Escape : outcome.worst();
+        }
+
+        // Walk the path in the traversal and the paths that fork off it from start to end. No path is
+        // left in the traversal: the ones that go on are in the result.
+        Range walkPaths(Token* start, const Token* end, int depth, bool split) {
+            Range outer = std::move(range);
+            range = Range{};
+            range.canSplit = split;
+            Token* tok = start;
+            for (;;) {
+                const Progress p = walkRange(tok, end, depth);
+                if (p == Progress::Continue) {
+                    range.outcome.reach(actions);
+                    range.reached.push_back(std::move(path()));
+                } else if (p == Progress::Break) {
+                    range.outcome.stop(actions, terminate);
+                }
+                if (range.waiting.empty())
+                    break;
+                path() = std::move(range.waiting.back().first);
+                tok = range.waiting.back().second;
+                range.waiting.pop_back();
+            }
+            Range walked = std::move(range);
+            range = std::move(outer);
+            return walked;
+        }
+
         /**
+         * Walk the path in the traversal until it stops, reaches the end of the range or forks
          * @throws InternalError thrown on cyclic analysis
          */
-        Progress updateRange(Token* start, const Token* end, int depth = 20) {
+        Progress walkRange(Token* start, const Token* end, int depth) {
             if (depth < 0)
                 return Break(Analyzer::Terminate::Bail);
             std::size_t i = 0;
@@ -828,76 +1141,24 @@ namespace {
                         // Traverse condition
                         if (updateRecursive(condTok) == Progress::Break)
                             return Break();
-                        Branch thenBranch{endBlock};
-                        Branch elseBranch{endBlock->tokAt(2) ? endBlock->linkAt(2) : nullptr};
                         // Check if condition is true or false
-                        std::tie(thenBranch.check, elseBranch.check) = evalCond(condTok);
-                        if (!thenBranch.check && !elseBranch.check && stopOnCondition(condTok) && stopUpdates())
+                        bool checkThen, checkElse;
+                        std::tie(checkThen, checkElse) = evalCond(condTok);
+                        if (!checkThen && !checkElse && stopOnCondition(condTok) && stopUpdates())
                             return Break(Analyzer::Terminate::Conditional);
-                        const bool hasElse = Token::simpleMatch(endBlock, "} else {");
-                        tok = hasElse ? endBlock->linkAt(2) : endBlock;
-                        if (thenBranch.check) {
-                            if (updateTakenBranch(thenBranch, hasElse ? elseBranch.endBlock : nullptr, condTok, depth) ==
-                                Progress::Break)
-                                return Break();
-                        } else if (elseBranch.check) {
-                            if (updateTakenBranch(elseBranch, thenBranch.endBlock, condTok, depth) == Progress::Break)
-                                return Break();
-                        } else {
-                            const bool conditional = stopOnCondition(condTok);
-                            // The then-path runs on a fork, the else-path on this traversal. The value only
-                            // flows into the then-branch when the condition can split it; for an opaque or
-                            // correlated condition (e.g. 'if (f(x))') it does not, so the fork is analyze-only:
-                            // the branch's effect is still tracked but nothing is reported in it.
-                            ForwardTraversal ft = fork(!analyzer->updateScope(thenBranch.endBlock, false));
-                            ft.analyzer->assume(condTok, true, Analyzer::Assume::Pending);
-                            thenBranch.progress = ft.updateBranch(thenBranch, depth - 1);
-                            actions |= thenBranch.action;
-                            // The condition is an assumption on the else-path only if the then-path drops
-                            // the value. With an else block the state is recorded after it.
-                            analyzer->assume(condTok,
-                                             false,
-                                             (thenBranch.isDead() ? Analyzer::Assume::None
-                                                                  : Analyzer::Assume::Quiet | Analyzer::Assume::Absolute) |
-                                             (hasElse ? Analyzer::Assume::Pending : Analyzer::Assume::None));
-                            if (hasElse) {
-                                elseBranch.progress = updateBranch(elseBranch, depth - 1);
-                                if (elseBranch.progress != Progress::Break)
-                                    analyzer->updateState(elseBranch.endBlock->previous());
-                            }
-                            if ((thenBranch.isDead() || elseBranch.isDead()) && conditional && stopUpdates())
-                                elseBranch.progress = Break(Analyzer::Terminate::Conditional);
-                            if (!lowerAfterBranches(*ft.analyzer, thenBranch, elseBranch))
-                                thenBranch.progress = Progress::Break;
-                            if (elseBranch.progress != Progress::Break && !lowerAfterBranches(*analyzer, thenBranch, elseBranch))
-                                elseBranch.progress = Break(Analyzer::Terminate::Bail);
-                            if (thenBranch.hasGoto() || elseBranch.hasGoto())
-                                return Break(Analyzer::Terminate::Bail);
-                            // Carry the then-path past the if. Skip the closing brace, whose handler is for
-                            // traversals that start inside the block; re-assume to anchor the state (and the
-                            // block's assignments) at the block end.
-                            if (thenBranch.continues() && canFork()) {
-                                ++(*forkBudget);
-                                ++ft.forkDepth;
-                                ft.analyzer->assume(condTok, true, Analyzer::Assume::Quiet | Analyzer::Assume::Absolute);
-                                ft.updateRange(tok->next(), end, depth - 1);
-                                otherPaths.add(ft.result(end));
-                            } else if (!thenBranch.isConclusiveEscape()) {
-                                otherPaths.add(ft.result(thenBranch.endBlock));
-                            }
-                            if (elseBranch.progress == Progress::Break) {
-                                // Only the else branch escaped; the then branch falls through, so
-                                // the scope as a whole does not always escape.
-                                if (terminate == Analyzer::Terminate::Escape && !thenBranch.isEscape())
-                                    terminate = Analyzer::Terminate::None;
-                                return Break();
-                            }
-                        }
+                        Token* elseEnd = Token::simpleMatch(endBlock, "} else {") ? endBlock->linkAt(2) : nullptr;
+                        tok = elseEnd ? elseEnd : endBlock;
+                        if (!checkThen && !checkElse)
+                            return forkIf(condTok, endBlock, elseEnd, depth);
+                        const Progress p =
+                            updateTakenBranch(checkThen ? endBlock : elseEnd, checkThen ? elseEnd : endBlock, condTok, tok, depth);
+                        if (p != Progress::Continue)
+                            return p;
                     }
                 } else if (Token::simpleMatch(tok, "try {")) {
                     Token* endBlock = tok->linkAt(1);
                     ForwardTraversal tryTraversal = fork();
-                    tryTraversal.updateScope(endBlock, depth - 1);
+                    tryTraversal.updateAllScopePaths(endBlock, depth - 1);
                     bool bail = tryTraversal.actions.isModified();
                     if (bail) {
                         actions = tryTraversal.actions;
@@ -911,7 +1172,7 @@ namespace {
                             return Break();
                         endBlock = endCatch->linkAt(1);
                         ForwardTraversal ft = fork();
-                        ft.updateScope(endBlock, depth - 1);
+                        ft.updateAllScopePaths(endBlock, depth - 1);
                         bail |= ft.terminate != Analyzer::Terminate::None || ft.actions.isModified();
                     }
                     if (bail)
@@ -1040,8 +1301,8 @@ Analyzer::Result valueFlowGenericForward(Token* start, const Token* end, const V
     ForwardTraversal ft{a, tokenList, errorLogger, settings};
     if (start)
         ft.analyzer->updateState(start);
-    ft.updateRange(start, end);
-    return ft.result(end);
+    ft.updateAllPaths(start, end);
+    return Analyzer::Result{ft.actions, ft.terminate};
 }
 
 Analyzer::Result valueFlowGenericForward(Token* start, const ValuePtr<Analyzer>& a, const TokenList& tokenList, ErrorLogger& errorLogger, const Settings& settings)

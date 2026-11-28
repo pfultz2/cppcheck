@@ -5102,6 +5102,165 @@ private:
         ASSERT_EQUALS("[test.cpp:4:11] -> [test.cpp:9:11]: (style) Condition 'x==0' is always false [knownConditionTrueFalse]\n",
                       errout_str());
 
+        check("bool g();\n" // the path that leaves the else block assigns x afterwards
+              "bool c();\n"
+              "int h();\n"
+              "void use(int);\n"
+              "void f(int x) {\n"
+              "    if (x == 0) {\n"
+              "        if (c()) {\n"
+              "        } else {\n"
+              "            bool w = false;\n"
+              "            if (g())\n"
+              "                w = true;\n"
+              "            if (!w)\n"
+              "                return;\n"
+              "        }\n"
+              "        x = h();\n"
+              "    } else {\n"
+              "        return;\n"
+              "    }\n"
+              "    if (x == 0)\n"
+              "        use(x);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("bool g();\n" // the same in a block that is always entered
+              "int h();\n"
+              "void use(int);\n"
+              "void f(int x) {\n"
+              "    if (x == 0) {\n"
+              "        if (x == 0) {\n"
+              "            bool w = false;\n"
+              "            if (g())\n"
+              "                w = true;\n"
+              "            if (!w)\n"
+              "                return;\n"
+              "        }\n"
+              "        x = h();\n"
+              "    } else {\n"
+              "        return;\n"
+              "    }\n"
+              "    if (x == 0)\n"
+              "        use(x);\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5:11] -> [test.cpp:6:15]: (warning) Identical inner 'if' condition is always true. [identicalInnerCondition]\n",
+                      errout_str());
+
+        check("bool g();\n" // #15264 - the split is in the then block of another unknown condition
+              "bool h();\n"
+              "void use();\n"
+              "void f(bool a, bool b) {\n"
+              "    if (a) {\n"
+              "        if (h()) {\n"
+              "            bool w = false;\n"
+              "            if (g())\n"
+              "                w = true;\n"
+              "            if (!w)\n"
+              "                return;\n"
+              "        } else {\n"
+              "            return;\n"
+              "        }\n"
+              "    }\n"
+              "    if (b && a)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("bool g();\n" // #15264 - the split is in a loop
+              "void use();\n"
+              "void f(bool a, bool b, bool c) {\n"
+              "    if (a) {\n"
+              "        bool w = false;\n"
+              "        while (g()) {\n"
+              "            if (c)\n"
+              "                w = true;\n"
+              "        }\n"
+              "        if (!w)\n"
+              "            return;\n"
+              "    }\n"
+              "    if (b && a)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("bool g();\n" // the path that leaves the else block assigns x in a later block
+              "bool c();\n"
+              "void use();\n"
+              "void f(int x) {\n"
+              "    if (x == 0) {\n"
+              "        bool w = false;\n"
+              "        if (c()) {\n"
+              "        } else {\n"
+              "            if (g())\n"
+              "                w = true;\n"
+              "        }\n"
+              "        if (w)\n"
+              "            x = 1;\n"
+              "    } else {\n"
+              "        return;\n"
+              "    }\n"
+              "    if (x == 0)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        check("bool g();\n" // the path that leaves the loop assigns x in a later block
+              "void use();\n"
+              "void f(int x, bool c) {\n"
+              "    if (x == 0) {\n"
+              "        bool w = false;\n"
+              "        while (g()) {\n"
+              "            if (c)\n"
+              "                w = true;\n"
+              "        }\n"
+              "        if (w)\n"
+              "            x = 1;\n"
+              "    } else {\n"
+              "        return;\n"
+              "    }\n"
+              "    if (x == 0)\n"
+              "        use();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout_str());
+
+        {
+            // Without splitting, the path past 'if (g())' stands for both outcomes
+            /*const*/ Settings s = settings0;
+            s.vfOptions.maxForwardConditionForkDepth = 0;
+            check("bool g();\n"
+                  "void use();\n"
+                  "void f(int x) {\n"
+                  "    if (x == 0) {\n"
+                  "        bool w = false;\n"
+                  "        if (g())\n"
+                  "            w = true;\n"
+                  "        if (w)\n"
+                  "            x = 1;\n"
+                  "    } else {\n"
+                  "        return;\n"
+                  "    }\n"
+                  "    if (x == 0)\n"
+                  "        use();\n"
+                  "}\n", s);
+            ASSERT_EQUALS("", errout_str());
+
+            check("bool g();\n" // #15264
+                  "void use();\n"
+                  "void f(bool a, bool b) {\n"
+                  "    if (a) {\n"
+                  "        bool w = false;\n"
+                  "        if (g())\n"
+                  "            w = true;\n"
+                  "        if (!w || !b)\n"
+                  "            return;\n"
+                  "    }\n"
+                  "    if (b && a)\n"
+                  "        use();\n"
+                  "}\n", s);
+            ASSERT_EQUALS("", errout_str());
+        }
+
         check("void f() {\n"
               "    if (42) {}\n"
               "    if (42U) {}\n"

@@ -936,6 +936,43 @@ private:
               "    return 0;\n"
               "}\n");
         ASSERT_EQUALS("[test.cpp:4:26]: (warning) Division by zero. [zerodivcond]\n", errout_str());
+
+        // #15264 - only the path that sets both flags leaves the block
+        check("bool g();\n"
+              "bool h();\n"
+              "int f(int a) {\n"
+              "    if (a == 0) {\n"
+              "        bool w = false;\n"
+              "        if (g())\n"
+              "            w = true;\n"
+              "        bool v = false;\n"
+              "        if (h())\n"
+              "            v = true;\n"
+              "        if (!w || !v)\n"
+              "            return 0;\n"
+              "    }\n"
+              "    return 10 / a;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4:11] -> [test.cpp:14:15]: (warning) Either the condition 'a==0' is redundant or there is division by zero at line 14. [zerodivcond]\n",
+                      errout_str());
+
+        // TODO #15264: the second call of g() is assumed to return what the first call returned
+        check("bool g();\n"
+              "int f(int a) {\n"
+              "    if (a == 0) {\n"
+              "        bool w = false;\n"
+              "        if (g())\n"
+              "            w = true;\n"
+              "        if (!w)\n"
+              "            return 0;\n"
+              "        if (g())\n"
+              "            return 1;\n"
+              "    }\n"
+              "    return 10 / a;\n"
+              "}\n");
+        TODO_ASSERT_EQUALS("[test.cpp:3:11] -> [test.cpp:12:15]: (warning) Either the condition 'a==0' is redundant or there is division by zero at line 12. [zerodivcond]\n",
+                           "",
+                           errout_str());
     }
 
     void zeroDivErrorPath() {
